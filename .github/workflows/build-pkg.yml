@@ -43,56 +43,28 @@ jobs:
             echo "::error title=Falha no build::$MSG"
             exit $CODE
           fi
-      - name: Variantes de teste
+      - name: Diagnostico
+        if: always()
         continue-on-error: true
         env:
           DOTNET_ROLL_FORWARD: Major
           DOTNET_SYSTEM_GLOBALIZATION_INVARIANT: "1"
         run: |
-          TC="$OO_PS4_TOOLCHAIN"
-          DLL=$(find "$TC/bin" -name 'PkgTool.Core.dll' | head -1)
-          mkdir -p ref variants
-          (cd "$TC/samples/hello_world" && make) > ref/make.log 2>&1 || true
-          cp "$TC"/samples/hello_world/*.pkg ref/ 2>/dev/null || true
-          HELLO_ELF=$(find "$TC/samples/hello_world" -name '*.elf' | head -1)
-          HELLO_BIN=$(find "$TC/samples/hello_world" -name 'eboot.bin' | head -1)
+          DLL=$(find "$OO_PS4_TOOLCHAIN/bin" -name 'PkgTool.Core.dll' | head -1)
           {
             echo "== SFO do app =="; dotnet "$DLL" sfo_listentries image0/sce_sys/param.sfo
-            echo "== SFO do hello_world =="; dotnet "$DLL" sfo_listentries "$TC/samples/hello_world/sce_sys/param.sfo"
             echo "== libs do app =="; readelf -d build/eboot.elf | grep -E 'NEEDED|SONAME'
-            echo "== libs do hello_world: $HELLO_ELF =="; [ -n "$HELLO_ELF" ] && readelf -d "$HELLO_ELF" | grep -E 'NEEDED|SONAME'
-            echo "== eboot do hello_world: $HELLO_BIN =="
-            ls -R "$TC/samples/hello_world" | head -40
+            echo "== sce_sys =="; ls -laR image0/sce_sys
+            echo "== gp4 minimo =="; cat out/project-min.gp4
           } > diag.log 2>&1 || true
           cat diag.log
-          variant() {
-            NAME="$1"; TID="$2"; EB="$3"
-            rm -rf var && mkdir var && cp -r image0 project.gp4 tools var/
-            sed -i "s/CUSA99999/$TID/g" var/tools/make_sfo.py var/project.gp4
-            sed -i "s/\"PS4 Patch Store\"/\"$NAME\"/" var/tools/make_sfo.py
-            (cd var && python3 tools/make_sfo.py)
-            cp "$EB" var/image0/eboot.bin
-            (cd var && mkdir -p out && dotnet "$DLL" pkg_build project.gp4 out) && cp var/out/*.pkg "variants/$NAME-$TID.pkg"
-          }
-          if [ -n "$HELLO_BIN" ]; then variant "V1 eboot hello" CUSA99991 "$HELLO_BIN"; else echo "eboot do hello_world nao encontrado" >> diag.log; fi
-          rm -rf v3 && mkdir v3 && cp -r src Makefile image0 v3/ && rm -f v3/image0/eboot.bin
-          (cd v3 && make -B EXTRA=-DNO_LAUNCH LIBS="-lc -lkernel") > v3.log 2>&1 || true
-          [ -f v3/image0/eboot.bin ] && variant "V3 sem navegador" CUSA99993 v3/image0/eboot.bin
-          ls -la variants ref
-      - uses: actions/upload-artifact@v4
-        if: always()
-        with:
-          name: referencia-e-diagnostico
-          path: |
-            diag.log
-            v3.log
-            ref/*
-            variants/*.pkg
       - uses: actions/upload-artifact@v4
         if: always()
         with:
           name: ps4-patch-store-pkg
           path: |
-            out/*.pkg
+            out/min/*.pkg
+            out/full/*.pkg
             image0/eboot.bin
             build.log
+            diag.log
