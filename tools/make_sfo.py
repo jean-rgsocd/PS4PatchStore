@@ -1,49 +1,90 @@
 #!/usr/bin/env python3
-"""Gera image0/sce_sys/param.sfo (PS4, category gd). Uso: python3 tools/make_sfo.py"""
+"""Gera image0/sce_sys/param.sfo com os MESMOS campos do exemplo hello_world do OpenOrbis
+(que instala e roda no PS4). Sem FORMAT, PARENTAL_LEVEL nem PUBTOOLINFO."""
+import os
 import struct
 
-CONTENT_ID = "IV0000-CUSA99999_00-PS4PATCHSTORE000"   # exatamente 36 caracteres
-assert len(CONTENT_ID) == 36
+TITLE = "PS4 Patch Store"
+VERSION = "1.00"
+TITLE_ID = "PSTR00001"                                   # 9 caracteres, NAO usar prefixo CUSA
+CONTENT_ID = "IV0000-PSTR00001_00-PS4PATCHSTORE000"      # 36 caracteres
 
-UTF8_S, UTF8, INT32 = 0x0004, 0x0204, 0x0404
-# (chave, formato, valor, max_len)
-ENTRIES = [
-    ("APP_TYPE",           INT32, 0,                 4),
-    ("APP_VER",            UTF8,  "01.00",           8),
-    ("ATTRIBUTE",          INT32, 0,                 4),
-    ("CATEGORY",           UTF8,  "gd",              4),
-    ("CONTENT_ID",         UTF8,  CONTENT_ID,        48),
-    ("DOWNLOAD_DATA_SIZE", INT32, 0,                 4),
-    ("FORMAT",             UTF8_S, "obs",            4),
-    ("PARENTAL_LEVEL",     INT32, 0,                 4),
-    ("PUBTOOLINFO",        UTF8,  "c_date=20261029,sdk_ver=05050000", 512),
-    ("SYSTEM_VER",         INT32, 0,                 4),
-    ("TITLE",              UTF8,  "PS4 Patch Store", 128),
-    ("TITLE_ID",           UTF8,  "CUSA99999",       12),
-    ("VERSION",            UTF8,  "01.00",           8),
-]
+OUT = os.path.join("image0", "sce_sys", "param.sfo")
 
-def build(entries):
-    entries = sorted(entries, key=lambda e: e[0])
-    keys, offs = b"", []
-    for k, *_ in entries:
-        offs.append(len(keys)); keys += k.encode() + b"\0"
-    while len(keys) % 4: keys += b"\0"
-    ktab = 20 + 16 * len(entries)
-    dtab = ktab + len(keys)
-    idx, data = b"", b""
-    for (k, fmt, val, mx), ko in zip(entries, offs):
-        if fmt == INT32:
-            raw = struct.pack("<I", val)
+
+def s(value, maxsize):
+    return ("s", value, maxsize)
+
+
+def i(value):
+    return ("i", value, 4)
+
+
+# Mesmos campos, tipos e tamanhos maximos do hello_world.
+ENTRIES = {
+    "APP_TYPE": i(1),
+    "APP_VER": s(VERSION, 8),
+    "ATTRIBUTE": i(0),
+    "CATEGORY": s("gd", 4),
+    "CONTENT_ID": s(CONTENT_ID, 48),
+    "DOWNLOAD_DATA_SIZE": i(0),
+    "SYSTEM_VER": i(0),
+    "TITLE": s(TITLE, 128),
+    "TITLE_ID": s(TITLE_ID, 12),
+    "VERSION": s(VERSION, 8),
+}
+
+
+def build():
+    keys = sorted(ENTRIES)
+    key_table = b""
+    key_offset = {}
+    for k in keys:
+        key_offset[k] = len(key_table)
+        key_table += k.encode("ascii") + b"\0"
+    while len(key_table) % 4:
+        key_table += b"\0"
+
+    data_table = b""
+    index = b""
+    for k in keys:
+        kind, value, maxsize = ENTRIES[k]
+        if kind == "s":
+            raw = value.encode("utf-8") + b"\0"
+            fmt, length = 0x0204, len(raw)
+            raw = raw.ljust(maxsize, b"\0")
         else:
-            raw = val.encode() + (b"\0" if fmt == UTF8 else b"")
-        assert len(raw) <= mx, k
-        idx += struct.pack("<HHIII", ko, fmt, len(raw), mx, len(data))
-        data += raw.ljust(mx, b"\0")
-    head = struct.pack("<4sIIII", b"\0PSF", 0x101, ktab, dtab, len(entries))
-    return head + idx + keys + data
+            raw = struct.pack("<I", value)
+            fmt, length = 0x0404, 4
+        index += struct.pack("<HHIII", key_offset[k], fmt, length, maxsize, len(data_table))
+        data_table += raw
+
+    key_start = 20 + len(index)
+    data_start = key_start + len(key_table)
+    header = b"\0PSF" + struct.pack("<IIII", 0x101, key_start, data_start, len(keys))
+    return header + index + key_table + data_table
+
+
+def dump(blob):
+    magic, ver, kstart, dstart, count = struct.unpack("<4sIIII", blob[:20])
+    assert magic == b"\0PSF", "magic invalido"
+    lines = ["Entry Name : Entry Type(Size / Max Size) = Entry Value"]
+    for n in range(count):
+        ko, fmt, ln, mx, do = struct.unpack("<HHIII", blob[20 + n * 16: 36 + n * 16])
+        name = blob[kstart + ko: blob.index(b"\0", kstart + ko)].decode()
+        raw = blob[dstart + do: dstart + do + ln]
+        if fmt == 0x0404:
+            val, kind = "0x%08X" % struct.unpack("<I", raw)[0], "Integer"
+        else:
+            val, kind = raw.rstrip(b"\0").decode(), "Utf8"
+        lines.append("%s : %s(%d/%d) = %s" % (name, kind, ln, mx, val))
+    return "\n".join(lines)
+
 
 if __name__ == "__main__":
-    with open("image0/sce_sys/param.sfo", "wb") as f:
-        f.write(build(ENTRIES))
-    print("param.sfo gerado.")
+    assert len(TITLE_ID) == 9 and len(CONTENT_ID) == 36
+    blob = build()
+    os.makedirs(os.path.dirname(OUT), exist_ok=True)
+    with open(OUT, "wb") as f:
+        f.write(blob)
+    print(dump(blob))
