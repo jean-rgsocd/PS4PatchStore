@@ -43,6 +43,32 @@ jobs:
             echo "::error title=Falha no build::$MSG"
             exit $CODE
           fi
+      - name: Diagnostico e exemplo de referencia
+        continue-on-error: true
+        env:
+          DOTNET_ROLL_FORWARD: Major
+          DOTNET_SYSTEM_GLOBALIZATION_INVARIANT: "1"
+        run: |
+          TC="$OO_PS4_TOOLCHAIN"
+          DLL=$(find "$TC/bin" -name 'PkgTool.Core.dll' | head -1)
+          {
+            echo "== SFO do app =="; dotnet "$DLL" sfo_listentries image0/sce_sys/param.sfo
+            echo "== Bibliotecas do eboot =="; readelf -d build/eboot.elf | grep -E 'NEEDED|SONAME'
+            echo "== hello_world (exemplo) =="; ls -R "$TC/samples/hello_world" | head -40
+            dotnet "$DLL" sfo_listentries "$TC/samples/hello_world/sce_sys/param.sfo"
+          } > diag.log 2>&1 || true
+          cat diag.log
+          mkdir -p ref
+          (cd "$TC/samples/hello_world" && make) > ref/make.log 2>&1 || true
+          cp "$TC"/samples/hello_world/*.pkg ref/ 2>/dev/null || true
+          ls -la ref
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: referencia-e-diagnostico
+          path: |
+            diag.log
+            ref/*
       - uses: actions/upload-artifact@v4
         if: always()
         with:
