@@ -55,7 +55,7 @@ static void send_all(int c, const char *p, int n) {
 }
 
 static void serve(int c) {
-  char req[2048], path[256], full[300], buf[4096], hdr[256];
+  char req[2048], path[256], full[300], buf[4096], hdr[256], msg[320];
   int n = read(c, req, sizeof(req) - 1);
   if (n <= 0) return;
   req[n] = 0;
@@ -68,6 +68,8 @@ static void serve(int c) {
   if (!strcmp(path, "/")) strcpy(path, "/index.html");
   snprintf(full, sizeof(full), "%s%s", ROOT, path);
   int fd = open(full, O_RDONLY);
+  snprintf(msg, sizeof(msg), "GET %s -> %s", path, fd < 0 ? "404" : "200");
+  logf_(msg);
   if (fd < 0) {
     const char *r = "HTTP/1.1 404 Not Found\r\nContent-Length: 0\r\nConnection: close\r\n\r\n";
     send_all(c, r, (int)strlen(r));
@@ -115,8 +117,15 @@ int main(void) {
     int c = accept(s, NULL, NULL);
     if (c < 0) continue;
     pthread_t t;
-    if (pthread_create(&t, NULL, worker, (void *)(long)c) == 0) pthread_detach(t);
-    else { serve(c); close(c); }
+    pthread_attr_t at;
+    pthread_attr_init(&at);
+    pthread_attr_setstacksize(&at, 256 * 1024);
+    pthread_attr_setdetachstate(&at, PTHREAD_CREATE_DETACHED);
+    if (pthread_create(&t, &at, worker, (void *)(long)c) != 0) {
+      logf_("AVISO: pthread_create falhou, atendendo na thread principal");
+      worker((void *)(long)c);
+    }
+    pthread_attr_destroy(&at);
   }
   return 0;
 }
