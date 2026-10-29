@@ -33,7 +33,7 @@ jobs:
       - name: Compilar e empacotar
         env:
           DOTNET_ROLL_FORWARD: Major
-        run: ./build.sh
+        run: bash build.sh
       - uses: actions/upload-artifact@v4
         with:
           name: ps4-patch-store-pkg
