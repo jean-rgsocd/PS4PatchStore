@@ -1,7 +1,11 @@
 #!/usr/bin/env python3
 """Gera project.gp4 a partir de image0/.
 Arquivos fora de eboot.bin, sce_sys/ e sce_module/ vao para www/ dentro do app0.
-MIN=1 gera um pacote minimo (eboot + sce_sys, sem pic0 e sem site) para testar a instalacao."""
+MODE (variavel de ambiente) escolhe o conteudo, para isolar o que faz o app falhar:
+  min  = eboot + sce_sys + sce_module (sem pic0 e sem site)
+  pic  = min + sce_sys/pic0.png
+  www  = min + site em www/ (sem pic0)
+  full = tudo (padrao)"""
 import os
 import sys
 
@@ -9,7 +13,11 @@ sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 from make_sfo import CONTENT_ID  # noqa: E402
 
 ROOT = "image0"
-MIN = os.environ.get("MIN") == "1"
+MODE = os.environ.get("MODE") or ("min" if os.environ.get("MIN") == "1" else "full")
+if MODE not in ("min", "pic", "www", "full"):
+    sys.exit("ERRO: MODE invalido: " + MODE)
+WITH_PIC = MODE in ("pic", "full")
+WITH_WWW = MODE in ("www", "full")
 
 files, dirs = [], set()
 for d, _, fs in os.walk(ROOT):
@@ -18,10 +26,10 @@ for d, _, fs in os.walk(ROOT):
         if rel == "eboot.bin" or rel.startswith("sce_sys/") or rel.startswith("sce_module/"):
             targ = rel
         else:
-            if MIN:
+            if not WITH_WWW:
                 continue
             targ = "www/" + rel
-        if MIN and rel == "sce_sys/pic0.png":
+        if rel == "sce_sys/pic0.png" and not WITH_PIC:
             continue
         files.append((targ, ROOT + "/" + rel))
         parts = targ.split("/")[:-1]
@@ -74,4 +82,4 @@ xml = '''<?xml version="1.0"?>
 ''' % (CONTENT_ID, file_xml, tree("", 0))
 with open("project.gp4", "w", encoding="utf-8") as fh:
     fh.write(xml)
-print("project.gp4 gerado (%d arquivos, MIN=%s, content_id=%s)" % (len(files), MIN, CONTENT_ID))
+print("project.gp4 gerado (%d arquivos, MODE=%s, content_id=%s)" % (len(files), MODE, CONTENT_ID))
