@@ -14,7 +14,7 @@ ENTRIES = [
     ("CATEGORY",           UTF8,  "gd",              4),
     ("CONTENT_ID",         UTF8,  CONTENT_ID,        48),
     ("DOWNLOAD_DATA_SIZE", INT32, 0,                 4),
-    ("FORMAT",             UTF8,  "obs",             4),
+    ("FORMAT",             UTF8_S, "obs",            4),
     ("PARENTAL_LEVEL",     INT32, 0,                 4),
     ("PUBTOOLINFO",        UTF8,  "c_date=20261029,sdk_ver=05050000", 512),
     ("SYSTEM_VER",         INT32, 0,                 4),
