@@ -1,0 +1,26 @@
+name: build-pkg
+on: [workflow_dispatch, push]
+jobs:
+  pkg:
+    runs-on: ubuntu-22.04
+    steps:
+      - uses: actions/checkout@v4
+      - name: Dependências
+        run: sudo apt-get update && sudo apt-get install -y clang lld jq python3 libicu-dev
+      - name: Baixar OpenOrbis Toolchain
+        run: |
+          URL=$(curl -s https://api.github.com/repos/OpenOrbis/OpenOrbis-PS4-Toolchain/releases/latest \
+                | jq -r '.assets[].browser_download_url' | grep -i linux | head -1)
+          echo "Baixando $URL"
+          mkdir -p oo && curl -L "$URL" | tar xz -C oo
+          TC=$(dirname "$(find oo -name link.x | head -1)")
+          echo "OO_PS4_TOOLCHAIN=$GITHUB_WORKSPACE/$TC" >> "$GITHUB_ENV"
+          find oo -type f \( -name 'create-fself' -o -name 'PkgTool.Core*' \) -exec chmod +x {} +
+      - name: Compilar e empacotar
+        run: ./build.sh
+      - uses: actions/upload-artifact@v4
+        with:
+          name: ps4-patch-store-pkg
+          path: |
+            out/*.pkg
+            image0/eboot.bin
