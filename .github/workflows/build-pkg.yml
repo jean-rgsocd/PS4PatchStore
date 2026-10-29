@@ -55,7 +55,7 @@ jobs:
             echo "== SFO do app =="; dotnet "$DLL" sfo_listentries image0/sce_sys/param.sfo
             echo "== libs do app =="; readelf -d build/eboot.elf | grep -E 'NEEDED|SONAME'
             echo "== sce_sys =="; ls -laR image0/sce_sys
-            echo "== gp4 minimo =="; cat out/project-min.gp4
+            echo "== gp4 full =="; cat out/project-full.gp4
           } > diag.log 2>&1 || true
           cat diag.log
       - uses: actions/upload-artifact@v4
@@ -63,8 +63,7 @@ jobs:
         with:
           name: ps4-patch-store-pkg
           path: |
-            out/min/*.pkg
-            out/full/*.pkg
+            out/*/*.pkg
             image0/eboot.bin
             build.log
             diag.log
