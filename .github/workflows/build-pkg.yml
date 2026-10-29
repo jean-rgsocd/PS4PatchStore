@@ -5,18 +5,34 @@ jobs:
     runs-on: ubuntu-22.04
     steps:
       - uses: actions/checkout@v4
-      - name: Dependências
-        run: sudo apt-get update && sudo apt-get install -y clang lld jq python3 libicu-dev
+      - name: Dependencias
+        run: sudo apt-get update && sudo apt-get install -y clang lld jq python3 unzip libicu-dev
       - name: Baixar OpenOrbis Toolchain
+        env:
+          GH_TOKEN: ${{ github.token }}
         run: |
-          URL=$(curl -s https://api.github.com/repos/OpenOrbis/OpenOrbis-PS4-Toolchain/releases/latest \
-                | jq -r '.assets[].browser_download_url' | grep -i linux | head -1)
+          set -e
+          curl -fsSL -H "Authorization: Bearer $GH_TOKEN" https://api.github.com/repos/OpenOrbis/OpenOrbis-PS4-Toolchain/releases/latest -o rel.json
+          echo "Arquivos da release:"; jq -r '.assets[].name' rel.json
+          KIND=tar
+          URL=$(jq -r '[.assets[] | select(.name | test("\\.(tar\\.gz|tgz)$"))][0].browser_download_url // empty' rel.json)
+          if [ -z "$URL" ]; then
+            KIND=zip
+            URL=$(jq -r '[.assets[] | select(.name | test("\\.zip$"))][0].browser_download_url // empty' rel.json)
+          fi
+          if [ -z "$URL" ]; then echo "ERRO: nenhum .tar.gz ou .zip na release"; exit 1; fi
           echo "Baixando $URL"
-          mkdir -p oo && curl -L "$URL" | tar xz -C oo
-          TC=$(dirname "$(find oo -name link.x | head -1)")
+          curl -fL "$URL" -o toolchain.bin
+          mkdir -p oo
+          if [ "$KIND" = tar ]; then tar xzf toolchain.bin -C oo; else unzip -q toolchain.bin -d oo; fi
+          LX=$(find oo -name link.x | head -1)
+          if [ -z "$LX" ]; then echo "ERRO: link.x nao encontrado"; find oo -maxdepth 3; exit 1; fi
+          TC=$(dirname "$LX")
           echo "OO_PS4_TOOLCHAIN=$GITHUB_WORKSPACE/$TC" >> "$GITHUB_ENV"
-          find oo -type f \( -name 'create-fself' -o -name 'PkgTool.Core*' \) -exec chmod +x {} +
+          chmod -R +x "$TC/bin/linux" || true
       - name: Compilar e empacotar
+        env:
+          DOTNET_ROLL_FORWARD: Major
         run: ./build.sh
       - uses: actions/upload-artifact@v4
         with:
