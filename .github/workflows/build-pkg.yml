@@ -33,10 +33,21 @@ jobs:
       - name: Compilar e empacotar
         env:
           DOTNET_ROLL_FORWARD: Major
-        run: bash build.sh
+        run: |
+          set +e
+          bash build.sh > build.log 2>&1
+          CODE=$?
+          cat build.log
+          if [ $CODE -ne 0 ]; then
+            MSG=$(tail -n 25 build.log | sed 's/%/%25/g' | awk '{printf "%s%%0A", $0}')
+            echo "::error title=Falha no build::$MSG"
+            exit $CODE
+          fi
       - uses: actions/upload-artifact@v4
+        if: always()
         with:
           name: ps4-patch-store-pkg
           path: |
             out/*.pkg
             image0/eboot.bin
+            build.log
