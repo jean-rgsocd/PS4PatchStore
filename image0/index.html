@@ -1,0 +1,132 @@
+
+<!DOCTYPE html>
+<html lang="pt-BR">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <meta name="theme-color" content="#080d18">
+  <meta name="description" content="PS4 Patch Store — catálogo de patches e coleções de futebol para PS4.">
+  <title>PS4 Patch Store</title>
+  <link rel="stylesheet" href="style.css">
+  <script src="app.js" defer></script>
+</head>
+<body>
+  <header class="topbar">
+    <a class="brand" href="#" aria-label="PS4 Patch Store">
+      <span class="brand-icon">PS4</span>
+      <span>PATCH <strong>STORE</strong></span>
+    </a>
+    <span class="status"><span class="status-dot"></span> CATÁLOGO LOCAL</span>
+  </header>
+
+  <main>
+    <section class="hero">
+      <div class="hero-content">
+        <p class="eyebrow">A SUA CENTRAL DE PATCHES</p>
+        <h1>SEU PS4.<br><span>SUA PAIXÃO.</span></h1>
+        <p class="hero-description">
+          Explore coleções e patches de futebol para PS4 em um só lugar.
+        </p>
+        <a class="primary-button" href="#catalogo">EXPLORAR CATÁLOGO <span>↓</span></a>
+      </div>
+      <div class="hero-label">
+        <span>FOOTBALL</span>
+        <span>MODS &amp; PATCHES</span>
+        <span>PS4 COLLECTION</span>
+      </div>
+    </section>
+
+    <section class="catalog section" id="catalogo">
+      <div class="section-heading">
+        <div>
+          <p class="eyebrow">ENCONTRE SEU JOGO</p>
+          <h2>Nosso catálogo</h2>
+        </div>
+        <span id="result-count" class="result-count">3 coleções</span>
+      </div>
+
+      <div class="filters">
+        <label class="search-box">
+          <span aria-hidden="true">⌕</span>
+          <input id="search" type="search" placeholder="Buscar jogo ou coleção..." autocomplete="off">
+        </label>
+        <select id="category" aria-label="Filtrar catálogo">
+          <option value="all">Todas as coleções</option>
+          <option value="patch">Patches</option>
+          <option value="collection">Coleções</option>
+          <option value="worldcup">Copa do Mundo</option>
+        </select>
+      </div>
+
+      <div class="game-grid" id="game-grid">
+        <article class="game-card" data-name="mega patch infinity pes 2021 futebol" data-category="patch">
+          <div class="cover-wrap">
+            <img class="cover" src="infinity.png" alt="Capa Mega Patch Infinity" loading="lazy">
+            <span class="card-tag">PATCH</span>
+          </div>
+          <div class="card-content">
+            <p class="card-kicker">PES 2021 • PS4</p>
+            <h3>Mega Patch Infinity</h3>
+            <p class="card-description">Atualização do Mega Patch Infinity 2026.</p>
+            <div class="card-actions">
+              <a class="download-button" href="#" data-pkg="">BAIXAR PATCH ↓</a>
+            </div>
+          </div>
+        </article>
+
+        <article class="game-card" data-name="the legends collection legends pes 2021" data-category="collection">
+          <div class="cover-wrap">
+            <img class="cover" src="legends.png" alt="Capa The Legends Collection" loading="lazy">
+            <span class="card-tag">COLEÇÃO</span>
+          </div>
+          <div class="card-content">
+            <p class="card-kicker">PES 2021 • PS4</p>
+            <h3>The Legends Collection</h3>
+            <p class="card-description">Coleção Legends para PES 2021.</p>
+            <div class="card-actions">
+              <a class="download-button" href="#" data-pkg="">BAIXAR PATCH ↓</a>
+            </div>
+          </div>
+        </article>
+
+        <article class="game-card" data-name="world cup 2026 copa do mundo" data-category="worldcup">
+          <div class="cover-wrap">
+            <img class="cover" src="worldcup.png" alt="Capa World Cup 2026" loading="lazy">
+            <span class="card-tag">COPA 2026</span>
+          </div>
+          <div class="card-content">
+            <p class="card-kicker">FUTEBOL • PS4</p>
+            <h3>World Cup 2026</h3>
+            <p class="card-description">Edição especial da Copa do Mundo 2026.</p>
+            <div class="card-actions">
+              <a class="download-button" href="#" data-pkg="">BAIXAR PATCH ↓</a>
+            </div>
+          </div>
+        </article>
+      </div>
+
+      <div id="empty-state" class="empty-state" hidden>
+        Nenhuma coleção encontrada. Tente outro termo.
+      </div>
+    </section>
+
+    <section class="notice">
+      <div class="notice-icon">i</div>
+      <div>
+        <h3>Antes de baixar</h3>
+        <p>Confira a compatibilidade, a versão e os requisitos de cada arquivo. Se um botão avisar que o link não está configurado, o download ainda não foi disponibilizado.</p>
+      </div>
+    </section>
+  </main>
+
+  <footer class="footer">
+    <a class="brand footer-brand" href="#">
+      <span class="brand-icon">PS4</span>
+      <span>PATCH <strong>STORE</strong></span>
+    </a>
+    <p>PS4 Patch Store © <span id="year"></span></p>
+    <a href="#catalogo">Voltar ao catálogo ↑</a>
+  </footer>
+  <div id="toast" class="toast" role="status" hidden></div>
+</body>
+</html>

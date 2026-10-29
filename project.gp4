@@ -1,0 +1,34 @@
+<?xml version="1.0"?>
+<psproject fmt="gp4" version="1000">
+  <volume>
+    <volume_type>pkg_ps4_app</volume_type>
+    <volume_id>PS4VOLUME</volume_id>
+    <volume_ts>2026-10-29 12:00:00</volume_ts>
+    <package content_id="IV0000-CUSA99999_00-PS4PATCHSTORE000" passcode="00000000000000000000000000000000" storage_type="digital25" app_type="full"/>
+    <chunk_info chunk_count="1" scenario_count="1">
+      <chunks>
+        <chunk id="0" layer_no="0" label="Chunk #0"/>
+      </chunks>
+      <scenarios default_id="0">
+        <scenario id="0" type="sp" initial_chunk_count="1" label="Scenario #0">0</scenario>
+      </scenarios>
+    </chunk_info>
+  </volume>
+  <files img_no="0">
+    <file targ_path="eboot.bin" orig_path="image0/eboot.bin"/>
+    <file targ_path="sce_sys/param.sfo" orig_path="image0/sce_sys/param.sfo"/>
+    <file targ_path="sce_sys/icon0.png" orig_path="image0/sce_sys/icon0.png"/>
+    <file targ_path="sce_sys/pic0.png" orig_path="image0/sce_sys/pic0.png"/>
+    <file targ_path="www/index.html" orig_path="image0/index.html"/>
+    <file targ_path="www/app.js" orig_path="image0/app.js"/>
+    <file targ_path="www/style.css" orig_path="image0/style.css"/>
+    <file targ_path="www/stadium_bg.jpg" orig_path="image0/stadium_bg.jpg"/>
+    <file targ_path="www/infinity.png" orig_path="image0/infinity.png"/>
+    <file targ_path="www/legends.png" orig_path="image0/legends.png"/>
+    <file targ_path="www/worldcup.png" orig_path="image0/worldcup.png"/>
+  </files>
+  <rootdir>
+    <dir targ_name="sce_sys"/>
+    <dir targ_name="www"/>
+  </rootdir>
+</psproject>
