@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 # Uso: OO_PS4_TOOLCHAIN=/caminho/toolchain bash build.sh
-# Gera dois pacotes: out/min (so eboot + sce_sys, para testar a instalacao) e out/full (com o site).
+# Gera quatro pacotes em out/: min, pic (min + pic0.png), www (min + site) e full (tudo).
 set -euo pipefail
 : "${OO_PS4_TOOLCHAIN:?defina OO_PS4_TOOLCHAIN}"
 export DOTNET_SYSTEM_GLOBALIZATION_INVARIANT=1
@@ -56,14 +56,13 @@ python3 tools/make_sfo.py
 make
 
 rm -rf out
-mkdir -p out/min out/full
-
-MIN=1 python3 tools/make_gp4.py
-cp project.gp4 out/project-min.gp4
-run_pkgtool pkg_build project.gp4 out/min
-
-python3 tools/make_gp4.py
-cp project.gp4 out/project-full.gp4
-run_pkgtool pkg_build project.gp4 out/full
+mkdir -p out
+for MODE in min pic www full; do
+  echo "=== pacote: $MODE ==="
+  mkdir -p "out/$MODE"
+  MODE=$MODE python3 tools/make_gp4.py
+  cp project.gp4 "out/project-$MODE.gp4"
+  run_pkgtool pkg_build project.gp4 "out/$MODE"
+done
 
 ls -laR out
