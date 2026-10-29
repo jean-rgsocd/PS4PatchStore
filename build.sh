@@ -36,6 +36,22 @@ if [ ! -f image0/sce_sys/about/right.sprx ]; then
   fi
 fi
 
+# libc.prx e libSceFios2.prx: o OpenOrbis exige os dois em /app0/sce_module (sem eles o app nao abre).
+mkdir -p image0/sce_module
+for M in libc.prx libSceFios2.prx; do
+  if [ ! -f "image0/sce_module/$M" ]; then
+    SRC=$(find "$OO_PS4_TOOLCHAIN" -iname "$M" -type f 2>/dev/null | head -1 || true)
+    if [ -n "${SRC:-}" ]; then
+      cp "$SRC" "image0/sce_module/$M"
+      echo "$M copiado de $SRC"
+    else
+      echo "ERRO: $M nao encontrado no toolchain. Arquivos .prx encontrados:"
+      find "$OO_PS4_TOOLCHAIN" -iname '*.prx' -type f | head -20
+      exit 1
+    fi
+  fi
+done
+
 python3 tools/make_sfo.py
 make
 
