@@ -9,7 +9,9 @@
 #include <netinet/in.h>
 #include <arpa/inet.h>
 
+#ifndef NO_LAUNCH
 extern int sceSystemServiceLaunchWebBrowser(const char *uri);   /* libSceSystemService */
+#endif
 
 #define PORT 8080
 #ifndef START_URL
@@ -52,6 +54,7 @@ static void serve(int c) {
 }
 
 int main(void) {
+  logf_("inicio");
   int s = socket(AF_INET, SOCK_STREAM, 0);
   int one = 1;
   setsockopt(s, SOL_SOCKET, SO_REUSEADDR, &one, sizeof(one));
@@ -59,7 +62,11 @@ int main(void) {
   a.sin_family = AF_INET; a.sin_port = htons(PORT); a.sin_addr.s_addr = inet_addr("127.0.0.1");
   if (bind(s, (struct sockaddr *)&a, sizeof(a)) < 0 || listen(s, 8) < 0) { logf_("ERRO: bind/listen falhou"); return 1; }
   logf_("servidor ok, abrindo navegador");
+#ifndef NO_LAUNCH
   if (sceSystemServiceLaunchWebBrowser(START_URL) != 0) logf_("ERRO: LaunchWebBrowser falhou");
+#else
+  logf_("modo teste: sem abrir navegador");
+#endif
   for (;;) { int c = accept(s, NULL, NULL); if (c >= 0) { serve(c); close(c); } }
   return 0;
 }
