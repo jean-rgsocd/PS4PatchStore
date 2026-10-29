@@ -1,7 +1,8 @@
 .RECIPEPREFIX := >
 TC := $(OO_PS4_TOOLCHAIN)
-LIBS := -lc -lkernel -lSceSystemService
-CFLAGS := --target=x86_64-pc-freebsd12-elf -fPIC -funwind-tables -c -isysroot $(TC) -isystem $(TC)/include
+LIBS ?= -lc -lkernel -lSceSystemService
+EXTRA ?=
+CFLAGS := --target=x86_64-pc-freebsd12-elf -fPIC -funwind-tables -c -isysroot $(TC) -isystem $(TC)/include $(EXTRA)
 LDFLAGS := -m elf_x86_64 -pie --script $(TC)/link.x --eh-frame-hdr -L$(TC)/lib $(LIBS) $(TC)/lib/crt1.o
 
 all: image0/eboot.bin
