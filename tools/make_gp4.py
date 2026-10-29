@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 """Gera project.gp4 a partir de image0/.
-Arquivos fora de eboot.bin e sce_sys/ vao para www/ dentro do app0.
+Arquivos fora de eboot.bin, sce_sys/ e sce_module/ vao para www/ dentro do app0.
 MIN=1 gera um pacote minimo (eboot + sce_sys, sem pic0 e sem site) para testar a instalacao."""
 import os
 import sys
@@ -15,7 +15,7 @@ files, dirs = [], set()
 for d, _, fs in os.walk(ROOT):
     for f in sorted(fs):
         rel = os.path.relpath(os.path.join(d, f), ROOT).replace(os.sep, "/")
-        if rel == "eboot.bin" or rel.startswith("sce_sys/"):
+        if rel == "eboot.bin" or rel.startswith("sce_sys/") or rel.startswith("sce_module/"):
             targ = rel
         else:
             if MIN:
@@ -29,7 +29,7 @@ for d, _, fs in os.walk(ROOT):
             dirs.add("/".join(parts[:i]))
 
 names = [t for t, _ in files]
-for need in ("eboot.bin", "sce_sys/param.sfo", "sce_sys/icon0.png"):
+for need in ("eboot.bin", "sce_sys/param.sfo", "sce_sys/icon0.png", "sce_module/libc.prx"):
     if need not in names:
         sys.exit("ERRO: falta image0/" + need)
 if "sce_sys/about/right.sprx" not in names:
