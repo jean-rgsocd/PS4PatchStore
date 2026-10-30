@@ -23,7 +23,11 @@ files, dirs = [], set()
 for d, _, fs in os.walk(ROOT):
     for f in sorted(fs):
         rel = os.path.relpath(os.path.join(d, f), ROOT).replace(os.sep, "/")
-        if rel == "eboot.bin" or rel.startswith("sce_sys/") or rel.startswith("sce_module/"):
+                if (
+            rel in ("eboot.bin", "directpayload.bin")
+            or rel.startswith("sce_sys/")
+            or rel.startswith("sce_module/")
+        ):
             targ = rel
         else:
             if not WITH_WWW:
