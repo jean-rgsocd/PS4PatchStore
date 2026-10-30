@@ -29,6 +29,29 @@ static void logf_(const char *m) {
   }
 }
 
+// Função para descodificar URLs (URL decode) vindas do JavaScript
+static void url_decode(char *dst, const char *src) {
+  char a, b;
+  while (*src) {
+    if ((*src == '%') && && ((a = src[1]) && (b = src[2])) && (isxdigit(a) && isxdigit(b))) {
+      if (a >= 'a') a -= 'a' - '10';
+      else if (a >= 'A') a -= 'A' - '10';
+      else a -= '0';
+      if (b >= 'a') b -= 'a' - '10';
+      else if (b >= 'A') b -= 'A' - '10';
+      else b -= '0';
+      *dst++ = 16 * a + b;
+      src += 3;
+    } else if (*src == '+') {
+      *dst++ = ' ';
+      src++;
+    } else {
+      *dst++ = *src++;
+    }
+  }
+  *dst = '\0';
+}
+
 static const char *mime(const char *p) {
   const char *e = strrchr(p, '.');
   if (!e) return "application/octet-stream";
@@ -52,7 +75,6 @@ static void send_all(int c, const char *p, int n) {
   }
 }
 
-// Função que injeta o payload do DirectPackageInstaller no BinLoader do GoldHEN para acionar o BGFT
 static int trigger_bgft_install(const char *pkg_url) {
   logf_("Iniciando despacho do payload para o BinLoader BGFT...");
 
@@ -72,7 +94,6 @@ static int trigger_bgft_install(const char *pkg_url) {
   read(fd, payload_data, size);
   close(fd);
 
-  // Tenta conectar nas portas comuns do BinLoader do GoldHEN (9090, 9021, 9020)
   int sock = -1;
   int ports[] = {9090, 9021, 9020};
   for (int p = 0; p < 3; p++) {
@@ -91,7 +112,7 @@ static int trigger_bgft_install(const char *pkg_url) {
   }
 
   if (sock < 0) {
-    logf_("ERRO: Falha ao conectar no BinLoader do GoldHEN (Ative o Hen / Verifique a porta).");
+    logf_("ERRO: Falha ao conectar no BinLoader do GoldHEN.");
     free(payload_data);
     return -1;
   }
@@ -109,34 +130,36 @@ static void serve(int c) {
   if (n <= 0) return;
   req[n] = 0;
 
-  // Tratar rota de instalação via GET parameter e disparar o BGFT
   if (!strncmp(req, "GET /api/install", 16)) {
     logf_("API /api/install (GET) acionada!");
-    char url[512] = {0};
+    char raw_url[512] = {0};
+    char decoded_url[512] = {0};
     
     char *u_param = strstr(req, "url=");
     if (u_param) {
       u_param += 4;
       int i = 0;
       while (u_param[i] != '\0' && u_param[i] != ' ' && u_param[i] != '&' && u_param[i] != '\r' && u_param[i] != '\n' && i < 511) {
-        url[i] = u_param[i];
+        raw_url[i] = u_param[i];
         i++;
       }
-      url[i] = '\0';
+      raw_url[i] = '\0';
     }
 
-    if (strlen(url) == 0) {
+    if (strlen(raw_url) == 0) {
       logf_("ERRO: URL parameter vazio");
       const char *resp = "HTTP/1.1 400 Bad Request\r\nAccess-Control-Allow-Origin: *\r\nContent-Length: 0\r\nConnection: close\r\n\r\n";
       send_all(c, resp, (int)strlen(resp));
       return;
     }
 
-    logf_("URL capturada com sucesso via GET:");
-    logf_(url);
+    // Decodifica a URL para formato legível (sem %2F, %3A, etc)
+    url_decode(decoded_url, raw_url);
 
-    // Dispara o payload nativo para o BGFT
-    int res = trigger_bgft_install(url);
+    logf_("URL descodificada com sucesso:");
+    logf_(decoded_url);
+
+    int res = trigger_bgft_install(decoded_url);
 
     const char *resp;
     if (res == 0) {
@@ -184,7 +207,7 @@ static void *worker(void *arg) {
 
 int main(void) {
   signal(SIGPIPE, SIG_IGN);
-  logf_("=== INICIO DO APP (MODO GET + BGFT) ===");
+  logf_("=== INICIO DO APP (MODO GET + DECODE) ===");
   sceSystemServiceHideSplashScreen();
 
   int s = socket(AF_INET, SOCK_STREAM, 0);
