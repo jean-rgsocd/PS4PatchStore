@@ -52,6 +52,33 @@ for M in libc.prx libSceFios2.prx; do
   fi
 done
 
+# Baixar o payload nativo do DirectPackageInstaller
+echo "=== Preparando payload BGFT ==="
+
+PAYLOAD_URL="https://raw.githubusercontent.com/marcussacana/DirectPackageInstaller/DN8/DirectPackageInstaller/DirectPackageInstaller/payload"
+
+mkdir -p image0
+curl -fL --retry 3 "$PAYLOAD_URL" -o image0/directpayload.bin
+
+# Conferir se o binário contém o marcador usado pelo instalador
+python3 - <<'PY'
+from pathlib import Path
+
+p = Path("image0/directpayload.bin")
+data = p.read_bytes()
+marker = b"\xb4" * 6
+
+if not data:
+    raise SystemExit("ERRO: payload vazio")
+
+if marker not in data:
+    raise SystemExit("ERRO: marcador B4 do payload não encontrado")
+
+print("Payload integrado:", len(data), "bytes")
+print("Marcador de conexão encontrado.")
+PY
+
+
 python3 tools/make_sfo.py
 make
 
