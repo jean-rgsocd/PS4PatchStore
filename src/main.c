@@ -18,6 +18,7 @@ extern int sceSystemServiceLaunchWebBrowser(const char *uri);
 #define PORT 8080
 #define LOG  "/data/ps4store.log"
 #define ROOT "/app0/www"
+#define PAYLOAD_PATH "/app0/directpayload.bin"
 
 static void logf_(const char *m) {
   int f = open(LOG, O_WRONLY | O_CREAT | O_APPEND, 0666);
@@ -51,13 +52,64 @@ static void send_all(int c, const char *p, int n) {
   }
 }
 
+// Função que injeta o payload do DirectPackageInstaller no BinLoader do GoldHEN para acionar o BGFT
+static int trigger_bgft_install(const char *pkg_url) {
+  logf_("Iniciando despacho do payload para o BinLoader BGFT...");
+
+  int fd = open(PAYLOAD_PATH, O_RDONLY);
+  if (fd < 0) {
+    logf_("ERRO: Nao foi possivel abrir o directpayload.bin em /app0/");
+    return -1;
+  }
+
+  int size = lseek(fd, 0, SEEK_END);
+  lseek(fd, 0, SEEK_SET);
+  char *payload_data = malloc(size);
+  if (!payload_data) {
+    close(fd);
+    return -1;
+  }
+  read(fd, payload_data, size);
+  close(fd);
+
+  // Tenta conectar nas portas comuns do BinLoader do GoldHEN (9090, 9021, 9020)
+  int sock = -1;
+  int ports[] = {9090, 9021, 9020};
+  for (int p = 0; p < 3; p++) {
+    int s = socket(AF_INET, SOCK_STREAM, 0);
+    if (s < 0) continue;
+    struct sockaddr_in addr;
+    memset(&addr, 0, sizeof(addr));
+    addr.sin_family = AF_INET;
+    addr.sin_port = htons(ports[p]);
+    addr.sin_addr.s_addr = inet_addr("127.0.0.1");
+    if (connect(s, (struct sockaddr *)&addr, sizeof(addr)) == 0) {
+      sock = s;
+      break;
+    }
+    close(s);
+  }
+
+  if (sock < 0) {
+    logf_("ERRO: Falha ao conectar no BinLoader do GoldHEN (Ative o Hen / Verifique a porta).");
+    free(payload_data);
+    return -1;
+  }
+
+  send_all(sock, payload_data, size);
+  close(sock);
+  free(payload_data);
+  logf_("Payload despachado com sucesso para o BGFT!");
+  return 0;
+}
+
 static void serve(int c) {
   char req[4096], path[512], full[600], buf[4096], hdr[256];
   int n = read(c, req, sizeof(req) - 1);
   if (n <= 0) return;
   req[n] = 0;
 
-  // Tratar rota de instalacao via GET parameter
+  // Tratar rota de instalação via GET parameter e disparar o BGFT
   if (!strncmp(req, "GET /api/install", 16)) {
     logf_("API /api/install (GET) acionada!");
     char url[512] = {0};
@@ -83,7 +135,15 @@ static void serve(int c) {
     logf_("URL capturada com sucesso via GET:");
     logf_(url);
 
-    const char *resp = "HTTP/1.1 200 OK\r\nAccess-Control-Allow-Origin: *\r\nContent-Type: application/json\r\nConnection: close\r\n\r\n{\"status\":\"success\"}";
+    // Dispara o payload nativo para o BGFT
+    int res = trigger_bgft_install(url);
+
+    const char *resp;
+    if (res == 0) {
+      resp = "HTTP/1.1 200 OK\r\nAccess-Control-Allow-Origin: *\r\nContent-Type: application/json\r\nConnection: close\r\n\r\n{\"status\":\"success\"}";
+    } else {
+      resp = "HTTP/1.1 500 Internal Server Error\r\nAccess-Control-Allow-Origin: *\r\nContent-Type: application/json\r\nConnection: close\r\n\r\n{\"error\":\"Falha no BinLoader\"}";
+    }
     send_all(c, resp, (int)strlen(resp));
     return;
   }
@@ -124,7 +184,7 @@ static void *worker(void *arg) {
 
 int main(void) {
   signal(SIGPIPE, SIG_IGN);
-  logf_("=== INICIO DO APP (MODO GET) ===");
+  logf_("=== INICIO DO APP (MODO GET + BGFT) ===");
   sceSystemServiceHideSplashScreen();
 
   int s = socket(AF_INET, SOCK_STREAM, 0);
