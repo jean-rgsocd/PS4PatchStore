@@ -55,9 +55,16 @@ static void handle_api_install(int c, const char *body) {
   logf_("API /api/install chamada com sucesso!");
   
   char url[512] = {0};
-  char *u_ptr = strstr(body, "\"url\":\"");
+  
+  // Procura diretamente por qualquer link http no corpo da requisicao
+  const char *u_ptr = strstr(body, "http");
   if (u_ptr) {
-    sscanf(u_ptr + 7, "%511[^\"]", url);
+    int i = 0;
+    while (u_ptr[i] != '\0' && u_ptr[i] != '"' && u_ptr[i] != '\'' && i < 511) {
+      url[i] = u_ptr[i];
+      i++;
+    }
+    url[i] = '\0';
   }
 
   if (strlen(url) == 0) {
@@ -67,7 +74,7 @@ static void handle_api_install(int c, const char *body) {
     return;
   }
 
-  logf_("URL capturada para download:");
+  logf_("URL capturada com sucesso:");
   logf_(url);
 
   // Resposta de sucesso imediata para o JS do app
