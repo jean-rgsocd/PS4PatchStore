@@ -202,7 +202,20 @@ static int launch_payload(void) {
   return ok;
 }
 
-static int install_pkg(const char *url, const char *name, const char *id,
+/* Tipo do pacote (PS4GD jogo, PS4GP patch, PS4AC DLC...). Aceita apenas "PS4" + 2 letras/digitos
+ * maiusculos; qualquer outra coisa (ou vazio) cai no padrao PS4GD, que era o comportamento antigo. */
+static void sanitize_type(const char *in, char *out) {
+  int ok = (strlen(in) == 5 && !strncmp(in, "PS4", 3));
+  for (int i = 3; ok && i < 5; i++) {
+    char ch = in[i];
+    if (!((ch >= 'A' && ch <= 'Z') || (ch >= '0' && ch <= '9'))) ok = 0;
+  }
+  if (ok) { memcpy(out, in, 6); return; }   /* inclui o \0 */
+  if (in[0]) logf_("AVISO: tipo invalido, usando PS4GD");
+  strcpy(out, "PS4GD");
+}
+
+static int install_pkg(const char *url, const char *name, const char *id, const char *type,
                        unsigned long long size, char *err, int errsz) {
   unsigned char buf[4096];
   int o = 0;
@@ -210,7 +223,7 @@ static int install_pkg(const char *url, const char *name, const char *id,
   put_str(buf, &o, url, 2000);
   put_str(buf, &o, name, 200);
   put_str(buf, &o, id, 47);
-  put_str(buf, &o, "PS4GD", 15);
+  put_str(buf, &o, type, 15);
   put_u64(buf, &o, size);
   put_u32(buf, &o, 0u);            /* sem icone */
 
@@ -249,11 +262,13 @@ static void serve(int c) {
     while (req[li] && req[li] != '\r' && req[li] != '\n' && li < (int)sizeof(line) - 1) { line[li] = req[li]; li++; }
     line[li] = 0;
 
-    char url[1400], name[300], id[80], size_s[40], err[200];
+    char url[1400], name[300], id[80], size_s[40], type_raw[40], type[8], err[200];
     get_param(line, "url", url, sizeof(url));
     get_param(line, "name", name, sizeof(name));
     get_param(line, "content_id", id, sizeof(id));
     get_param(line, "size", size_s, sizeof(size_s));
+    get_param(line, "type", type_raw, sizeof(type_raw));
+    sanitize_type(type_raw, type);
     unsigned long long size = strtoull(size_s, NULL, 10);
 
     logf_("API /api/install acionada.");
@@ -263,7 +278,8 @@ static void serve(int c) {
     if (!name[0]) strcpy(name, "PS4 Package");
 
     logf_(url);
-    if (install_pkg(url, name, id, size, err, sizeof(err)) == 0) {
+    logf_(type);
+    if (install_pkg(url, name, id, type, size, err, sizeof(err)) == 0) {
       respond(c, 200, "OK");
     } else {
       respond(c, 502, err);
