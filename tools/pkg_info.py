@@ -54,24 +54,30 @@ def set_attr(tag, name, value):
     return tag[:-1] + ' %s="%s">' % (name, value)
 
 def fill(path):
+    """Preenche todos os botoes. Um link com problema e pulado (o botao fica como estava) e
+    os demais continuam; no fim retorna quantos falharam."""
     html = open(path, encoding="utf-8").read()
+    failed = []
     def repl(m):
         tag = m.group(0); url = re.search(r'data-pkg="([^"]+)"', tag).group(1)
         try:
             i = pkg_info(url)
         except Exception as e:
-            print("ERRO", url, "->", e); sys.exit(1)
+            print("ERRO %s -> %s  (botao mantido como esta)" % (url, e))
+            failed.append(url)
+            return tag
         print("OK  %s\n    %s  %d bytes  %s  \"%s\"" % (url, i["content_id"], i["size"], i["type"], i["title"]))
         for k, v in (("data-content-id", i["content_id"]), ("data-size", i["size"]), ("data-type", i["type"])):
             tag = set_attr(tag, k, v)
         return tag
     html = re.sub(r'<a\b[^>]*\bdata-pkg="[^"]+"[^>]*>', repl, html)
     open(path, "w", encoding="utf-8").write(html)
+    return len(failed)
 
 if __name__ == "__main__":
     if len(sys.argv) == 3 and sys.argv[1] == "--show":
         print(pkg_info(sys.argv[2]))
     elif len(sys.argv) == 2:
-        fill(sys.argv[1])
+        sys.exit(1 if fill(sys.argv[1]) else 0)
     else:
         print(__doc__)
