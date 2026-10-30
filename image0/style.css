@@ -7,6 +7,8 @@
   --text: #f4f7ff;
   --muted: #a1aec4;
   --accent: #42e6a4;
+  --base-accent: #176b43;
+  --base-border: #26965f;
   --border: rgba(255,255,255,.1);
 }
 
@@ -92,10 +94,14 @@ button, input, select { font: inherit; }
 .hero::before {
   content: "";
   position: absolute;
-  top: 0; right: 0; bottom: 0; left: 0;
+  top: 0;
+  right: 0;
+  bottom: 0;
+  left: 0;
   z-index: -1;
-  background: linear-gradient(90deg, rgba(5,10,20,.97) 0%, rgba(5,10,20,.76) 50%, rgba(5,10,20,.2) 100%),
-              linear-gradient(0deg, var(--bg), transparent 40%);
+  background:
+    linear-gradient(90deg, rgba(5,10,20,.97) 0%, rgba(5,10,20,.76) 50%, rgba(5,10,20,.2) 100%),
+    linear-gradient(0deg, var(--bg), transparent 40%);
 }
 
 .hero-content { max-width: 650px; }
@@ -127,7 +133,9 @@ button, input, select { font: inherit; }
   line-height: 1.7;
 }
 
-.primary-button, .download-button, .secondary-button {
+.primary-button,
+.download-button,
+.secondary-button {
   min-height: 44px;
   display: inline-flex;
   align-items: center;
@@ -143,14 +151,16 @@ button, input, select { font: inherit; }
   transition: transform .2s, background .2s, border-color .2s;
 }
 
-.primary-button, .download-button {
+.primary-button,
+.download-button {
   background: var(--accent);
   color: #06140f;
 }
 
 .primary-button { gap: 14px; }
 
-.primary-button:hover, .download-button:hover {
+.primary-button:hover,
+.download-button:hover {
   background: #75f4c0;
   transform: translateY(-2px);
 }
@@ -210,7 +220,10 @@ button, input, select { font: inherit; }
   border-radius: 8px;
 }
 
-.search-box span { color: var(--accent); font-size: 27px; }
+.search-box span {
+  color: var(--accent);
+  font-size: 27px;
+}
 
 .search-box input {
   width: 100%;
@@ -304,13 +317,44 @@ button, input, select { font: inherit; }
   line-height: 1.7;
 }
 
+/* BOTÕES DE DOWNLOAD */
 .card-actions {
   display: flex;
   flex-direction: column;
-  gap: 9px;
+  gap: 10px;
+  width: 100%;
 }
 
-.download-button, .secondary-button { width: 100%; }
+.download-button,
+.secondary-button {
+  width: 100%;
+}
+
+/* BOTÃO JOGO BASE */
+.base-download-button {
+  background: var(--base-accent);
+  border: 1px solid var(--base-border);
+  color: #ffffff;
+}
+
+.base-download-button:hover {
+  background: #208653;
+  border-color: #42e6a4;
+  color: #ffffff;
+}
+
+/* BOTÃO UPDATE */
+.card-actions .download-button:not(.base-download-button) {
+  background: var(--accent);
+  border: 1px solid var(--accent);
+  color: #06140f;
+}
+
+.card-actions .download-button:not(.base-download-button):hover {
+  background: #75f4c0;
+  border-color: #75f4c0;
+  color: #06140f;
+}
 
 .secondary-button {
   border-color: var(--border);
@@ -323,7 +367,8 @@ button, input, select { font: inherit; }
   color: var(--accent);
 }
 
-.unavailable, .unavailable:disabled {
+.unavailable,
+.unavailable:disabled {
   border-color: rgba(255,255,255,.06);
   background: rgba(255,255,255,.04);
   color: #7f8ba0;
@@ -359,7 +404,10 @@ button, input, select { font: inherit; }
   font-weight: 900;
 }
 
-.notice h3 { margin: 2px 0 7px; font-size: 14px; }
+.notice h3 {
+  margin: 2px 0 7px;
+  font-size: 14px;
+}
 
 .notice p {
   margin: 0;
@@ -379,62 +427,181 @@ button, input, select { font: inherit; }
   font-size: 11px;
 }
 
-.footer-brand { color: var(--text); font-size: 10px; }
+.footer-brand {
+  color: var(--text);
+  font-size: 10px;
+}
 
-.footer-brand .brand-icon { width: 40px; height: 29px; font-size: 13px; }
+.footer-brand .brand-icon {
+  width: 40px;
+  height: 29px;
+  font-size: 13px;
+}
 
 .footer a:last-child { color: var(--accent); }
 
 [hidden] { display: none !important; }
 
+/* TABLETS */
 @media (max-width: 900px) {
-  .game-grid { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+  .game-grid {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
+
   .cover-wrap { height: 210px; }
 }
 
+/* CELULARES */
 @media (max-width: 600px) {
-  .topbar { min-height: 66px; padding: 14px 5%; }
-  .brand { gap: 8px; font-size: 11px; letter-spacing: 1px; }
-  .brand-icon { width: 40px; height: 30px; font-size: 13px; }
-  .status { font-size: 8px; letter-spacing: .4px; gap: 6px; }
-  .hero { min-height: 400px; padding: 55px 6%; }
-  .hero h1 { letter-spacing: -2px; font-size: 42px; }
+  .topbar {
+    min-height: 66px;
+    padding: 14px 5%;
+  }
+
+  .brand {
+    gap: 8px;
+    font-size: 11px;
+    letter-spacing: 1px;
+  }
+
+  .brand-icon {
+    width: 40px;
+    height: 30px;
+    font-size: 13px;
+  }
+
+  .status {
+    font-size: 8px;
+    letter-spacing: .4px;
+    gap: 6px;
+  }
+
+  .hero {
+    min-height: 400px;
+    padding: 55px 6%;
+  }
+
+  .hero h1 {
+    letter-spacing: -2px;
+    font-size: 42px;
+  }
+
   .hero-description { font-size: 14px; }
-  .hero-label { right: 6%; bottom: 20px; font-size: 7px; }
+
+  .hero-label {
+    right: 6%;
+    bottom: 20px;
+    font-size: 7px;
+  }
+
   .section { padding: 48px 5%; }
+
   .section-heading { align-items: start; }
+
   .section-heading h2 { font-size: 28px; }
+
   .filters { flex-direction: column; }
-  .filters select { width: 100%; max-width: none; min-height: 46px; }
-  .game-grid { grid-template-columns: 1fr; gap: 18px; }
+
+  .filters select {
+    width: 100%;
+    max-width: none;
+    min-height: 46px;
+  }
+
+  .game-grid {
+    grid-template-columns: 1fr;
+    gap: 18px;
+  }
+
   .cover-wrap { height: 260px; }
+
   .card-content { padding: 18px; }
+
   .card-description { min-height: 0; }
-  .notice { margin: 0 5% 48px; padding: 18px; }
-  .footer { flex-wrap: wrap; padding: 22px 5%; }
-  .footer p { order: 3; width: 100%; margin: 0; }
+
+  .card-actions { gap: 10px; }
+
+  .download-button {
+    min-height: 46px;
+    font-size: 10px;
+  }
+
+  .notice {
+    margin: 0 5% 48px;
+    padding: 18px;
+  }
+
+  .footer {
+    flex-wrap: wrap;
+    padding: 22px 5%;
+  }
+
+  .footer p {
+    order: 3;
+    width: 100%;
+    margin: 0;
+  }
 }
 
+/* ACESSIBILIDADE */
 @media (prefers-reduced-motion: reduce) {
-  *, *::before, *::after { scroll-behavior: auto !important; transition: none !important; }
+  *,
+  *::before,
+  *::after {
+    scroll-behavior: auto !important;
+    transition: none !important;
+  }
 }
 
-/* ---- Compatibilidade: navegador antigo do PS4 (sem flex-gap/inset, < Safari 14.1) ---- */
+/* COMPATIBILIDADE COM NAVEGADORES ANTIGOS DO PS4 */
 @supports not (inset: 0) {
-  .topbar > * + *, .section-heading > * + *, .footer > * + *, .notice > * + * { margin-left: 16px; }
+  .topbar > * + *,
+  .section-heading > * + *,
+  .footer > * + *,
+  .notice > * + * {
+    margin-left: 16px;
+  }
+
   .brand > * + * { margin-left: 12px; }
+
   .status > * + * { margin-left: 9px; }
+
   .primary-button > * + * { margin-left: 14px; }
-  .filters > * + *, .search-box > * + * { margin-left: 12px; }
-  .card-actions > * + *, .hero-label > * + * { margin-top: 9px; }
+
+  .filters > * + *,
+  .search-box > * + * {
+    margin-left: 12px;
+  }
+
+  .card-actions > * + *,
+  .hero-label > * + * {
+    margin-top: 10px;
+  }
 }
+
 @media (max-width: 600px) {
   @supports not (inset: 0) {
-    .filters > * + * { margin-left: 0; margin-top: 12px; }
+    .filters > * + * {
+      margin-left: 0;
+      margin-top: 12px;
+    }
+
     .footer > * + * { margin-left: 0; }
   }
 }
-/* aviso de status do download */
-.toast { position: fixed; left: 50%; bottom: 24px; max-width: 90%; padding: 12px 18px;
-  transform: translateX(-50%); background: var(--panel-light); border: 1px solid var(--accent);
-  border-radius: 8px; color: var(--text); font-size: 12px; z-index: 50; }
+
+/* NOTIFICAÇÕES DE DOWNLOAD */
+.toast {
+  position: fixed;
+  left: 50%;
+  bottom: 24px;
+  max-width: 90%;
+  padding: 12px 18px;
+  transform: translateX(-50%);
+  background: var(--panel-light);
+  border: 1px solid var(--accent);
+  border-radius: 8px;
+  color: var(--text);
+  font-size: 12px;
+  z-index: 50;
+}
