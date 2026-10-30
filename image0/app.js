@@ -114,6 +114,8 @@
     var pkgName = packageValue(button, card, "data-name") || "PS4 Package";
     var pkgContentId = packageValue(button, card, "data-content-id") || "";
     var pkgSize = packageValue(button, card, "data-size") || "0";
+    // PS4GD (jogo), PS4GP (patch), PS4AC (DLC)... vem do pkg_info.py; vazio = padrao do servidor (PS4GD)
+    var pkgType = packageValue(button, card, "data-type") || "";
 
     showToast("Enviando pedido ao instalador nativo...");
 
@@ -122,7 +124,8 @@
       "?url=" + encodeURIComponent(url) +
       "&name=" + encodeURIComponent(pkgName) +
       "&content_id=" + encodeURIComponent(pkgContentId) +
-      "&size=" + encodeURIComponent(pkgSize);
+      "&size=" + encodeURIComponent(pkgSize) +
+      "&type=" + encodeURIComponent(pkgType);
 
     var xhr = new XMLHttpRequest();
     xhr.open("GET", targetUrl, true);
