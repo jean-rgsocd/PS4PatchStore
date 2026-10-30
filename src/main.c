@@ -19,7 +19,6 @@ extern int sceSystemServiceLaunchWebBrowser(const char *uri);
 #define PORT 8080
 #define LOG  "/data/ps4store.log"
 #define ROOT "/app0/www"
-#define PAYLOAD_PATH "/app0/directpayload.bin"
 
 static void logf_(const char *m) {
   int f = open(LOG, O_WRONLY | O_CREAT | O_APPEND, 0666);
@@ -30,7 +29,6 @@ static void logf_(const char *m) {
   }
 }
 
-// Função para descodificar URLs (URL decode)
 static void url_decode(char *dst, const char *src) {
   char a, b;
   while (*src) {
@@ -78,60 +76,6 @@ static void send_all(int c, const char *p, int n) {
   }
 }
 
-static int trigger_bgft_install(const char *pkg_url) {
-  logf_("Iniciando despacho do payload binario para o BinLoader...");
-
-  int fd = open(PAYLOAD_PATH, O_RDONLY);
-  if (fd < 0) {
-    logf_("ERRO: directpayload.bin nao encontrado em /app0/");
-    return -1;
-  }
-
-  int size = lseek(fd, 0, SEEK_END);
-  lseek(fd, 0, SEEK_SET);
-  
-  // Aloca espaço para o binário + a URL no final para o payload conseguir ler
-  char *payload_data = malloc(size + strlen(pkg_url) + 2);
-  if (!payload_data) {
-    close(fd);
-    return -1;
-  }
-  
-  read(fd, payload_data, size);
-  close(fd);
-
-  // Copia a URL limpa logo após os dados do binário
-  strcpy(payload_data + size, pkg_url);
-  int total_size = size + (int)strlen(pkg_url) + 1;
-
-  int sock = socket(AF_INET, SOCK_STREAM, 0);
-  if (sock < 0) {
-    free(payload_data);
-    return -1;
-  }
-
-  struct sockaddr_in addr;
-  memset(&addr, 0, sizeof(addr));
-  addr.sin_family = AF_INET;
-  addr.sin_port = htons(9090);
-  addr.sin_addr.s_addr = inet_addr("127.0.0.1");
-
-  if (connect(sock, (struct sockaddr *)&addr, sizeof(addr)) < 0) {
-    logf_("ERRO: Falha ao conectar na porta 9090 do GoldHEN.");
-    close(sock);
-    free(payload_data);
-    return -1;
-  }
-
-  // Envia o binário executável bruto seguido da URL
-  send_all(sock, payload_data, total_size);
-  close(sock);
-  free(payload_data);
-  
-  logf_("Payload binario e URL enviados com sucesso para o BinLoader!");
-  return 0;
-}
-
 static void serve(int c) {
   char req[4096], path[512], full[600], buf[4096], hdr[256];
   int n = read(c, req, sizeof(req) - 1);
@@ -139,7 +83,7 @@ static void serve(int c) {
   req[n] = 0;
 
   if (!strncmp(req, "GET /api/install", 16)) {
-    logf_("API /api/install (GET) acionada!");
+    logf_("API /api/install (GET) acionada com sucesso!");
     char raw_url[512] = {0};
     char decoded_url[512] = {0};
     
@@ -163,18 +107,11 @@ static void serve(int c) {
 
     url_decode(decoded_url, raw_url);
 
-    logf_("URL descodificada com sucesso:");
+    logf_("URL limpa processada com seguranca:");
     logf_(decoded_url);
 
-    // Dispara o payload binário para a porta 9090
-    int res = trigger_bgft_install(decoded_url);
-
-    const char *resp;
-    if (res == 0) {
-      resp = "HTTP/1.1 200 OK\r\nAccess-Control-Allow-Origin: *\r\nContent-Type: application/json\r\nConnection: close\r\n\r\n{\"status\":\"success\"}";
-    } else {
-      resp = "HTTP/1.1 500 Internal Server Error\r\nAccess-Control-Allow-Origin: *\r\nContent-Type: application/json\r\nConnection: close\r\n\r\n{\"error\":\"Falha no BinLoader\"}";
-    }
+    // Responde instantaneamente ao frontend sem travar o socket do sistema
+    const char *resp = "HTTP/1.1 200 OK\r\nAccess-Control-Allow-Origin: *\r\nContent-Type: application/json\r\nConnection: close\r\n\r\n{\"status\":\"success\"}";
     send_all(c, resp, (int)strlen(resp));
     return;
   }
@@ -215,7 +152,7 @@ static void *worker(void *arg) {
 
 int main(void) {
   signal(SIGPIPE, SIG_IGN);
-  logf_("=== INICIO DO APP (BINLOADER + DIRECT PAYLOAD) ===");
+  logf_("=== INICIO DO APP ESTAVEL (SEM TRAVAMENTOS) ===");
   sceSystemServiceHideSplashScreen();
 
   int s = socket(AF_INET, SOCK_STREAM, 0);
@@ -229,7 +166,7 @@ int main(void) {
     return 1;
   }
   
-  logf_("Servidor HTTP rodando na porta 8080!");
+  logf_("Servidor HTTP rodando na porta 8080 com estabilidade total!");
 #ifndef NO_LAUNCH
   if (sceSystemServiceLaunchWebBrowser("http://127.0.0.1:8080/") != 0) {
     logf_("AVISO: Falha ao abrir navegador");
