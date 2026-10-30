@@ -30,7 +30,7 @@ static void logf_(const char *m) {
   }
 }
 
-// Função corrigida para descodificar URLs (URL decode)
+// Função para descodificar URLs (URL decode)
 static void url_decode(char *dst, const char *src) {
   char a, b;
   while (*src) {
@@ -79,7 +79,7 @@ static void send_all(int c, const char *p, int n) {
 }
 
 static int trigger_bgft_install(const char *pkg_url) {
-  logf_("Iniciando despacho do payload para o BinLoader BGFT...");
+  logf_("Iniciando despacho direto para o BGFT nativo...");
 
   int fd = open(PAYLOAD_PATH, O_RDONLY);
   if (fd < 0) {
@@ -89,13 +89,27 @@ static int trigger_bgft_install(const char *pkg_url) {
 
   int size = lseek(fd, 0, SEEK_END);
   lseek(fd, 0, SEEK_SET);
-  char *payload_data = malloc(size);
+  char *payload_data = malloc(size + strlen(pkg_url) + 1);
   if (!payload_data) {
     close(fd);
     return -1;
   }
   read(fd, payload_data, size);
   close(fd);
+
+  // Procura o marcador e injeta a URL limpa do R2 diretamente no payload
+  unsigned char marker[6] = {0xb4, 0xb4, 0xb4, 0xb4, 0xb4, 0xb4};
+  int found = -1;
+  for (int i = 0; i < size - 6; i++) {
+    if (!memcmp(payload_data + i, marker, 6)) {
+      found = i;
+      break;
+    }
+  }
+
+  if (found != -1) {
+    strcpy(payload_data + found, pkg_url);
+  }
 
   int sock = -1;
   int ports[] = {9090, 9021, 9020};
@@ -123,7 +137,7 @@ static int trigger_bgft_install(const char *pkg_url) {
   send_all(sock, payload_data, size);
   close(sock);
   free(payload_data);
-  logf_("Payload despachado com sucesso para o BGFT!");
+  logf_("URL injetada e payload despachado com sucesso para o BGFT!");
   return 0;
 }
 
@@ -209,7 +223,7 @@ static void *worker(void *arg) {
 
 int main(void) {
   signal(SIGPIPE, SIG_IGN);
-  logf_("=== INICIO DO APP (MODO GET + DECODE) ===");
+  logf_("=== INICIO DO APP (MODO GET + DIRECT URL) ===");
   sceSystemServiceHideSplashScreen();
 
   int s = socket(AF_INET, SOCK_STREAM, 0);
