@@ -56,11 +56,16 @@ static void handle_api_install(int c, const char *body) {
   
   char url[512] = {0};
   
-  // Procura diretamente por qualquer link http no corpo da requisicao
-  const char *u_ptr = strstr(body, "http");
+  // Procura pela chave "url" no JSON enviado pelo app.js
+  const char *u_ptr = strstr(body, "url");
+  if (u_ptr) {
+    // Avança até encontrar o inicio do link http
+    u_ptr = strstr(u_ptr, "http");
+  }
+  
   if (u_ptr) {
     int i = 0;
-    while (u_ptr[i] != '\0' && u_ptr[i] != '"' && u_ptr[i] != '\'' && i < 511) {
+    while (u_ptr[i] != '\0' && u_ptr[i] != '"' && u_ptr[i] != '\'' && u_ptr[i] != '}' && i < 511) {
       url[i] = u_ptr[i];
       i++;
     }
