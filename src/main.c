@@ -118,7 +118,7 @@ static void serve(int c) {
     if (u_param) {
       u_param += 4;
       int i = 0;
-      while (u_param[i] != '\0' && u_param[i] != ' ' && u_param[i] != '\r' && u_param[i] != '\n' && i < 511) {
+      while (u_param[i] != '\0' && u_param[i] != ' ' && u_param[i] != '&' && u_param[i] != '\r' && u_param[i] != '\n' && i < 511) {
         url[i] = u_param[i];
         i++;
       }
