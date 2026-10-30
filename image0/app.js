@@ -1,5 +1,5 @@
 /* PS4 Patch Store
- * Catalogo e instalacao nativa BGFT via GET.
+ * Catalogo e instalacao nativa BGFT via GET com metadados.
  * Compatibilidade: ES5 / WebKit PS4.
  */
 
@@ -95,6 +95,13 @@
     }
   }
 
+  function packageValue(button, card, attribute) {
+    return (
+      getAttribute(button, attribute) ||
+      getAttribute(card, attribute)
+    );
+  }
+
   function installPkg(url, button) {
     if (!url) {
       showToast("URL do pacote nao configurada.");
@@ -102,10 +109,20 @@
       return;
     }
 
+    var card = findCard(button) || button;
+
+    var pkgName = packageValue(button, card, "data-name") || "PS4 Package";
+    var pkgContentId = packageValue(button, card, "data-content-id") || "";
+    var pkgSize = packageValue(button, card, "data-size") || "0";
+
     showToast("Enviando pedido ao instalador nativo...");
 
-    // Utilizando GET com query parameter para compatibilidade total com o WebKit do PS4
-    var targetUrl = INSTALL_ENDPOINT + "?url=" + encodeURIComponent(url);
+    // Envia URL e metadados via GET para evitar qualquer corte de corpo no WebKit do PS4
+    var targetUrl = INSTALL_ENDPOINT + 
+      "?url=" + encodeURIComponent(url) +
+      "&name=" + encodeURIComponent(pkgName) +
+      "&content_id=" + encodeURIComponent(pkgContentId) +
+      "&size=" + encodeURIComponent(pkgSize);
 
     var xhr = new XMLHttpRequest();
     xhr.open("GET", targetUrl, true);
