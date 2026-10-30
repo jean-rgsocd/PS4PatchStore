@@ -53,13 +53,15 @@ static void send_all(int c, const char *p, int n) {
 
 static void handle_api_install(int c, const char *body) {
   logf_("API /api/install chamada com sucesso!");
+  if (body && strlen(body) > 0) {
+    logf_("Corpo recebido:");
+    logf_(body);
+  }
   
   char url[512] = {0};
   
-  // Procura pela chave "url" no JSON enviado pelo app.js
   const char *u_ptr = strstr(body, "url");
   if (u_ptr) {
-    // Avança até encontrar o inicio do link http
     u_ptr = strstr(u_ptr, "http");
   }
   
@@ -82,13 +84,12 @@ static void handle_api_install(int c, const char *body) {
   logf_("URL capturada com sucesso:");
   logf_(url);
 
-  // Resposta de sucesso imediata para o JS do app
   const char *resp = "HTTP/1.1 200 OK\r\nAccess-Control-Allow-Origin: *\r\nContent-Type: application/json\r\nConnection: close\r\n\r\n{\"status\":\"success\",\"message\":\"Pedido recebido\"}";
   send_all(c, resp, (int)strlen(resp));
 }
 
 static void serve(int c) {
-  char req[4096], path[256], full[300], buf[4096], hdr[256];
+  char req[8192], path[256], full[300], buf[4096], hdr[256];
   int n = read(c, req, sizeof(req) - 1);
   if (n <= 0) return;
   req[n] = 0;
@@ -101,8 +102,11 @@ static void serve(int c) {
 
   if (!strncmp(req, "POST /api/install", 17)) {
     char *body = strstr(req, "\r\n\r\n");
-    if (body) body += 4;
-    else body = "";
+    if (body) {
+      body += 4;
+    } else {
+      body = "";
+    }
     handle_api_install(c, body);
     return;
   }
