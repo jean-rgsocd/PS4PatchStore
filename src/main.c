@@ -1,3 +1,9 @@
+/* PS4 Patch Store - eboot (OpenOrbis).
+ * - Serve /app0/www em 127.0.0.1:8080 e abre o navegador do sistema.
+ * - /api/install?url=..&name=..&content_id=..&size=..  -> instala via payload do DirectPackageInstaller:
+ *     1) envia o payload ao BinLoader do GoldHEN (porta 9090), com IP/porta de retorno gravados no marcador B4;
+ *     2) o payload conecta em 127.0.0.1:9091 e espera;
+ *     3) enviamos o pacote no formato binario que o payload le (get_pkg_info). */
 #include <stdio.h>
 #include <string.h>
 #include <stdlib.h>
@@ -16,42 +22,67 @@ extern int sceSystemServiceHideSplashScreen(void);
 extern int sceSystemServiceLaunchWebBrowser(const char *uri);
 #endif
 
-#define PORT 8080
-#define LOG  "/data/ps4store.log"
-#define ROOT "/app0/www"
-#define PAYLOAD_PATH "/app0/directpayload.bin"
+#define PORT          8080
+#define CALLBACK_PORT 9091
+#define BINLOADER     9090
+#define LOG           "/data/ps4store.log"
+#define ROOT          "/app0/www"
+#define PAYLOAD_PATH  "/app0/directpayload.bin"
 
 static void logf_(const char *m) {
   int f = open(LOG, O_WRONLY | O_CREAT | O_APPEND, 0666);
-  if (f >= 0) { 
-    write(f, m, strlen(m)); 
-    write(f, "\n", 1); 
-    close(f); 
+  if (f >= 0) { write(f, m, strlen(m)); write(f, "\n", 1); close(f); }
+}
+
+static void send_all(int c, const char *p, int n) {
+  while (n > 0) {
+    int w = write(c, p, n);
+    if (w <= 0) return;
+    p += w; n -= w;
   }
 }
 
-static void url_decode(char *dst, const char *src) {
-  char a, b;
-  while (*src) {
-    if ((*src == '%') && (src[1] && src[2]) && (isxdigit((unsigned char)src[1]) && isxdigit((unsigned char)src[2]))) {
-      a = src[1];
-      b = src[2];
-      if (a >= 'a') a = a - 'a' + 10;
-      else if (a >= 'A') a = a - 'A' + 10;
-      else a = a - '0';
-      if (b >= 'a') b = b - 'a' + 10;
-      else if (b >= 'A') b = b - 'A' + 10;
-      else b = b - '0';
-      *dst++ = (char)(16 * a + b);
+static int send_all_ok(int c, const char *p, int n) {
+  while (n > 0) {
+    int w = write(c, p, n);
+    if (w <= 0) return -1;
+    p += w; n -= w;
+  }
+  return 0;
+}
+
+/* decodifica %XX e + com limite de tamanho */
+static void url_decode(char *dst, int cap, const char *src) {
+  int o = 0;
+  while (*src && o < cap - 1) {
+    if (*src == '%' && isxdigit((unsigned char)src[1]) && isxdigit((unsigned char)src[2])) {
+      char a = src[1], b = src[2];
+      a = (a >= 'a') ? a - 'a' + 10 : (a >= 'A') ? a - 'A' + 10 : a - '0';
+      b = (b >= 'a') ? b - 'a' + 10 : (b >= 'A') ? b - 'A' + 10 : b - '0';
+      dst[o++] = (char)(16 * a + b);
       src += 3;
     } else if (*src == '+') {
-      *dst++ = ' ';
-      src++;
+      dst[o++] = ' '; src++;
     } else {
-      *dst++ = *src++;
+      dst[o++] = *src++;
     }
   }
-  *dst = '\0';
+  dst[o] = 0;
+}
+
+static int get_param(const char *line, const char *key, char *out, int cap) {
+  char pat[48], raw[1400];
+  int i = 0;
+  out[0] = 0;
+  snprintf(pat, sizeof(pat), "?%s=", key);
+  const char *p = strstr(line, pat);
+  if (!p) { snprintf(pat, sizeof(pat), "&%s=", key); p = strstr(line, pat); }
+  if (!p) return 0;
+  p += strlen(pat);
+  while (p[i] && p[i] != '&' && p[i] != ' ' && i < (int)sizeof(raw) - 1) { raw[i] = p[i]; i++; }
+  raw[i] = 0;
+  url_decode(out, cap, raw);
+  return 1;
 }
 
 static const char *mime(const char *p) {
@@ -69,140 +100,141 @@ static const char *mime(const char *p) {
   return "application/octet-stream";
 }
 
-static void send_all(int c, const char *p, int n) {
-  while (n > 0) {
-    int w = write(c, p, n);
-    if (w <= 0) return;
-    p += w; n -= w;
-  }
-}
-
-static char current_target_url[512] = {0};
-static pthread_mutex_t url_mutex = PTHREAD_MUTEX_INITIALIZER;
+/* ---------- conexao de retorno do payload ---------- */
+static int waiting_sock = -1;
+static pthread_mutex_t sock_mutex = PTHREAD_MUTEX_INITIALIZER;
 
 static void *callback_server_thread(void *arg) {
-  int server_sock = socket(AF_INET, SOCK_STREAM, 0);
-  if (server_sock < 0) return NULL;
-
+  int s = socket(AF_INET, SOCK_STREAM, 0);
+  if (s < 0) return NULL;
   int one = 1;
-  setsockopt(server_sock, SOL_SOCKET, SO_REUSEADDR, &one, sizeof(one));
-
-  struct sockaddr_in addr;
-  memset(&addr, 0, sizeof(addr));
-  addr.sin_family = AF_INET;
-  addr.sin_port = htons(9091);
-  addr.sin_addr.s_addr = inet_addr("127.0.0.1");
-
-  if (bind(server_sock, (struct sockaddr *)&addr, sizeof(addr)) < 0 || listen(server_sock, 4) < 0) {
-    close(server_sock);
-    return NULL;
-  }
-
-  logf_("Servidor de retorno TCP ativo na porta 9091.");
-
-  for (;;) {
-    int client_sock = accept(server_sock, NULL, NULL);
-    if (client_sock < 0) continue;
-
-    pthread_mutex_lock(&url_mutex);
-    if (strlen(current_target_url) > 0) {
-      send_all(client_sock, current_target_url, (int)strlen(current_target_url));
-      send_all(client_sock, "\n", 1);
-      logf_("URL entregue ao payload com sucesso.");
-    }
-    pthread_mutex_unlock(&url_mutex);
-
-    close(client_sock);
-  }
-
-  close(server_sock);
-  return NULL;
-}
-
-static int trigger_bgft_install(const char *pkg_url) {
-  int fd = open(PAYLOAD_PATH, O_RDONLY);
-  if (fd < 0) return 0;
-
-  int size = lseek(fd, 0, SEEK_END);
-  lseek(fd, 0, SEEK_SET);
-  char *payload_data = malloc(size);
-  if (!payload_data) {
-    close(fd);
-    return -1;
-  }
-  read(fd, payload_data, size);
-  close(fd);
-
-  unsigned char marker[6] = {0xb4, 0xb4, 0xb4, 0xb4, 0xb4, 0xb4};
-  int found = -1;
-  for (int i = 0; i < size - 6; i++) {
-    if (!memcmp(payload_data + i, marker, 6)) {
-      found = i;
-      break;
-    }
-  }
-
-  if (found != -1) {
-    payload_data[found + 0] = 127;
-    payload_data[found + 1] = 0;
-    payload_data[found + 2] = 0;
-    payload_data[found + 3] = 1;
-    unsigned short port = 9091;
-    payload_data[found + 4] = (port >> 8) & 0xFF;
-    payload_data[found + 5] = port & 0xFF;
-  }
-
-  int sock = socket(AF_INET, SOCK_STREAM, 0);
-  if (sock >= 0) {
-    struct sockaddr_in addr;
-    memset(&addr, 0, sizeof(addr));
-    addr.sin_family = AF_INET;
-    addr.sin_port = htons(9090);
-    addr.sin_addr.s_addr = inet_addr("127.0.0.1");
-
-    if (connect(sock, (struct sockaddr *)&addr, sizeof(addr)) == 0) {
-      send_all(sock, payload_data, size);
-    }
-    close(sock);
-  }
-
-  free(payload_data);
-  return 0;
-}
-
-
-/* Remote Package Installer / payload: POST http://127.0.0.1:12800/api/install
- * corpo: {"type":"direct","packages":["URL"]}  (formato documentado do RPI) */
-static int post_install_api(const char *url, char *resp, int rsz) {
-  char body[700], req[1100];
-  int bl = snprintf(body, sizeof(body), "{\"type\":\"direct\",\"packages\":[\"%s\"]}", url);
-  int rl = snprintf(req, sizeof(req),
-    "POST /api/install HTTP/1.1\r\nHost: 127.0.0.1\r\nContent-Type: application/json\r\n"
-    "Content-Length: %d\r\nConnection: close\r\n\r\n%s", bl, body);
-
-  int sk = socket(AF_INET, SOCK_STREAM, 0);
-  if (sk < 0) return -1;
-
-  struct timeval tv;
-  tv.tv_sec = 3; tv.tv_usec = 0;
-  setsockopt(sk, SOL_SOCKET, SO_RCVTIMEO, &tv, sizeof(tv));
-  setsockopt(sk, SOL_SOCKET, SO_SNDTIMEO, &tv, sizeof(tv));
+  setsockopt(s, SOL_SOCKET, SO_REUSEADDR, &one, sizeof(one));
 
   struct sockaddr_in a;
   memset(&a, 0, sizeof(a));
   a.sin_family = AF_INET;
-  a.sin_port = htons(12800);
+  a.sin_port = htons(CALLBACK_PORT);
   a.sin_addr.s_addr = inet_addr("127.0.0.1");
 
-  if (connect(sk, (struct sockaddr *)&a, sizeof(a)) < 0) { close(sk); return -1; }
+  if (bind(s, (struct sockaddr *)&a, sizeof(a)) < 0 || listen(s, 4) < 0) {
+    logf_("ERRO: porta 9091 indisponivel");
+    close(s);
+    return NULL;
+  }
+  logf_("Servidor de retorno ativo na porta 9091.");
 
-  send_all(sk, req, rl);
+  for (;;) {
+    int c = accept(s, NULL, NULL);
+    if (c < 0) continue;
+    pthread_mutex_lock(&sock_mutex);
+    if (waiting_sock >= 0) close(waiting_sock);
+    waiting_sock = c;               /* payload esta bloqueado lendo; nao enviamos nada agora */
+    pthread_mutex_unlock(&sock_mutex);
+    logf_("Payload conectou e aguarda pacote.");
+  }
+  return NULL;
+}
 
-  int n = 0, r;
-  while (n < rsz - 1 && (r = read(sk, resp + n, rsz - 1 - n)) > 0) n += r;
-  resp[n] = 0;
-  close(sk);
-  return n > 0 ? 0 : -2;
+/* ---------- formato binario lido por get_pkg_info() do payload ----------
+ * u32 1 | (u32 len + bytes) url, nome, content_id, tipo | u64 tamanho | u32 len_icone (0) */
+static void put_u32(unsigned char *b, int *o, unsigned int v) { memcpy(b + *o, &v, 4); *o += 4; }
+static void put_u64(unsigned char *b, int *o, unsigned long long v) { memcpy(b + *o, &v, 8); *o += 8; }
+static void put_str(unsigned char *b, int *o, const char *s, int maxlen) {
+  int l = (int)strlen(s);
+  if (l > maxlen) l = maxlen;
+  put_u32(b, o, (unsigned int)l);
+  memcpy(b + *o, s, l);
+  *o += l;
+}
+
+static int deliver_job(const unsigned char *buf, int len) {
+  pthread_mutex_lock(&sock_mutex);
+  int s = waiting_sock;
+  waiting_sock = -1;
+  pthread_mutex_unlock(&sock_mutex);
+  if (s < 0) return -1;
+  int r = send_all_ok(s, (const char *)buf, len);
+  close(s);
+  return r == 0 ? 0 : -2;
+}
+
+/* envia directpayload.bin ao BinLoader com IP/porta de retorno gravados no marcador B4 */
+static int launch_payload(void) {
+  int fd = open(PAYLOAD_PATH, O_RDONLY);
+  if (fd < 0) { logf_("ERRO: /app0/directpayload.bin nao encontrado"); return -1; }
+
+  int size = (int)lseek(fd, 0, SEEK_END);
+  lseek(fd, 0, SEEK_SET);
+  unsigned char *pl = malloc(size);
+  if (!pl) { close(fd); return -1; }
+  int got = 0, r;
+  while (got < size && (r = read(fd, pl + got, size - got)) > 0) got += r;
+  close(fd);
+
+  unsigned char marker[6] = {0xb4, 0xb4, 0xb4, 0xb4, 0xb4, 0xb4};
+  int found = -1;
+  for (int i = 0; i + 6 <= size; i++) {
+    if (!memcmp(pl + i, marker, 6)) { found = i; break; }
+  }
+  if (found < 0) { logf_("ERRO: marcador B4 nao encontrado no payload"); free(pl); return -1; }
+
+  pl[found + 0] = 127; pl[found + 1] = 0; pl[found + 2] = 0; pl[found + 3] = 1;
+  pl[found + 4] = (CALLBACK_PORT >> 8) & 0xFF;
+  pl[found + 5] = CALLBACK_PORT & 0xFF;
+
+  int sk = socket(AF_INET, SOCK_STREAM, 0);
+  int ok = -1;
+  if (sk >= 0) {
+    struct sockaddr_in a;
+    memset(&a, 0, sizeof(a));
+    a.sin_family = AF_INET;
+    a.sin_port = htons(BINLOADER);
+    a.sin_addr.s_addr = inet_addr("127.0.0.1");
+    if (connect(sk, (struct sockaddr *)&a, sizeof(a)) == 0) {
+      ok = send_all_ok(sk, (const char *)pl, size);
+    } else {
+      logf_("ERRO: BinLoader (9090) recusou conexao. Ative o BinLoader no GoldHEN.");
+    }
+    close(sk);
+  }
+  free(pl);
+  if (ok == 0) logf_("Payload enviado ao BinLoader (9090).");
+  return ok;
+}
+
+static int install_pkg(const char *url, const char *name, const char *id,
+                       unsigned long long size, char *err, int errsz) {
+  unsigned char buf[4096];
+  int o = 0;
+  put_u32(buf, &o, 1u);
+  put_str(buf, &o, url, 2000);
+  put_str(buf, &o, name, 200);
+  put_str(buf, &o, id, 47);
+  put_str(buf, &o, "PS4GD", 15);
+  put_u64(buf, &o, size);
+  put_u32(buf, &o, 0u);            /* sem icone */
+
+  if (deliver_job(buf, o) == 0) { logf_("Pacote entregue ao payload ja ativo."); return 0; }
+
+  if (launch_payload() != 0) {
+    snprintf(err, errsz, "payload nao enviado (BinLoader do GoldHEN ligado?)");
+    return -1;
+  }
+  for (int i = 0; i < 30; i++) {      /* ate 15 s */
+    usleep(500000);
+    if (deliver_job(buf, o) == 0) { logf_("Pacote entregue ao payload."); return 0; }
+  }
+  snprintf(err, errsz, "payload nao conectou em 15s");
+  logf_("ERRO: payload nao conectou em 15s");
+  return -2;
+}
+
+static void respond(int c, int code, const char *msg) {
+  char out[600];
+  snprintf(out, sizeof(out),
+    "HTTP/1.1 %d %s\r\nAccess-Control-Allow-Origin: *\r\nContent-Type: text/plain; charset=utf-8\r\nConnection: close\r\n\r\n%s",
+    code, code == 200 ? "OK" : "Error", msg);
+  send_all(c, out, (int)strlen(out));
 }
 
 static void serve(int c) {
@@ -212,74 +244,44 @@ static void serve(int c) {
   req[n] = 0;
 
   if (!strncmp(req, "GET /api/install", 16)) {
+    char line[2400];
+    int li = 0;
+    while (req[li] && req[li] != '\r' && req[li] != '\n' && li < (int)sizeof(line) - 1) { line[li] = req[li]; li++; }
+    line[li] = 0;
+
+    char url[1400], name[300], id[80], size_s[40], err[200];
+    get_param(line, "url", url, sizeof(url));
+    get_param(line, "name", name, sizeof(name));
+    get_param(line, "content_id", id, sizeof(id));
+    get_param(line, "size", size_s, sizeof(size_s));
+    unsigned long long size = strtoull(size_s, NULL, 10);
+
     logf_("API /api/install acionada.");
-    char raw_url[512] = {0};
-    char decoded_url[512] = {0};
-    
-    char *u_param = strstr(req, "url=");
-    if (u_param) {
-      u_param += 4;
-      int i = 0;
-      while (u_param[i] != '\0' && u_param[i] != ' ' && u_param[i] != '&' && u_param[i] != '\r' && u_param[i] != '\n' && i < 511) {
-        raw_url[i] = u_param[i];
-        i++;
-      }
-      raw_url[i] = '\0';
-    }
+    if (!url[0])  { respond(c, 400, "URL vazia."); return; }
+    if (!id[0])   { logf_("ERRO: content_id vazio"); respond(c, 400, "Preencha data-content-id deste botao (ID do PKG)."); return; }
+    if (!size)    { logf_("AVISO: size = 0"); }
+    if (!name[0]) strcpy(name, "PS4 Package");
 
-    if (strlen(raw_url) == 0) {
-      const char *resp = "HTTP/1.1 400 Bad Request\r\nAccess-Control-Allow-Origin: *\r\nContent-Length: 0\r\nConnection: close\r\n\r\n";
-      send_all(c, resp, (int)strlen(resp));
-      return;
-    }
-
-    url_decode(decoded_url, raw_url);
-
-    pthread_mutex_lock(&url_mutex);
-    memset(current_target_url, 0, sizeof(current_target_url));
-    strcpy(current_target_url, decoded_url);
-    pthread_mutex_unlock(&url_mutex);
-
-    char api_resp[512];
-    int api_ok = post_install_api(decoded_url, api_resp, sizeof(api_resp));
-
-    if (api_ok != 0) {
-      logf_("API 12800 fora do ar; enviando payload ao BinLoader...");
-      trigger_bgft_install(decoded_url);
-      for (int t = 0; t < 8 && api_ok != 0; t++) {
-        usleep(500000);
-        api_ok = post_install_api(decoded_url, api_resp, sizeof(api_resp));
-      }
-    }
-
-    if (api_ok == 0) {
-      logf_("Resposta da API 12800:");
-      logf_(api_resp);
+    logf_(url);
+    if (install_pkg(url, name, id, size, err, sizeof(err)) == 0) {
+      respond(c, 200, "OK");
     } else {
-      logf_("API 12800 nao respondeu.");
+      respond(c, 502, err);
     }
-
-    const char *resp = "HTTP/1.1 200 OK\r\nAccess-Control-Allow-Origin: *\r\nContent-Type: application/json\r\nConnection: close\r\n\r\n{\"status\":\"success\"}";
-    send_all(c, resp, (int)strlen(resp));
     return;
   }
 
-  if (sscanf(req, "GET %255s", path) != 1 || strstr(path, "..")) {
-    const char *r = "HTTP/1.1 400 Bad Request\r\nAccess-Control-Allow-Origin: *\r\nContent-Length: 0\r\nConnection: close\r\n\r\n";
-    send_all(c, r, (int)strlen(r));
+  if (sscanf(req, "GET %511s", path) != 1 || strstr(path, "..")) {
+    respond(c, 400, "");
     return;
   }
-  
+
   char *q = strchr(path, '?'); if (q) *q = 0;
   if (!strcmp(path, "/")) strcpy(path, "/index.html");
   snprintf(full, sizeof(full), "%s%s", ROOT, path);
   int fd = open(full, O_RDONLY);
-  if (fd < 0) {
-    const char *r = "HTTP/1.1 404 Not Found\r\nAccess-Control-Allow-Origin: *\r\nContent-Length: 0\r\nConnection: close\r\n\r\n";
-    send_all(c, r, (int)strlen(r));
-    return;
-  }
-  
+  if (fd < 0) { respond(c, 404, ""); return; }
+
   snprintf(hdr, sizeof(hdr), "HTTP/1.1 200 OK\r\nAccess-Control-Allow-Origin: *\r\nContent-Type: %s\r\nConnection: close\r\n\r\n", mime(full));
   send_all(c, hdr, (int)strlen(hdr));
   while ((n = read(fd, buf, sizeof(buf))) > 0) send_all(c, buf, n);
@@ -291,7 +293,7 @@ static void *worker(void *arg) {
   struct timeval tv;
   tv.tv_sec = 3; tv.tv_usec = 0;
   setsockopt(c, SOL_SOCKET, SO_RCVTIMEO, &tv, sizeof(tv));
-  tv.tv_sec = 10;
+  tv.tv_sec = 30;
   setsockopt(c, SOL_SOCKET, SO_SNDTIMEO, &tv, sizeof(tv));
   serve(c);
   close(c);
@@ -300,26 +302,31 @@ static void *worker(void *arg) {
 
 int main(void) {
   signal(SIGPIPE, SIG_IGN);
-  logf_("=== PS4 PATCH STORE - INICIO ESTAVEL ===");
+  logf_("=== PS4 PATCH STORE - protocolo DPI ===");
   sceSystemServiceHideSplashScreen();
 
-  pthread_t callback_thread;
+  pthread_t cb;
   pthread_attr_t attr;
   pthread_attr_init(&attr);
   pthread_attr_setdetachstate(&attr, PTHREAD_CREATE_DETACHED);
-  pthread_create(&callback_thread, &attr, callback_server_thread, NULL);
+  pthread_create(&cb, &attr, callback_server_thread, NULL);
   pthread_attr_destroy(&attr);
 
   int s = socket(AF_INET, SOCK_STREAM, 0);
   int one = 1;
   setsockopt(s, SOL_SOCKET, SO_REUSEADDR, &one, sizeof(one));
-  struct sockaddr_in a; memset(&a, 0, sizeof(a));
-  a.sin_family = AF_INET; a.sin_port = htons(PORT); a.sin_addr.s_addr = inet_addr("127.0.0.1");
-  
+  struct sockaddr_in a;
+  memset(&a, 0, sizeof(a));
+  a.sin_family = AF_INET;
+  a.sin_port = htons(PORT);
+  a.sin_addr.s_addr = inet_addr("127.0.0.1");
+
   if (bind(s, (struct sockaddr *)&a, sizeof(a)) < 0 || listen(s, 16) < 0) {
+    logf_("ERRO: porta 8080 indisponivel");
     return 1;
   }
-  
+  logf_("Servidor HTTP na porta 8080.");
+
 #ifndef NO_LAUNCH
   sceSystemServiceLaunchWebBrowser("http://127.0.0.1:8080/");
 #endif
@@ -332,9 +339,7 @@ int main(void) {
     pthread_attr_init(&at);
     pthread_attr_setstacksize(&at, 256 * 1024);
     pthread_attr_setdetachstate(&at, PTHREAD_CREATE_DETACHED);
-    if (pthread_create(&t, &at, worker, (void *)(long)c) != 0) {
-      worker((void *)(long)c);
-    }
+    if (pthread_create(&t, &at, worker, (void *)(long)c) != 0) worker((void *)(long)c);
     pthread_attr_destroy(&at);
   }
   return 0;
