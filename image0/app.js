@@ -1,5 +1,5 @@
 /* PS4 Patch Store
- * Catalogo, leitura de metadados via Range e instalacao nativa BGFT.
+ * Catalogo e instalacao nativa BGFT blindada.
  * Compatibilidade: ES5 / WebKit PS4.
  */
 
@@ -105,11 +105,7 @@
   function installPkg(url, button) {
     if (!url) {
       showToast("URL do pacote nao configurada.");
-      return;
-    }
-
-    if (installBusy) {
-      showToast("Ja existe um pedido de instalacao em andamento.");
+      installBusy = false;
       return;
     }
 
@@ -120,11 +116,6 @@
     var pkgType = packageValue(button, card, "data-package-type") || "application";
     var pkgSize = packageValue(button, card, "data-size");
     var pkgIcon = packageValue(button, card, "data-icon");
-
-    installBusy = true;
-    if (button && button.setAttribute) {
-      button.setAttribute("aria-disabled", "true");
-    }
 
     showToast("Enviando pedido ao instalador nativo BGFT...");
 
@@ -166,9 +157,7 @@
         response &&
         response.status === "success"
       ) {
-        showToast(
-          "Download registrado! Acompanhe nas Notificacoes do PS4."
-        );
+        showToast("Download registrado! Acompanhe nas Notificacoes do PS4.");
         return;
       }
 
@@ -177,9 +166,7 @@
         return;
       }
 
-      showToast(
-        "Falha HTTP " + xhr.status + ". " + (xhr.responseText || "Resposta invalida.")
-      );
+      showToast("Falha HTTP " + xhr.status + ". Servidor nativo indisponivel.");
     };
 
     xhr.onerror = function () {
@@ -205,12 +192,22 @@
       event.preventDefault();
     }
 
+    if (installBusy) {
+      showToast("Ja existe um pedido em andamento. Aguarde.");
+      return;
+    }
+
     var target = (event && event.currentTarget) ? event.currentTarget : this;
-    var url = getAttribute(target, "data-pkg") || (target && target.dataset ? target.dataset.pkg : "");
+    var url = getAttribute(target, "data-pkg");
 
     if (!url) {
-      showToast("URL do pacote nao configurada no data-pkg.");
+      showToast("URL do pacote nao configurada no botao.");
       return;
+    }
+
+    installBusy = true;
+    if (target && target.setAttribute) {
+      target.setAttribute("aria-disabled", "true");
     }
 
     installPkg(url, target);
@@ -235,7 +232,7 @@
 
   filterCatalog();
 
-  // Foco e controle (mantidos intactos)
+  // Foco e controle
   var focusStyle = document.createElement("style");
   focusStyle.appendChild(
     document.createTextNode(
