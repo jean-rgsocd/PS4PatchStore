@@ -29,7 +29,6 @@ static void logf_(const char *m) {
   }
 }
 
-// Função para descodificar URLs (URL decode)
 static void url_decode(char *dst, const char *src) {
   char a, b;
   while (*src) {
@@ -77,6 +76,30 @@ static void send_all(int c, const char *p, int n) {
   }
 }
 
+// Envia a URL formatada diretamente para o socket do GoldHEN (Porta 9090)
+static int trigger_goldhen_install(const char *url) {
+  int sock = socket(AF_INET, SOCK_STREAM, 0);
+  if (sock < 0) return -1;
+
+  struct sockaddr_in addr;
+  memset(&addr, 0, sizeof(addr));
+  addr.sin_family = AF_INET;
+  addr.sin_port = htons(9090);
+  addr.sin_addr.s_addr = inet_addr("127.0.0.1");
+
+  if (connect(sock, (struct sockaddr *)&addr, sizeof(addr)) < 0) {
+    close(sock);
+    return -1;
+  }
+
+  // Envia o comando JSON que o GoldHEN BinLoader/API compreende para tarefas em background
+  char packet[1024];
+  int pkt_len = snprintf(packet, sizeof(packet), "{\"type\":\"install\",\"url\":\"%s\"}\n", url);
+  send_all(sock, packet, pkt_len);
+  close(sock);
+  return 0;
+}
+
 static void serve(int c) {
   char req[4096], path[512], full[600], buf[4096], hdr[256];
   int n = read(c, req, sizeof(req) - 1);
@@ -108,10 +131,11 @@ static void serve(int c) {
 
     url_decode(decoded_url, raw_url);
 
-    logf_("=== URL FINAL PARA DOWNLOAD NATIVO ===");
+    logf_("Despachando URL para o GoldHEN:");
     logf_(decoded_url);
 
-    // Responde com sucesso imediato ao frontend do app
+    trigger_goldhen_install(decoded_url);
+
     const char *resp = "HTTP/1.1 200 OK\r\nAccess-Control-Allow-Origin: *\r\nContent-Type: application/json\r\nConnection: close\r\n\r\n{\"status\":\"success\"}";
     send_all(c, resp, (int)strlen(resp));
     return;
