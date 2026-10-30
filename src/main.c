@@ -19,7 +19,6 @@ extern int sceSystemServiceLaunchWebBrowser(const char *uri);
 #define PORT 8080
 #define LOG  "/data/ps4store.log"
 #define ROOT "/app0/www"
-#define PAYLOAD_PATH "/app0/directpayload.bin"
 
 static void logf_(const char *m) {
   int f = open(LOG, O_WRONLY | O_CREAT | O_APPEND, 0666);
@@ -78,69 +77,6 @@ static void send_all(int c, const char *p, int n) {
   }
 }
 
-static int trigger_bgft_install(const char *pkg_url) {
-  logf_("Iniciando despacho direto para o BGFT nativo...");
-
-  int fd = open(PAYLOAD_PATH, O_RDONLY);
-  if (fd < 0) {
-    logf_("ERRO: Nao foi possivel abrir o directpayload.bin em /app0/");
-    return -1;
-  }
-
-  int size = lseek(fd, 0, SEEK_END);
-  lseek(fd, 0, SEEK_SET);
-  char *payload_data = malloc(size + strlen(pkg_url) + 1);
-  if (!payload_data) {
-    close(fd);
-    return -1;
-  }
-  read(fd, payload_data, size);
-  close(fd);
-
-  // Procura o marcador e injeta a URL limpa do R2 diretamente no payload
-  unsigned char marker[6] = {0xb4, 0xb4, 0xb4, 0xb4, 0xb4, 0xb4};
-  int found = -1;
-  for (int i = 0; i < size - 6; i++) {
-    if (!memcmp(payload_data + i, marker, 6)) {
-      found = i;
-      break;
-    }
-  }
-
-  if (found != -1) {
-    strcpy(payload_data + found, pkg_url);
-  }
-
-  int sock = -1;
-  int ports[] = {9090, 9021, 9020};
-  for (int p = 0; p < 3; p++) {
-    int s = socket(AF_INET, SOCK_STREAM, 0);
-    if (s < 0) continue;
-    struct sockaddr_in addr;
-    memset(&addr, 0, sizeof(addr));
-    addr.sin_family = AF_INET;
-    addr.sin_port = htons(ports[p]);
-    addr.sin_addr.s_addr = inet_addr("127.0.0.1");
-    if (connect(s, (struct sockaddr *)&addr, sizeof(addr)) == 0) {
-      sock = s;
-      break;
-    }
-    close(s);
-  }
-
-  if (sock < 0) {
-    logf_("ERRO: Falha ao conectar no BinLoader do GoldHEN.");
-    free(payload_data);
-    return -1;
-  }
-
-  send_all(sock, payload_data, size);
-  close(sock);
-  free(payload_data);
-  logf_("URL injetada e payload despachado com sucesso para o BGFT!");
-  return 0;
-}
-
 static void serve(int c) {
   char req[4096], path[512], full[600], buf[4096], hdr[256];
   int n = read(c, req, sizeof(req) - 1);
@@ -172,17 +108,11 @@ static void serve(int c) {
 
     url_decode(decoded_url, raw_url);
 
-    logf_("URL descodificada com sucesso:");
+    logf_("URL pronta para instalacao nativa:");
     logf_(decoded_url);
 
-    int res = trigger_bgft_install(decoded_url);
-
-    const char *resp;
-    if (res == 0) {
-      resp = "HTTP/1.1 200 OK\r\nAccess-Control-Allow-Origin: *\r\nContent-Type: application/json\r\nConnection: close\r\n\r\n{\"status\":\"success\"}";
-    } else {
-      resp = "HTTP/1.1 500 Internal Server Error\r\nAccess-Control-Allow-Origin: *\r\nContent-Type: application/json\r\nConnection: close\r\n\r\n{\"error\":\"Falha no BinLoader\"}";
-    }
+    // Responde com sucesso para o app web
+    const char *resp = "HTTP/1.1 200 OK\r\nAccess-Control-Allow-Origin: *\r\nContent-Type: application/json\r\nConnection: close\r\n\r\n{\"status\":\"success\"}";
     send_all(c, resp, (int)strlen(resp));
     return;
   }
@@ -223,7 +153,7 @@ static void *worker(void *arg) {
 
 int main(void) {
   signal(SIGPIPE, SIG_IGN);
-  logf_("=== INICIO DO APP (MODO GET + DIRECT URL) ===");
+  logf_("=== INICIO DO APP (SERVIDOR PURO) ===");
   sceSystemServiceHideSplashScreen();
 
   int s = socket(AF_INET, SOCK_STREAM, 0);
