@@ -1,5 +1,5 @@
 /* PS4 Patch Store
- * Catalogo e instalacao nativa BGFT blindada.
+ * Catalogo e instalacao nativa BGFT via GET.
  * Compatibilidade: ES5 / WebKit PS4.
  */
 
@@ -95,13 +95,6 @@
     }
   }
 
-  function packageValue(button, card, attribute) {
-    return (
-      getAttribute(button, attribute) ||
-      getAttribute(card, attribute)
-    );
-  }
-
   function installPkg(url, button) {
     if (!url) {
       showToast("URL do pacote nao configurada.");
@@ -109,29 +102,13 @@
       return;
     }
 
-    var card = findCard(button) || button;
+    showToast("Enviando pedido ao instalador nativo...");
 
-    var pkgName = packageValue(button, card, "data-name") || "PS4 Package";
-    var pkgContentId = packageValue(button, card, "data-content-id");
-    var pkgType = packageValue(button, card, "data-package-type") || "application";
-    var pkgSize = packageValue(button, card, "data-size");
-    var pkgIcon = packageValue(button, card, "data-icon");
-
-    showToast("Enviando pedido ao instalador nativo BGFT...");
-
-    var packageData = {
-      type: "direct",
-      url: url,
-      name: pkgName,
-      content_id: pkgContentId,
-      package_type: pkgType,
-      size: pkgSize,
-      icon: pkgIcon
-    };
+    // Utilizando GET com query parameter para compatibilidade total com o WebKit do PS4
+    var targetUrl = INSTALL_ENDPOINT + "?url=" + encodeURIComponent(url);
 
     var xhr = new XMLHttpRequest();
-    xhr.open("POST", INSTALL_ENDPOINT, true);
-    xhr.setRequestHeader("Content-Type", "text/plain;charset=UTF-8");
+    xhr.open("GET", targetUrl, true);
     xhr.timeout = 30000;
 
     function finish() {
@@ -142,31 +119,12 @@
     }
 
     xhr.onload = function () {
-      var response = null;
-      try {
-        response = JSON.parse(xhr.responseText);
-      } catch (error) {
-        response = null;
-      }
-
       finish();
-
-      if (
-        xhr.status >= 200 &&
-        xhr.status < 300 &&
-        response &&
-        response.status === "success"
-      ) {
-        showToast("Download registrado! Acompanhe nas Notificacoes do PS4.");
-        return;
+      if (xhr.status >= 200 && xhr.status < 300) {
+        showToast("Pedido aceito! Acompanhe nas Notificacoes do PS4.");
+      } else {
+        showToast("Erro HTTP " + xhr.status + " no servidor nativo.");
       }
-
-      if (response && response.error) {
-        showToast("Erro: " + response.error);
-        return;
-      }
-
-      showToast("Falha HTTP " + xhr.status + ". Servidor nativo indisponivel.");
     };
 
     xhr.onerror = function () {
@@ -180,7 +138,7 @@
     };
 
     try {
-      xhr.send(JSON.stringify(packageData));
+      xhr.send();
     } catch (error) {
       finish();
       showToast("Erro ao enviar pedido: " + error.message);
