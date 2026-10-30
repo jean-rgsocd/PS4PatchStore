@@ -1,4 +1,3 @@
-
 #!/usr/bin/env bash
 # Uso: OO_PS4_TOOLCHAIN=/caminho/toolchain bash build.sh
 # Gera quatro pacotes em out/: min, pic, www e full.
@@ -92,6 +91,12 @@ print("Marcador de conexão encontrado.")
 PY
 
 echo "DirectPackageInstaller payload: OK"
+
+# Preencher ID, tamanho e tipo (PS4GD/PS4GP...) de cada botao lendo so o cabecalho dos PKGs.
+# Se algum link falhar, o botao fica como esta no index.html e o build continua.
+echo "=== Lendo cabecalhos dos PKGs ==="
+python3 tools/pkg_info.py image0/index.html \
+  || echo "AVISO: algum PKG nao pode ser lido (veja ERRO acima); esses botoes usam os valores do index.html"
 
 # Gerar executável PS4
 python3 tools/make_sfo.py
