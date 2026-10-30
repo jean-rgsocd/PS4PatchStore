@@ -48,7 +48,6 @@ static void send_all(int c, const char *p, int n) {
   }
 }
 
-// Disparar o directpayload via BinLoader para o BGFT do PS4
 static int trigger_bgft_install(const char *pkg_url, const char *pkg_name, const char *content_id) {
   logf_("Iniciando despacho para o BinLoader BGFT...");
 
@@ -68,7 +67,6 @@ static int trigger_bgft_install(const char *pkg_url, const char *pkg_name, const
   read(fd, payload_data, size);
   close(fd);
 
-  // Localizar marcadores B4 (6 bytes) para injetar IP/Porta de callback
   unsigned char marker[6] = {0xb4, 0xb4, 0xb4, 0xb4, 0xb4, 0xb4};
   int found = -1;
   for (int i = 0; i < size - 6; i++) {
@@ -78,11 +76,6 @@ static int trigger_bgft_install(const char *pkg_url, const char *pkg_name, const
     }
   }
 
-  if (found == -1) {
-    logf_("AVISO: Marcador B4 nao encontrado no payload, enviando padrao.");
-  }
-
-  // Tentar conectar nas portas comuns do BinLoader do GoldHEN (9090, 9021, 9020)
   int sock = -1;
   int ports[] = {9090, 9021, 9020};
   for (int p = 0; p < 3; p++) {
@@ -106,7 +99,6 @@ static int trigger_bgft_install(const char *pkg_url, const char *pkg_name, const
     return -1;
   }
 
-  // Enviar o payload modificado para a memória do PS4
   send_all(sock, payload_data, size);
   close(sock);
   free(payload_data);
@@ -117,7 +109,6 @@ static int trigger_bgft_install(const char *pkg_url, const char *pkg_name, const
 static void handle_api_install(int c, const char *body) {
   logf_("Recebida solicitacao em /api/install");
   
-  // Extrair URL simples do body JSON enviado pelo app.js
   char url[512] = {0};
   char name[128] = {0};
   char content_id[64] = {0};
@@ -138,23 +129,20 @@ static void handle_api_install(int c, const char *body) {
   }
 
   if (strlen(url) == 0) {
-    const char *resp = "HTTP/1.1 400 Bad Request\r\nContent-Type: application/json\r\nConnection: close\r\n\r\n{\"error\":\"URL vazia\"}";
+    const char *resp = "HTTP/1.1 400 Bad Request\r\nAccess-Control-Allow-Origin: *\r\nContent-Type: application/json\r\nConnection: close\r\n\r\n{\"error\":\"URL vazia\"}";
     send_all(c, resp, (int)strlen(resp));
     return;
   }
 
   int res = trigger_bgft_install(url, name, content_id);
 
-  const char *resp;
   char resp_buf[512];
   if (res == 0) {
-    snprintf(resp_buf, sizeof(resp_buf), "HTTP/1.1 200 OK\r\nContent-Type: application/json\r\nConnection: close\r\n\r\n{\"status\":\"success\",\"message\":\"Download disparado no BGFT\"}");
-    resp = resp_buf;
+    snprintf(resp_buf, sizeof(resp_buf), "HTTP/1.1 200 OK\r\nAccess-Control-Allow-Origin: *\r\nContent-Type: application/json\r\nConnection: close\r\n\r\n{\"status\":\"success\",\"message\":\"Download disparado no BGFT\"}");
   } else {
-    snprintf(resp_buf, sizeof(resp_buf), "HTTP/1.1 500 Internal Server Error\r\nContent-Type: application/json\r\nConnection: close\r\n\r\n{\"error\":\"Falha ao acionar o instalador BGFT\"}");
-    resp = resp_buf;
+    snprintf(resp_buf, sizeof(resp_buf), "HTTP/1.1 500 Internal Server Error\r\nAccess-Control-Allow-Origin: *\r\nContent-Type: application/json\r\nConnection: close\r\n\r\n{\"error\":\"Falha ao acionar o instalador BGFT\"}");
   }
-  send_all(c, resp, (int)strlen(resp));
+  send_all(c, resp_buf, (int)strlen(resp_buf));
 }
 
 static void serve(int c) {
@@ -163,7 +151,13 @@ static void serve(int c) {
   if (n <= 0) return;
   req[n] = 0;
 
-  // Verificar se e requisicao POST /api/install
+  // Tratar requisições OPTIONS de CORS pré-flight se houver
+  if (!strncmp(req, "OPTIONS", 7)) {
+    const char *cors_resp = "HTTP/1.1 204 No Content\r\nAccess-Control-Allow-Origin: *\r\nAccess-Control-Allow-Methods: POST, GET, OPTIONS\r\nAccess-Control-Allow-Headers: Content-Type\r\nConnection: close\r\n\r\n";
+    send_all(c, cors_resp, (int)strlen(cors_resp));
+    return;
+  }
+
   if (!strncmp(req, "POST /api/install", 17)) {
     char *body = strstr(req, "\r\n\r\n");
     if (body) body += 4;
@@ -173,7 +167,7 @@ static void serve(int c) {
   }
 
   if (sscanf(req, "GET %255s", path) != 1 || strstr(path, "..")) {
-    const char *r = "HTTP/1.1 400 Bad Request\r\nContent-Length: 0\r\nConnection: close\r\n\r\n";
+    const char *r = "HTTP/1.1 400 Bad Request\r\nAccess-Control-Allow-Origin: *\r\nContent-Length: 0\r\nConnection: close\r\n\r\n";
     send_all(c, r, (int)strlen(r));
     return;
   }
@@ -184,11 +178,11 @@ static void serve(int c) {
   snprintf(msg, sizeof(msg), "GET %s -> %s", path, fd < 0 ? "404" : "200");
   logf_(msg);
   if (fd < 0) {
-    const char *r = "HTTP/1.1 404 Not Found\r\nContent-Length: 0\r\nConnection: close\r\n\r\n";
+    const char *r = "HTTP/1.1 404 Not Found\r\nAccess-Control-Allow-Origin: *\r\nContent-Length: 0\r\nConnection: close\r\n\r\n";
     send_all(c, r, (int)strlen(r));
     return;
   }
-  snprintf(hdr, sizeof(hdr), "HTTP/1.1 200 OK\r\nContent-Type: %s\r\nConnection: close\r\n\r\n", mime(full));
+  snprintf(hdr, sizeof(hdr), "HTTP/1.1 200 OK\r\nAccess-Control-Allow-Origin: *\r\nContent-Type: %s\r\nConnection: close\r\n\r\n", mime(full));
   send_all(c, hdr, (int)strlen(hdr));
   while ((n = read(fd, buf, sizeof(buf))) > 0) send_all(c, buf, n);
   close(fd);
@@ -208,7 +202,7 @@ static void *worker(void *arg) {
 
 int main(void) {
   signal(SIGPIPE, SIG_IGN);
-  logf_("inicio server nativo");
+  logf_("inicio server nativo com CORS");
   sceSystemServiceHideSplashScreen();
 
   int s = socket(AF_INET, SOCK_STREAM, 0);
