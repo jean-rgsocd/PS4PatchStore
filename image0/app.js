@@ -1,394 +1,721 @@
 
-/* PS4 Patch Store - catalogo, instalacao nativa e navegacao por controle.
-   ES5 compativel com o WebKit do PS4. */
+/* PS4 Patch Store
+ * Catalogo, instalacao nativa e navegacao por controle.
+ * Compatibilidade: ES5 / WebKit PS4.
+ */
 
-/* Servidor HTTP do proprio aplicativo PS4 */
-var INSTALL_ENDPOINT = "/api/install";
+(function () {
+  "use strict";
 
-var searchInput = document.getElementById("search");
-var categorySelect = document.getElementById("category");
-var cards = Array.prototype.slice.call(document.querySelectorAll(".game-card"));
-var resultCount = document.getElementById("result-count");
-var emptyState = document.getElementById("empty-state");
-var toast = document.getElementById("toast");
-var toastTimer = null;
+  var INSTALL_ENDPOINT = "/api/install";
 
-function filterCatalog() {
-  var query = (searchInput.value || "").replace(/^\s+|\s+$/g, "").toLowerCase();
-  var category = categorySelect.value;
-  var visible = 0;
+  var searchInput = document.getElementById("search");
+  var categorySelect = document.getElementById("category");
+  var resultCount = document.getElementById("result-count");
+  var emptyState = document.getElementById("empty-state");
+  var toast = document.getElementById("toast");
+  var yearElement = document.getElementById("year");
 
-  for (var i = 0; i < cards.length; i++) {
-    var card = cards[i];
-    var name = (card.getAttribute("data-name") || "").toLowerCase();
-    var cardCategory = card.getAttribute("data-category") || "";
-    var show = name.indexOf(query) !== -1 &&
-      (category === "all" || cardCategory === category);
-
-    card.hidden = !show;
-    if (show) visible += 1;
-  }
-
-  resultCount.textContent = visible + " " +
-    (visible === 1 ? "coleção" : "coleções");
-
-  emptyState.hidden = visible !== 0;
-}
-
-function showToast(msg) {
-  toast.textContent = msg;
-  toast.hidden = false;
-
-  if (toastTimer) clearTimeout(toastTimer);
-
-  toastTimer = setTimeout(function () {
-    toast.hidden = true;
-  }, 6000);
-}
-
-function getAttribute(element, name) {
-  if (!element) return "";
-  return element.getAttribute(name) || "";
-}
-
-/* Envia o pedido para o servidor nativo do aplicativo */
-function installPkg(url, button) {
-  if (!url) {
-    showToast("URL do pacote não configurada.");
-    return;
-  }
-
-  var card = button;
-
-  while (card && card !== document && !(
-    card.classList && card.classList.contains("game-card")
-  )) {
-    card = card.parentNode;
-  }
-
-  if (!card || card === document) card = button;
-
-  var packageData = {
-    type: "direct",
-    url: url,
-    name: getAttribute(button, "data-name") ||
-          getAttribute(card, "data-name"),
-    content_id: getAttribute(button, "data-content-id") ||
-                getAttribute(card, "data-content-id"),
-    package_type: getAttribute(button, "data-package-type") ||
-                  getAttribute(card, "data-package-type"),
-    size: getAttribute(button, "data-size") ||
-          getAttribute(card, "data-size"),
-    icon: getAttribute(button, "data-icon") ||
-          getAttribute(card, "data-icon")
-  };
-
-  showToast("Enviando pedido ao instalador nativo do PS4...");
-
-  var xhr = new XMLHttpRequest();
-
-  xhr.open("POST", INSTALL_ENDPOINT, true);
-  xhr.setRequestHeader("Content-Type", "text/plain;charset=UTF-8");
-  xhr.timeout = 30000;
-
-  xhr.onload = function () {
-    var response = null;
-
-    try {
-      response = JSON.parse(xhr.responseText);
-    } catch (e) {}
-
-    if (xhr.status >= 200 && xhr.status < 300 &&
-        response && response.status === "success") {
-      showToast("Pedido recebido pelo aplicativo. Acompanhe as Notificações do PS4.");
-    } else if (response && response.error) {
-      showToast("Erro: " + response.error);
-    } else {
-      showToast("Servidor respondeu HTTP " + xhr.status +
-        ". " + (xhr.responseText || "Sem detalhes."));
-    }
-  };
-
-  xhr.onerror = function () {
-    showToast("Não foi possível conectar ao instalador nativo. Verifique o servidor do aplicativo.");
-  };
-
-  xhr.ontimeout = function () {
-    showToast("Tempo esgotado aguardando o servidor do aplicativo.");
-  };
-
-  xhr.send(JSON.stringify(packageData));
-}
-
-function onDownloadClick(e) {
-  e.preventDefault();
-
-  var url = this.getAttribute("data-pkg");
-
-  if (!url) {
-    showToast("URL do pacote não configurada (data-pkg no index.html).");
-    return;
-  }
-
-  installPkg(url, this);
-}
-
-var buttons = document.querySelectorAll("a[data-pkg]");
-
-for (var b = 0; b < buttons.length; b++) {
-  buttons[b].addEventListener("click", onDownloadClick);
-}
-
-searchInput.addEventListener("input", filterCatalog);
-categorySelect.addEventListener("change", filterCatalog);
-
-document.getElementById("year").textContent = new Date().getFullYear();
-
-filterCatalog();
-
-/* ---------- Navegacao por controle / teclado ---------- */
-
-var focusStyle = document.createElement("style");
-
-focusStyle.appendChild(document.createTextNode(
-  "a:focus, #search:focus, #category:focus {" +
-  "outline: 3px solid #ffc857; outline-offset: 3px;}" +
-  ".download-button:focus, .primary-button:focus {" +
-  "background: #75f4c0;}"
-));
-
-document.head.appendChild(focusStyle);
-
-function focusables() {
-  var all = document.querySelectorAll(
-    "a.download-button, a.primary-button, #search, #category"
+  var cards = Array.prototype.slice.call(
+    document.querySelectorAll(".game-card")
   );
 
-  var out = [];
+  var toastTimer = null;
+  var installBusy = false;
 
-  for (var i = 0; i < all.length; i++) {
-    var el = all[i];
-    var r = el.getBoundingClientRect();
-
-    if (r.width > 0 && r.height > 0) out.push(el);
+  function getAttribute(element, name) {
+    if (!element || !element.getAttribute) return "";
+    return element.getAttribute(name) || "";
   }
 
-  return out;
-}
-
-function centerOf(el) {
-  var r = el.getBoundingClientRect();
-
-  return {
-    x: r.left + r.width / 2,
-    y: r.top + r.height / 2
-  };
-}
-
-function moveFocus(dir) {
-  var list = focusables();
-
-  if (!list.length) return;
-
-  var cur = document.activeElement;
-
-  if (list.indexOf(cur) === -1) {
-    list[0].focus();
-    return;
+  function hasClass(element, className) {
+    return !!(
+      element &&
+      element.classList &&
+      element.classList.contains(className)
+    );
   }
 
-  var c = centerOf(cur);
-  var cand = [];
-  var vertical = (dir === "up" || dir === "down");
+  function findCard(element) {
+    var current = element;
 
-  for (var i = 0; i < list.length; i++) {
-    var el = list[i];
-
-    if (el === cur) continue;
-
-    var p = centerOf(el);
-    var dx = p.x - c.x;
-    var dy = p.y - c.y;
-    var primary, secondary, ok;
-
-    if (vertical) {
-      primary = dir === "down" ? dy : -dy;
-      secondary = Math.abs(dx);
-      ok = primary > 24;
-    } else {
-      primary = dir === "right" ? dx : -dx;
-      secondary = Math.abs(dy);
-      ok = primary > 4 && secondary < 40;
-    }
-
-    if (ok) {
-      cand.push({
-        el: el,
-        primary: primary,
-        secondary: secondary
-      });
-    }
-  }
-
-  if (!cand.length) return;
-
-  var minP = 1e9;
-  var best = null;
-
-  for (var i2 = 0; i2 < cand.length; i2++) {
-    if (cand[i2].primary < minP) minP = cand[i2].primary;
-  }
-
-  for (var j = 0; j < cand.length; j++) {
-    var k = cand[j];
-
-    if (vertical) {
-      if (k.primary <= minP + 24 &&
-          (!best || k.secondary < best.secondary)) {
-        best = k;
+    while (current && current !== document) {
+      if (hasClass(current, "game-card")) {
+        return current;
       }
-    } else if (!best || k.primary < best.primary) {
-      best = k;
+
+      current = current.parentNode;
+    }
+
+    return null;
+  }
+
+  function showToast(message) {
+    if (!toast) return;
+
+    toast.textContent = message;
+    toast.hidden = false;
+
+    if (toastTimer) {
+      clearTimeout(toastTimer);
+    }
+
+    toastTimer = setTimeout(function () {
+      toast.hidden = true;
+    }, 6000);
+  }
+
+  function filterCatalog() {
+    var query = searchInput ?
+      (searchInput.value || "").replace(/^\s+|\s+$/g, "").toLowerCase() :
+      "";
+
+    var category = categorySelect ?
+      categorySelect.value :
+      "all";
+
+    var visible = 0;
+
+    for (var i = 0; i < cards.length; i++) {
+      var card = cards[i];
+
+      var name = getAttribute(card, "data-name").toLowerCase();
+      var cardCategory = getAttribute(card, "data-category");
+
+      var show =
+        name.indexOf(query) !== -1 &&
+        (category === "all" || cardCategory === category);
+
+      card.hidden = !show;
+
+      if (show) {
+        visible++;
+      }
+    }
+
+    if (resultCount) {
+      resultCount.textContent =
+        visible + " " +
+        (visible === 1 ? "colecao" : "colecoes");
+    }
+
+    if (emptyState) {
+      emptyState.hidden = visible !== 0;
     }
   }
 
-  if (best) best.el.focus();
-}
+  function packageValue(button, card, attribute) {
+    return (
+      getAttribute(button, attribute) ||
+      getAttribute(card, attribute)
+    );
+  }
 
-function stepCategory(d) {
-  var n = categorySelect.options.length;
+  function installPkg(url, button) {
+    if (!url) {
+      showToast("URL do pacote nao configurada.");
+      return;
+    }
 
-  categorySelect.selectedIndex =
-    (categorySelect.selectedIndex + d + n) % n;
+    if (installBusy) {
+      showToast("Ja existe um pedido de instalacao em andamento.");
+      return;
+    }
+
+    var card = findCard(button) || button;
+
+    var packageData = {
+      type: "direct",
+      url: url,
+
+      name:
+        packageValue(button, card, "data-name") ||
+        "PS4 Package",
+
+      content_id:
+        packageValue(button, card, "data-content-id"),
+
+      package_type:
+        packageValue(button, card, "data-package-type") ||
+        "application",
+
+      size:
+        packageValue(button, card, "data-size"),
+
+      icon:
+        packageValue(button, card, "data-icon")
+    };
+
+    installBusy = true;
+
+    if (button) {
+      button.setAttribute("aria-disabled", "true");
+    }
+
+    showToast(
+      "Enviando pedido ao instalador nativo do PS4..."
+    );
+
+    var xhr = new XMLHttpRequest();
+
+    xhr.open("POST", INSTALL_ENDPOINT, true);
+
+    xhr.setRequestHeader(
+      "Content-Type",
+      "text/plain;charset=UTF-8"
+    );
+
+    xhr.timeout = 30000;
+
+    function finish() {
+      installBusy = false;
+
+      if (button) {
+        button.removeAttribute("aria-disabled");
+      }
+    }
+
+    xhr.onload = function () {
+      var response = null;
+
+      try {
+        response = JSON.parse(xhr.responseText);
+      } catch (error) {
+        response = null;
+      }
+
+      finish();
+
+      if (
+        xhr.status >= 200 &&
+        xhr.status < 300 &&
+        response &&
+        response.status === "success"
+      ) {
+        showToast(
+          "Pedido recebido pelo aplicativo. " +
+          "Acompanhe as Notificacoes do PS4."
+        );
+
+        return;
+      }
+
+      if (response && response.error) {
+        showToast("Erro: " + response.error);
+        return;
+      }
+
+      showToast(
+        "Falha HTTP " + xhr.status +
+        ". " +
+        (xhr.responseText || "Resposta invalida do servidor.")
+      );
+    };
+
+    xhr.onerror = function () {
+      finish();
+
+      showToast(
+        "Nao foi possivel conectar ao instalador nativo. " +
+        "Verifique o servidor do aplicativo."
+      );
+    };
+
+    xhr.ontimeout = function () {
+      finish();
+
+      showToast(
+        "Tempo esgotado aguardando o servidor do aplicativo."
+      );
+    };
+
+    xhr.onabort = function () {
+      finish();
+      showToast("Pedido de instalacao cancelado.");
+    };
+
+    try {
+      xhr.send(JSON.stringify(packageData));
+    } catch (error) {
+      finish();
+
+      showToast(
+        "Erro ao enviar pedido: " + error.message
+      );
+    }
+  }
+
+  function onDownloadClick(event) {
+    if (event && event.preventDefault) {
+      event.preventDefault();
+    }
+
+    var url = getAttribute(this, "data-pkg");
+
+    if (!url) {
+      showToast(
+        "URL do pacote nao configurada no data-pkg do index.html."
+      );
+
+      return;
+    }
+
+    installPkg(url, this);
+  }
+
+  var buttons = document.querySelectorAll("a[data-pkg]");
+
+  for (var b = 0; b < buttons.length; b++) {
+    buttons[b].addEventListener(
+      "click",
+      onDownloadClick,
+      false
+    );
+  }
+
+  if (searchInput) {
+    searchInput.addEventListener(
+      "input",
+      filterCatalog,
+      false
+    );
+  }
+
+  if (categorySelect) {
+    categorySelect.addEventListener(
+      "change",
+      filterCatalog,
+      false
+    );
+  }
+
+  if (yearElement) {
+    yearElement.textContent = new Date().getFullYear();
+  }
 
   filterCatalog();
 
-  showToast(
-    "Categoria: " +
-    categorySelect.options[categorySelect.selectedIndex].text
+  /* ---------- Estilo de foco ---------- */
+
+  var focusStyle = document.createElement("style");
+
+  focusStyle.appendChild(
+    document.createTextNode(
+      "a:focus, #search:focus, #category:focus {" +
+      "outline: 3px solid #ffc857;" +
+      "outline-offset: 3px;" +
+      "}" +
+      ".download-button:focus, .primary-button:focus {" +
+      "background: #75f4c0;" +
+      "}"
+    )
   );
-}
 
-function pressAction(a) {
-  var cur = document.activeElement;
+  document.head.appendChild(focusStyle);
 
-  if (a === "up" || a === "down" ||
-      a === "left" || a === "right") {
-    moveFocus(a);
-  } else if (a === "cross") {
-    if (cur && cur.click) cur.click();
-  } else if (a === "circle") {
-    if (cur && cur.blur) cur.blur();
-    window.scrollTo(0, 0);
-  } else if (a === "triangle") {
-    searchInput.focus();
-  } else if (a === "square") {
-    stepCategory(1);
-  } else if (a === "l1") {
-    stepCategory(-1);
-  } else if (a === "r1") {
-    stepCategory(1);
-  }
-}
+  /* ---------- Navegacao por controle ---------- */
 
-/* Teclado para testes no PC */
-var KEYS = {
-  37: "left",
-  38: "up",
-  39: "right",
-  40: "down",
-  27: "circle",
-  84: "triangle",
-  83: "square",
-  81: "l1",
-  69: "r1"
-};
+  function focusables() {
+    var all = document.querySelectorAll(
+      "a.download-button, a.primary-button, #search, #category"
+    );
 
-document.addEventListener("keydown", function (e) {
-  var tag = document.activeElement ?
-    document.activeElement.tagName : "";
+    var output = [];
 
-  var typing = tag === "INPUT" || tag === "SELECT";
-  var a = KEYS[e.keyCode];
+    for (var i = 0; i < all.length; i++) {
+      var element = all[i];
+      var rect = element.getBoundingClientRect();
 
-  if (!a) return;
-
-  if (typing && e.keyCode !== 27 &&
-      e.keyCode !== 38 && e.keyCode !== 40) return;
-
-  if (tag === "SELECT" &&
-      (e.keyCode === 38 || e.keyCode === 40)) return;
-
-  e.preventDefault();
-  pressAction(a);
-});
-
-/* Controle DualShock 4 */
-var PAD = {
-  0: "cross",
-  1: "circle",
-  2: "square",
-  3: "triangle",
-  4: "l1",
-  5: "r1",
-  12: "up",
-  13: "down",
-  14: "left",
-  15: "right"
-};
-
-var REPEAT = {
-  up: true,
-  down: true,
-  left: true,
-  right: true
-};
-
-var prevBtn = {};
-var nextAt = {};
-
-function pollPad() {
-  var pads = (navigator.getGamepads &&
-    navigator.getGamepads()) || [];
-
-  var gp = null;
-
-  for (var i = 0; i < pads.length; i++) {
-    if (pads[i]) {
-      gp = pads[i];
-      break;
+      if (
+        rect.width > 0 &&
+        rect.height > 0 &&
+        !element.disabled &&
+        element.getAttribute("aria-disabled") !== "true"
+      ) {
+        output.push(element);
+      }
     }
+
+    return output;
   }
 
-  if (gp) {
-    var now = Date.now();
+  function centerOf(element) {
+    var rect = element.getBoundingClientRect();
 
-    for (var k in PAD) {
-      if (!PAD.hasOwnProperty(k)) continue;
+    return {
+      x: rect.left + rect.width / 2,
+      y: rect.top + rect.height / 2
+    };
+  }
 
-      var down = !!(
-        gp.buttons[k] && gp.buttons[k].pressed
-      );
+  function moveFocus(direction) {
+    var list = focusables();
 
-      var name = PAD[k];
+    if (!list.length) return;
 
-      if (down && !prevBtn[k]) {
-        pressAction(name);
-        nextAt[k] = now + 350;
-      } else if (down && REPEAT[name] &&
-                 now >= nextAt[k]) {
-        pressAction(name);
-        nextAt[k] = now + 110;
+    var current = document.activeElement;
+
+    if (list.indexOf(current) === -1) {
+      list[0].focus();
+      return;
+    }
+
+    var center = centerOf(current);
+    var candidates = [];
+
+    var vertical =
+      direction === "up" ||
+      direction === "down";
+
+    for (var i = 0; i < list.length; i++) {
+      var element = list[i];
+
+      if (element === current) continue;
+
+      var position = centerOf(element);
+
+      var dx = position.x - center.x;
+      var dy = position.y - center.y;
+
+      var primary;
+      var secondary;
+      var valid;
+
+      if (vertical) {
+        primary =
+          direction === "down" ? dy : -dy;
+
+        secondary = Math.abs(dx);
+        valid = primary > 24;
+      } else {
+        primary =
+          direction === "right" ? dx : -dx;
+
+        secondary = Math.abs(dy);
+        valid = primary > 4 && secondary < 40;
       }
 
-      prevBtn[k] = down;
+      if (valid) {
+        candidates.push({
+          element: element,
+          primary: primary,
+          secondary: secondary
+        });
+      }
+    }
+
+    if (!candidates.length) return;
+
+    var minimum = 1000000000;
+
+    for (var j = 0; j < candidates.length; j++) {
+      if (candidates[j].primary < minimum) {
+        minimum = candidates[j].primary;
+      }
+    }
+
+    var best = null;
+
+    for (var k = 0; k < candidates.length; k++) {
+      var candidate = candidates[k];
+
+      if (vertical) {
+        if (
+          candidate.primary <= minimum + 24 &&
+          (
+            !best ||
+            candidate.secondary < best.secondary
+          )
+        ) {
+          best = candidate;
+        }
+      } else {
+        if (
+          !best ||
+          candidate.primary < best.primary
+        ) {
+          best = candidate;
+        }
+      }
+    }
+
+    if (best) {
+      best.element.focus();
     }
   }
 
-  (window.requestAnimationFrame ||
-    function (f) {
-      setTimeout(f, 33);
-    })(pollPad);
-}
+  function stepCategory(direction) {
+    if (
+      !categorySelect ||
+      !categorySelect.options ||
+      !categorySelect.options.length
+    ) {
+      return;
+    }
 
-pollPad();
+    var count = categorySelect.options.length;
+
+    categorySelect.selectedIndex =
+      (
+        categorySelect.selectedIndex +
+        direction +
+        count
+      ) % count;
+
+    filterCatalog();
+
+    showToast(
+      "Categoria: " +
+      categorySelect.options[
+        categorySelect.selectedIndex
+      ].text
+    );
+  }
+
+  function pressAction(action) {
+    var current = document.activeElement;
+
+    if (
+      action === "up" ||
+      action === "down" ||
+      action === "left" ||
+      action === "right"
+    ) {
+      moveFocus(action);
+      return;
+    }
+
+    if (action === "cross") {
+      if (
+        current &&
+        current.click &&
+        current.getAttribute("aria-disabled") !== "true"
+      ) {
+        current.click();
+      }
+
+      return;
+    }
+
+    if (action === "circle") {
+      if (current && current.blur) {
+        current.blur();
+      }
+
+      window.scrollTo(0, 0);
+      return;
+    }
+
+    if (action === "triangle") {
+      if (searchInput) {
+        searchInput.focus();
+      }
+
+      return;
+    }
+
+    if (action === "square" || action === "r1") {
+      stepCategory(1);
+      return;
+    }
+
+    if (action === "l1") {
+      stepCategory(-1);
+    }
+  }
+
+  /* ---------- Teclado para testes no PC ---------- */
+
+  var KEYS = {
+    37: "left",
+    38: "up",
+    39: "right",
+    40: "down",
+    27: "circle",
+    84: "triangle",
+    83: "square",
+    81: "l1",
+    69: "r1"
+  };
+
+  document.addEventListener(
+    "keydown",
+    function (event) {
+      var tag = document.activeElement ?
+        document.activeElement.tagName :
+        "";
+
+      var typing =
+        tag === "INPUT" ||
+        tag === "SELECT" ||
+        tag === "TEXTAREA";
+
+      var action = KEYS[event.keyCode];
+
+      if (!action) return;
+
+      if (
+        typing &&
+        event.keyCode !== 27 &&
+        event.keyCode !== 38 &&
+        event.keyCode !== 40
+      ) {
+        return;
+      }
+
+      if (
+        tag === "SELECT" &&
+        (
+          event.keyCode === 38 ||
+          event.keyCode === 40
+        )
+      ) {
+        return;
+      }
+
+      event.preventDefault();
+      pressAction(action);
+    },
+    false
+  );
+
+  /* ---------- DualShock 4 ---------- */
+
+  var PAD = {
+    0: "cross",
+    1: "circle",
+    2: "square",
+    3: "triangle",
+    4: "l1",
+    5: "r1",
+    12: "up",
+    13: "down",
+    14: "left",
+    15: "right"
+  };
+
+  var REPEAT = {
+    up: true,
+    down: true,
+    left: true,
+    right: true
+  };
+
+  var previousButtons = {};
+  var nextRepeat = {};
+
+  var AXIS_THRESHOLD = 0.65;
+  var previousAxis = {
+    horizontal: "",
+    vertical: ""
+  };
+
+  function getAxisDirection(value, negative, positive) {
+    if (value < -AXIS_THRESHOLD) {
+      return negative;
+    }
+
+    if (value > AXIS_THRESHOLD) {
+      return positive;
+    }
+
+    return "";
+  }
+
+  function pollPad() {
+    var pads = [];
+
+    if (navigator.getGamepads) {
+      try {
+        pads = navigator.getGamepads() || [];
+      } catch (error) {
+        pads = [];
+      }
+    }
+
+    var gamepad = null;
+
+    for (var i = 0; i < pads.length; i++) {
+      if (pads[i] && pads[i].connected !== false) {
+        gamepad = pads[i];
+        break;
+      }
+    }
+
+    if (gamepad) {
+      var now = Date.now();
+
+      for (var key in PAD) {
+        if (!PAD.hasOwnProperty(key)) continue;
+
+        var button = gamepad.buttons[key];
+
+        var pressed = !!(
+          button &&
+          button.pressed
+        );
+
+        var action = PAD[key];
+
+        if (
+          pressed &&
+          !previousButtons[key]
+        ) {
+          pressAction(action);
+          nextRepeat[key] = now + 350;
+        } else if (
+          pressed &&
+          REPEAT[action] &&
+          now >= nextRepeat[key]
+        ) {
+          pressAction(action);
+          nextRepeat[key] = now + 110;
+        }
+
+        previousButtons[key] = pressed;
+      }
+
+      /* Analógico esquerdo */
+
+      if (gamepad.axes && gamepad.axes.length >= 2) {
+        var horizontal = getAxisDirection(
+          gamepad.axes[0],
+          "left",
+          "right"
+        );
+
+        var vertical = getAxisDirection(
+          gamepad.axes[1],
+          "up",
+          "down"
+        );
+
+        if (horizontal && horizontal !== previousAxis.horizontal) {
+          pressAction(horizontal);
+        }
+
+        if (vertical && vertical !== previousAxis.vertical) {
+          pressAction(vertical);
+        }
+
+        previousAxis.horizontal = horizontal;
+        previousAxis.vertical = vertical;
+      }
+    } else {
+      previousButtons = {};
+
+      previousAxis.horizontal = "";
+      previousAxis.vertical = "";
+    }
+
+    (
+      window.requestAnimationFrame ||
+      function (callback) {
+        setTimeout(callback, 33);
+      }
+    )(pollPad);
+  }
+
+  pollPad();
+
+})();
