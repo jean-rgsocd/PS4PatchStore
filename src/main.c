@@ -5,6 +5,7 @@
 #include <fcntl.h>
 #include <signal.h>
 #include <pthread.h>
+#include <ctype.h>
 #include <sys/time.h>
 #include <sys/socket.h>
 #include <netinet/in.h>
@@ -29,18 +30,20 @@ static void logf_(const char *m) {
   }
 }
 
-// Função para descodificar URLs (URL decode) vindas do JavaScript
+// Função corrigida para descodificar URLs (URL decode)
 static void url_decode(char *dst, const char *src) {
   char a, b;
   while (*src) {
-    if ((*src == '%') && && ((a = src[1]) && (b = src[2])) && (isxdigit(a) && isxdigit(b))) {
-      if (a >= 'a') a -= 'a' - '10';
-      else if (a >= 'A') a -= 'A' - '10';
-      else a -= '0';
-      if (b >= 'a') b -= 'a' - '10';
-      else if (b >= 'A') b -= 'A' - '10';
-      else b -= '0';
-      *dst++ = 16 * a + b;
+    if ((*src == '%') && (src[1] && src[2]) && (isxdigit((unsigned char)src[1]) && isxdigit((unsigned char)src[2]))) {
+      a = src[1];
+      b = src[2];
+      if (a >= 'a') a = a - 'a' + 10;
+      else if (a >= 'A') a = a - 'A' + 10;
+      else a = a - '0';
+      if (b >= 'a') b = b - 'a' + 10;
+      else if (b >= 'A') b = b - 'A' + 10;
+      else b = b - '0';
+      *dst++ = (char)(16 * a + b);
       src += 3;
     } else if (*src == '+') {
       *dst++ = ' ';
@@ -153,7 +156,6 @@ static void serve(int c) {
       return;
     }
 
-    // Decodifica a URL para formato legível (sem %2F, %3A, etc)
     url_decode(decoded_url, raw_url);
 
     logf_("URL descodificada com sucesso:");
