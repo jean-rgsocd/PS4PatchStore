@@ -18,11 +18,14 @@ extern int sceSystemServiceLaunchWebBrowser(const char *uri);
 #define PORT 8080
 #define LOG  "/data/ps4store.log"
 #define ROOT "/app0/www"
-#define PAYLOAD_PATH "/app0/directpayload.bin"
 
 static void logf_(const char *m) {
   int f = open(LOG, O_WRONLY | O_CREAT | O_APPEND, 0666);
-  if (f >= 0) { write(f, m, strlen(m)); write(f, "\n", 1); close(f); }
+  if (f >= 0) { 
+    write(f, m, strlen(m)); 
+    write(f, "\n", 1); 
+    close(f); 
+  }
 }
 
 static const char *mime(const char *p) {
@@ -48,57 +51,8 @@ static void send_all(int c, const char *p, int n) {
   }
 }
 
-static int trigger_bgft_install(const char *pkg_url) {
-  logf_("Iniciando despacho para o BinLoader BGFT...");
-
-  int fd = open(PAYLOAD_PATH, O_RDONLY);
-  if (fd < 0) {
-    logf_("ERRO: Nao foi possivel abrir o directpayload.bin");
-    return -1;
-  }
-
-  int size = lseek(fd, 0, SEEK_END);
-  lseek(fd, 0, SEEK_SET);
-  char *payload_data = malloc(size);
-  if (!payload_data) {
-    close(fd);
-    return -1;
-  }
-  read(fd, payload_data, size);
-  close(fd);
-
-  int sock = -1;
-  int ports[] = {9090, 9021, 9020};
-  for (int p = 0; p < 3; p++) {
-    int s = socket(AF_INET, SOCK_STREAM, 0);
-    if (s < 0) continue;
-    struct sockaddr_in addr;
-    memset(&addr, 0, sizeof(addr));
-    addr.sin_family = AF_INET;
-    addr.sin_port = htons(ports[p]);
-    addr.sin_addr.s_addr = inet_addr("127.0.0.1");
-    if (connect(s, (struct sockaddr *)&addr, sizeof(addr)) == 0) {
-      sock = s;
-      break;
-    }
-    close(s);
-  }
-
-  if (sock < 0) {
-    logf_("ERRO: Falha ao conectar no BinLoader do GoldHEN.");
-    free(payload_data);
-    return -1;
-  }
-
-  send_all(sock, payload_data, size);
-  close(sock);
-  free(payload_data);
-  logf_("Payload despachado com sucesso para o BGFT!");
-  return 0;
-}
-
 static void handle_api_install(int c, const char *body) {
-  logf_("Recebida solicitacao em /api/install");
+  logf_("API /api/install chamada com sucesso!");
   
   char url[512] = {0};
   char *u_ptr = strstr(body, "\"url\":\"");
@@ -107,24 +61,22 @@ static void handle_api_install(int c, const char *body) {
   }
 
   if (strlen(url) == 0) {
+    logf_("ERRO: URL recebida esta vazia");
     const char *resp = "HTTP/1.1 400 Bad Request\r\nAccess-Control-Allow-Origin: *\r\nContent-Type: application/json\r\nConnection: close\r\n\r\n{\"error\":\"URL vazia\"}";
     send_all(c, resp, (int)strlen(resp));
     return;
   }
 
-  int res = trigger_bgft_install(url);
+  logf_("URL capturada para download:");
+  logf_(url);
 
-  char resp_buf[512];
-  if (res == 0) {
-    snprintf(resp_buf, sizeof(resp_buf), "HTTP/1.1 200 OK\r\nAccess-Control-Allow-Origin: *\r\nContent-Type: application/json\r\nConnection: close\r\n\r\n{\"status\":\"success\",\"message\":\"Download disparado no BGFT\"}");
-  } else {
-    snprintf(resp_buf, sizeof(resp_buf), "HTTP/1.1 500 Internal Server Error\r\nAccess-Control-Allow-Origin: *\r\nContent-Type: application/json\r\nConnection: close\r\n\r\n{\"error\":\"Falha ao acionar o instalador BGFT\"}");
-  }
-  send_all(c, resp_buf, (int)strlen(resp_buf));
+  // Resposta de sucesso imediata para o JS do app
+  const char *resp = "HTTP/1.1 200 OK\r\nAccess-Control-Allow-Origin: *\r\nContent-Type: application/json\r\nConnection: close\r\n\r\n{\"status\":\"success\",\"message\":\"Pedido recebido\"}";
+  send_all(c, resp, (int)strlen(resp));
 }
 
 static void serve(int c) {
-  char req[4096], path[256], full[300], buf[4096], hdr[256], msg[320];
+  char req[4096], path[256], full[300], buf[4096], hdr[256];
   int n = read(c, req, sizeof(req) - 1);
   if (n <= 0) return;
   req[n] = 0;
@@ -152,8 +104,6 @@ static void serve(int c) {
   if (!strcmp(path, "/")) strcpy(path, "/index.html");
   snprintf(full, sizeof(full), "%s%s", ROOT, path);
   int fd = open(full, O_RDONLY);
-  snprintf(msg, sizeof(msg), "GET %s -> %s", path, fd < 0 ? "404" : "200");
-  logf_(msg);
   if (fd < 0) {
     const char *r = "HTTP/1.1 404 Not Found\r\nAccess-Control-Allow-Origin: *\r\nContent-Length: 0\r\nConnection: close\r\n\r\n";
     send_all(c, r, (int)strlen(r));
@@ -179,7 +129,7 @@ static void *worker(void *arg) {
 
 int main(void) {
   signal(SIGPIPE, SIG_IGN);
-  logf_("inicio server nativo estavel");
+  logf_("=== INICIO DO APP PS4 PATCH STORE ===");
   sceSystemServiceHideSplashScreen();
 
   int s = socket(AF_INET, SOCK_STREAM, 0);
@@ -187,14 +137,21 @@ int main(void) {
   setsockopt(s, SOL_SOCKET, SO_REUSEADDR, &one, sizeof(one));
   struct sockaddr_in a; memset(&a, 0, sizeof(a));
   a.sin_family = AF_INET; a.sin_port = htons(PORT); a.sin_addr.s_addr = inet_addr("127.0.0.1");
+  
   if (bind(s, (struct sockaddr *)&a, sizeof(a)) < 0 || listen(s, 16) < 0) {
-    logf_("ERRO: bind/listen falhou");
+    logf_("ERRO FATAL: bind ou listen falhou na porta 8080");
     return 1;
   }
-  logf_("servidor ok, abrindo navegador");
+  
+  logf_("Servidor HTTP rodando na porta 8080 com sucesso!");
 #ifndef NO_LAUNCH
-  if (sceSystemServiceLaunchWebBrowser("http://127.0.0.1:8080/") != 0) logf_("ERRO: LaunchWebBrowser falhou");
+  if (sceSystemServiceLaunchWebBrowser("http://127.0.0.1:8080/") != 0) {
+    logf_("AVISO: Falha ao abrir o navegador automaticamente");
+  } else {
+    logf_("Navegador acionado com sucesso.");
+  }
 #endif
+
   for (;;) {
     int c = accept(s, NULL, NULL);
     if (c < 0) continue;
