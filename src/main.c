@@ -108,10 +108,10 @@ static void serve(int c) {
 
     url_decode(decoded_url, raw_url);
 
-    logf_("URL pronta para instalacao nativa:");
+    logf_("=== URL FINAL PARA DOWNLOAD NATIVO ===");
     logf_(decoded_url);
 
-    // Responde com sucesso para o app web
+    // Responde com sucesso imediato ao frontend do app
     const char *resp = "HTTP/1.1 200 OK\r\nAccess-Control-Allow-Origin: *\r\nContent-Type: application/json\r\nConnection: close\r\n\r\n{\"status\":\"success\"}";
     send_all(c, resp, (int)strlen(resp));
     return;
@@ -153,7 +153,7 @@ static void *worker(void *arg) {
 
 int main(void) {
   signal(SIGPIPE, SIG_IGN);
-  logf_("=== INICIO DO APP (SERVIDOR PURO) ===");
+  logf_("=== INICIO DO APP PATCH STORE DEFINITIVO ===");
   sceSystemServiceHideSplashScreen();
 
   int s = socket(AF_INET, SOCK_STREAM, 0);
@@ -167,7 +167,7 @@ int main(void) {
     return 1;
   }
   
-  logf_("Servidor HTTP rodando na porta 8080!");
+  logf_("Servidor HTTP rodando na porta 8080 com sucesso!");
 #ifndef NO_LAUNCH
   if (sceSystemServiceLaunchWebBrowser("http://127.0.0.1:8080/") != 0) {
     logf_("AVISO: Falha ao abrir navegador");
