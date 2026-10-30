@@ -48,7 +48,7 @@ static void send_all(int c, const char *p, int n) {
   }
 }
 
-static int trigger_bgft_install(const char *pkg_url, const char *pkg_name, const char *content_id) {
+static int trigger_bgft_install(const char *pkg_url) {
   logf_("Iniciando despacho para o BinLoader BGFT...");
 
   int fd = open(PAYLOAD_PATH, O_RDONLY);
@@ -66,15 +66,6 @@ static int trigger_bgft_install(const char *pkg_url, const char *pkg_name, const
   }
   read(fd, payload_data, size);
   close(fd);
-
-  unsigned char marker[6] = {0xb4, 0xb4, 0xb4, 0xb4, 0xb4, 0xb4};
-  int found = -1;
-  for (int i = 0; i < size - 6; i++) {
-    if (!memcmp(payload_data + i, marker, 6)) {
-      found = i;
-      break;
-    }
-  }
 
   int sock = -1;
   int ports[] = {9090, 9021, 9020};
@@ -110,22 +101,9 @@ static void handle_api_install(int c, const char *body) {
   logf_("Recebida solicitacao em /api/install");
   
   char url[512] = {0};
-  char name[128] = {0};
-  char content_id[64] = {0};
-
   char *u_ptr = strstr(body, "\"url\":\"");
   if (u_ptr) {
     sscanf(u_ptr + 7, "%511[^\"]", url);
-  }
-
-  char *n_ptr = strstr(body, "\"name\":\"");
-  if (n_ptr) {
-    sscanf(n_ptr + 8, "%127[^\"]", name);
-  }
-
-  char *c_ptr = strstr(body, "\"content_id\":\"");
-  if (c_ptr) {
-    sscanf(c_ptr + 14, "%63[^\"]", content_id);
   }
 
   if (strlen(url) == 0) {
@@ -134,7 +112,7 @@ static void handle_api_install(int c, const char *body) {
     return;
   }
 
-  int res = trigger_bgft_install(url, name, content_id);
+  int res = trigger_bgft_install(url);
 
   char resp_buf[512];
   if (res == 0) {
@@ -151,7 +129,6 @@ static void serve(int c) {
   if (n <= 0) return;
   req[n] = 0;
 
-  // Tratar requisições OPTIONS de CORS pré-flight se houver
   if (!strncmp(req, "OPTIONS", 7)) {
     const char *cors_resp = "HTTP/1.1 204 No Content\r\nAccess-Control-Allow-Origin: *\r\nAccess-Control-Allow-Methods: POST, GET, OPTIONS\r\nAccess-Control-Allow-Headers: Content-Type\r\nConnection: close\r\n\r\n";
     send_all(c, cors_resp, (int)strlen(cors_resp));
@@ -202,7 +179,7 @@ static void *worker(void *arg) {
 
 int main(void) {
   signal(SIGPIPE, SIG_IGN);
-  logf_("inicio server nativo com CORS");
+  logf_("inicio server nativo estavel");
   sceSystemServiceHideSplashScreen();
 
   int s = socket(AF_INET, SOCK_STREAM, 0);
