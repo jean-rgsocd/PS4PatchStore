@@ -140,7 +140,7 @@
       if (xhr.status >= 200 && xhr.status < 300) {
         showToast("Pedido aceito! Acompanhe nas Notificacoes do PS4.");
       } else {
-        showToast("Erro HTTP " + xhr.status + " no servidor nativo.");
+        showToast("Erro " + xhr.status + ": " + (xhr.responseText || "servidor nativo"));
       }
     };
 
