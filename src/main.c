@@ -51,63 +51,40 @@ static void send_all(int c, const char *p, int n) {
   }
 }
 
-static void handle_api_install(int c, const char *body) {
-  logf_("API /api/install chamada com sucesso!");
-  if (body && strlen(body) > 0) {
-    logf_("Corpo recebido:");
-    logf_(body);
-  }
-  
-  char url[512] = {0};
-  
-  const char *u_ptr = strstr(body, "url");
-  if (u_ptr) {
-    u_ptr = strstr(u_ptr, "http");
-  }
-  
-  if (u_ptr) {
-    int i = 0;
-    while (u_ptr[i] != '\0' && u_ptr[i] != '"' && u_ptr[i] != '\'' && u_ptr[i] != '}' && i < 511) {
-      url[i] = u_ptr[i];
-      i++;
-    }
-    url[i] = '\0';
-  }
-
-  if (strlen(url) == 0) {
-    logf_("ERRO: URL recebida esta vazia");
-    const char *resp = "HTTP/1.1 400 Bad Request\r\nAccess-Control-Allow-Origin: *\r\nContent-Type: application/json\r\nConnection: close\r\n\r\n{\"error\":\"URL vazia\"}";
-    send_all(c, resp, (int)strlen(resp));
-    return;
-  }
-
-  logf_("URL capturada com sucesso:");
-  logf_(url);
-
-  const char *resp = "HTTP/1.1 200 OK\r\nAccess-Control-Allow-Origin: *\r\nContent-Type: application/json\r\nConnection: close\r\n\r\n{\"status\":\"success\",\"message\":\"Pedido recebido\"}";
-  send_all(c, resp, (int)strlen(resp));
-}
-
 static void serve(int c) {
-  char req[8192], path[256], full[300], buf[4096], hdr[256];
+  char req[4096], path[512], full[600], buf[4096], hdr[256];
   int n = read(c, req, sizeof(req) - 1);
   if (n <= 0) return;
   req[n] = 0;
 
-  if (!strncmp(req, "OPTIONS", 7)) {
-    const char *cors_resp = "HTTP/1.1 204 No Content\r\nAccess-Control-Allow-Origin: *\r\nAccess-Control-Allow-Methods: POST, GET, OPTIONS\r\nAccess-Control-Allow-Headers: Content-Type\r\nConnection: close\r\n\r\n";
-    send_all(c, cors_resp, (int)strlen(cors_resp));
-    return;
-  }
-
-  if (!strncmp(req, "POST /api/install", 17)) {
-    char *body = strstr(req, "\r\n\r\n");
-    if (body) {
-      body += 4;
-    } else {
-      body = "";
+  // Tratar rota de instalacao via GET parameter
+  if (!strncmp(req, "GET /api/install", 16)) {
+    logf_("API /api/install (GET) acionada!");
+    char url[512] = {0};
+    
+    char *u_param = strstr(req, "url=");
+    if (u_param) {
+      u_param += 4;
+      int i = 0;
+      while (u_param[i] != '\0' && u_param[i] != ' ' && u_param[i] != '\r' && u_param[i] != '\n' && i < 511) {
+        url[i] = u_param[i];
+        i++;
+      }
+      url[i] = '\0';
     }
-    handle_api_install(c, body);
+
+    if (strlen(url) == 0) {
+      logf_("ERRO: URL parameter vazio");
+      const char *resp = "HTTP/1.1 400 Bad Request\r\nAccess-Control-Allow-Origin: *\r\nContent-Length: 0\r\nConnection: close\r\n\r\n";
+      send_all(c, resp, (int)strlen(resp));
+      return;
+    }
+
+    logf_("URL capturada com sucesso via GET:");
+    logf_(url);
+
+    const char *resp = "HTTP/1.1 200 OK\r\nAccess-Control-Allow-Origin: *\r\nContent-Type: application/json\r\nConnection: close\r\n\r\n{\"status\":\"success\"}";
+    send_all(c, resp, (int)strlen(resp));
     return;
   }
 
@@ -116,6 +93,7 @@ static void serve(int c) {
     send_all(c, r, (int)strlen(r));
     return;
   }
+  
   char *q = strchr(path, '?'); if (q) *q = 0;
   if (!strcmp(path, "/")) strcpy(path, "/index.html");
   snprintf(full, sizeof(full), "%s%s", ROOT, path);
@@ -125,6 +103,7 @@ static void serve(int c) {
     send_all(c, r, (int)strlen(r));
     return;
   }
+  
   snprintf(hdr, sizeof(hdr), "HTTP/1.1 200 OK\r\nAccess-Control-Allow-Origin: *\r\nContent-Type: %s\r\nConnection: close\r\n\r\n", mime(full));
   send_all(c, hdr, (int)strlen(hdr));
   while ((n = read(fd, buf, sizeof(buf))) > 0) send_all(c, buf, n);
@@ -145,7 +124,7 @@ static void *worker(void *arg) {
 
 int main(void) {
   signal(SIGPIPE, SIG_IGN);
-  logf_("=== INICIO DO APP PS4 PATCH STORE ===");
+  logf_("=== INICIO DO APP (MODO GET) ===");
   sceSystemServiceHideSplashScreen();
 
   int s = socket(AF_INET, SOCK_STREAM, 0);
@@ -155,16 +134,14 @@ int main(void) {
   a.sin_family = AF_INET; a.sin_port = htons(PORT); a.sin_addr.s_addr = inet_addr("127.0.0.1");
   
   if (bind(s, (struct sockaddr *)&a, sizeof(a)) < 0 || listen(s, 16) < 0) {
-    logf_("ERRO FATAL: bind ou listen falhou na porta 8080");
+    logf_("ERRO FATAL: bind/listen falhou");
     return 1;
   }
   
-  logf_("Servidor HTTP rodando na porta 8080 com sucesso!");
+  logf_("Servidor HTTP rodando na porta 8080!");
 #ifndef NO_LAUNCH
   if (sceSystemServiceLaunchWebBrowser("http://127.0.0.1:8080/") != 0) {
-    logf_("AVISO: Falha ao abrir o navegador automaticamente");
-  } else {
-    logf_("Navegador acionado com sucesso.");
+    logf_("AVISO: Falha ao abrir navegador");
   }
 #endif
 
