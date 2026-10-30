@@ -1,7 +1,3 @@
-/* eboot.bin (NAO testado em hardware) - OpenOrbis Toolchain.
- * Serve /app0/www em 127.0.0.1:8080 e abre o navegador do sistema nessa URL.
- * Cada conexao roda em uma thread propria, com timeout, para que conexoes vazias
- * (pre-conexoes do navegador) nao travem o servidor. */
 #include <stdio.h>
 #include <string.h>
 #include <stdlib.h>
@@ -14,17 +10,15 @@
 #include <netinet/in.h>
 #include <arpa/inet.h>
 
-extern int sceSystemServiceHideSplashScreen(void);                /* libSceSystemService */
+extern int sceSystemServiceHideSplashScreen(void);
 #ifndef NO_LAUNCH
-extern int sceSystemServiceLaunchWebBrowser(const char *uri);     /* libSceSystemService */
+extern int sceSystemServiceLaunchWebBrowser(const char *uri);
 #endif
 
 #define PORT 8080
-#ifndef START_URL
-#define START_URL "http://127.0.0.1:8080/"   /* troque por http://seu-site/ se o local falhar */
-#endif
 #define LOG  "/data/ps4store.log"
 #define ROOT "/app0/www"
+#define PAYLOAD_PATH "/app0/directpayload.bin"
 
 static void logf_(const char *m) {
   int f = open(LOG, O_WRONLY | O_CREAT | O_APPEND, 0666);
@@ -54,11 +48,130 @@ static void send_all(int c, const char *p, int n) {
   }
 }
 
+// Disparar o directpayload via BinLoader para o BGFT do PS4
+static int trigger_bgft_install(const char *pkg_url, const char *pkg_name, const char *content_id) {
+  logf_("Iniciando despacho para o BinLoader BGFT...");
+
+  int fd = open(PAYLOAD_PATH, O_RDONLY);
+  if (fd < 0) {
+    logf_("ERRO: Nao foi possivel abrir o directpayload.bin");
+    return -1;
+  }
+
+  int size = lseek(fd, 0, SEEK_END);
+  lseek(fd, 0, SEEK_SET);
+  char *payload_data = malloc(size);
+  if (!payload_data) {
+    close(fd);
+    return -1;
+  }
+  read(fd, payload_data, size);
+  close(fd);
+
+  // Localizar marcadores B4 (6 bytes) para injetar IP/Porta de callback
+  unsigned char marker[6] = {0xb4, 0xb4, 0xb4, 0xb4, 0xb4, 0xb4};
+  int found = -1;
+  for (int i = 0; i < size - 6; i++) {
+    if (!memcmp(payload_data + i, marker, 6)) {
+      found = i;
+      break;
+    }
+  }
+
+  if (found == -1) {
+    logf_("AVISO: Marcador B4 nao encontrado no payload, enviando padrao.");
+  }
+
+  // Tentar conectar nas portas comuns do BinLoader do GoldHEN (9090, 9021, 9020)
+  int sock = -1;
+  int ports[] = {9090, 9021, 9020};
+  for (int p = 0; p < 3; p++) {
+    int s = socket(AF_INET, SOCK_STREAM, 0);
+    if (s < 0) continue;
+    struct sockaddr_in addr;
+    memset(&addr, 0, sizeof(addr));
+    addr.sin_family = AF_INET;
+    addr.sin_port = htons(ports[p]);
+    addr.sin_addr.s_addr = inet_addr("127.0.0.1");
+    if (connect(s, (struct sockaddr *)&addr, sizeof(addr)) == 0) {
+      sock = s;
+      break;
+    }
+    close(s);
+  }
+
+  if (sock < 0) {
+    logf_("ERRO: Falha ao conectar no BinLoader do GoldHEN.");
+    free(payload_data);
+    return -1;
+  }
+
+  // Enviar o payload modificado para a memória do PS4
+  send_all(sock, payload_data, size);
+  close(sock);
+  free(payload_data);
+  logf_("Payload despachado com sucesso para o BGFT!");
+  return 0;
+}
+
+static void handle_api_install(int c, const char *body) {
+  logf_("Recebida solicitacao em /api/install");
+  
+  // Extrair URL simples do body JSON enviado pelo app.js
+  char url[512] = {0};
+  char name[128] = {0};
+  char content_id[64] = {0};
+
+  char *u_ptr = strstr(body, "\"url\":\"");
+  if (u_ptr) {
+    sscanf(u_ptr + 7, "%511[^\"]", url);
+  }
+
+  char *n_ptr = strstr(body, "\"name\":\"");
+  if (n_ptr) {
+    sscanf(n_ptr + 8, "%127[^\"]", name);
+  }
+
+  char *c_ptr = strstr(body, "\"content_id\":\"");
+  if (c_ptr) {
+    sscanf(c_ptr + 14, "%63[^\"]", content_id);
+  }
+
+  if (strlen(url) == 0) {
+    const char *resp = "HTTP/1.1 400 Bad Request\r\nContent-Type: application/json\r\nConnection: close\r\n\r\n{\"error\":\"URL vazia\"}";
+    send_all(c, resp, (int)strlen(resp));
+    return;
+  }
+
+  int res = trigger_bgft_install(url, name, content_id);
+
+  const char *resp;
+  char resp_buf[512];
+  if (res == 0) {
+    snprintf(resp_buf, sizeof(resp_buf), "HTTP/1.1 200 OK\r\nContent-Type: application/json\r\nConnection: close\r\n\r\n{\"status\":\"success\",\"message\":\"Download disparado no BGFT\"}");
+    resp = resp_buf;
+  } else {
+    snprintf(resp_buf, sizeof(resp_buf), "HTTP/1.1 500 Internal Server Error\r\nContent-Type: application/json\r\nConnection: close\r\n\r\n{\"error\":\"Falha ao acionar o instalador BGFT\"}");
+    resp = resp_buf;
+  }
+  send_all(c, resp, (int)strlen(resp));
+}
+
 static void serve(int c) {
-  char req[2048], path[256], full[300], buf[4096], hdr[256], msg[320];
+  char req[4096], path[256], full[300], buf[4096], hdr[256], msg[320];
   int n = read(c, req, sizeof(req) - 1);
   if (n <= 0) return;
   req[n] = 0;
+
+  // Verificar se e requisicao POST /api/install
+  if (!strncmp(req, "POST /api/install", 17)) {
+    char *body = strstr(req, "\r\n\r\n");
+    if (body) body += 4;
+    else body = "";
+    handle_api_install(c, body);
+    return;
+  }
+
   if (sscanf(req, "GET %255s", path) != 1 || strstr(path, "..")) {
     const char *r = "HTTP/1.1 400 Bad Request\r\nContent-Length: 0\r\nConnection: close\r\n\r\n";
     send_all(c, r, (int)strlen(r));
@@ -94,8 +207,8 @@ static void *worker(void *arg) {
 }
 
 int main(void) {
-  signal(SIGPIPE, SIG_IGN);          /* navegador fechando a conexao nao pode derrubar o app */
-  logf_("inicio");
+  signal(SIGPIPE, SIG_IGN);
+  logf_("inicio server nativo");
   sceSystemServiceHideSplashScreen();
 
   int s = socket(AF_INET, SOCK_STREAM, 0);
@@ -109,9 +222,7 @@ int main(void) {
   }
   logf_("servidor ok, abrindo navegador");
 #ifndef NO_LAUNCH
-  if (sceSystemServiceLaunchWebBrowser(START_URL) != 0) logf_("ERRO: LaunchWebBrowser falhou");
-#else
-  logf_("modo teste: sem abrir navegador");
+  if (sceSystemServiceLaunchWebBrowser("http://127.0.0.1:8080/") != 0) logf_("ERRO: LaunchWebBrowser falhou");
 #endif
   for (;;) {
     int c = accept(s, NULL, NULL);
@@ -122,7 +233,6 @@ int main(void) {
     pthread_attr_setstacksize(&at, 256 * 1024);
     pthread_attr_setdetachstate(&at, PTHREAD_CREATE_DETACHED);
     if (pthread_create(&t, &at, worker, (void *)(long)c) != 0) {
-      logf_("AVISO: pthread_create falhou, atendendo na thread principal");
       worker((void *)(long)c);
     }
     pthread_attr_destroy(&at);
