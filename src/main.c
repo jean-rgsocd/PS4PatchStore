@@ -170,6 +170,41 @@ static int trigger_bgft_install(const char *pkg_url) {
   return 0;
 }
 
+
+/* Remote Package Installer / payload: POST http://127.0.0.1:12800/api/install
+ * corpo: {"type":"direct","packages":["URL"]}  (formato documentado do RPI) */
+static int post_install_api(const char *url, char *resp, int rsz) {
+  char body[700], req[1100];
+  int bl = snprintf(body, sizeof(body), "{\"type\":\"direct\",\"packages\":[\"%s\"]}", url);
+  int rl = snprintf(req, sizeof(req),
+    "POST /api/install HTTP/1.1\r\nHost: 127.0.0.1\r\nContent-Type: application/json\r\n"
+    "Content-Length: %d\r\nConnection: close\r\n\r\n%s", bl, body);
+
+  int sk = socket(AF_INET, SOCK_STREAM, 0);
+  if (sk < 0) return -1;
+
+  struct timeval tv;
+  tv.tv_sec = 3; tv.tv_usec = 0;
+  setsockopt(sk, SOL_SOCKET, SO_RCVTIMEO, &tv, sizeof(tv));
+  setsockopt(sk, SOL_SOCKET, SO_SNDTIMEO, &tv, sizeof(tv));
+
+  struct sockaddr_in a;
+  memset(&a, 0, sizeof(a));
+  a.sin_family = AF_INET;
+  a.sin_port = htons(12800);
+  a.sin_addr.s_addr = inet_addr("127.0.0.1");
+
+  if (connect(sk, (struct sockaddr *)&a, sizeof(a)) < 0) { close(sk); return -1; }
+
+  send_all(sk, req, rl);
+
+  int n = 0, r;
+  while (n < rsz - 1 && (r = read(sk, resp + n, rsz - 1 - n)) > 0) n += r;
+  resp[n] = 0;
+  close(sk);
+  return n > 0 ? 0 : -2;
+}
+
 static void serve(int c) {
   char req[4096], path[512], full[600], buf[4096], hdr[256];
   int n = read(c, req, sizeof(req) - 1);
@@ -205,7 +240,24 @@ static void serve(int c) {
     strcpy(current_target_url, decoded_url);
     pthread_mutex_unlock(&url_mutex);
 
-    trigger_bgft_install(decoded_url);
+    char api_resp[512];
+    int api_ok = post_install_api(decoded_url, api_resp, sizeof(api_resp));
+
+    if (api_ok != 0) {
+      logf_("API 12800 fora do ar; enviando payload ao BinLoader...");
+      trigger_bgft_install(decoded_url);
+      for (int t = 0; t < 8 && api_ok != 0; t++) {
+        usleep(500000);
+        api_ok = post_install_api(decoded_url, api_resp, sizeof(api_resp));
+      }
+    }
+
+    if (api_ok == 0) {
+      logf_("Resposta da API 12800:");
+      logf_(api_resp);
+    } else {
+      logf_("API 12800 nao respondeu.");
+    }
 
     const char *resp = "HTTP/1.1 200 OK\r\nAccess-Control-Allow-Origin: *\r\nContent-Type: application/json\r\nConnection: close\r\n\r\n{\"status\":\"success\"}";
     send_all(c, resp, (int)strlen(resp));
