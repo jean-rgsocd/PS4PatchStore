@@ -77,11 +77,9 @@ static void send_all(int c, const char *p, int n) {
   }
 }
 
-// Variável global temporária para armazenar a última URL solicitada para o retorno TCP
 static char current_target_url[512] = {0};
 static pthread_mutex_t url_mutex = PTHREAD_MUTEX_INITIALIZER;
 
-// Thread do Servidor de Retorno TCP que o payload no PS4 conecta de volta[cite: 5]
 static void *callback_server_thread(void *arg) {
   int server_sock = socket(AF_INET, SOCK_STREAM, 0);
   if (server_sock < 0) return NULL;
@@ -92,7 +90,7 @@ static void *callback_server_thread(void *arg) {
   struct sockaddr_in addr;
   memset(&addr, 0, sizeof(addr));
   addr.sin_family = AF_INET;
-  addr.sin_port = htons(9091); // Porta de retorno local
+  addr.sin_port = htons(9091);
   addr.sin_addr.s_addr = inet_addr("127.0.0.1");
 
   if (bind(server_sock, (struct sockaddr *)&addr, sizeof(addr)) < 0 || listen(server_sock, 4) < 0) {
@@ -100,20 +98,17 @@ static void *callback_server_thread(void *arg) {
     return NULL;
   }
 
-  logf_("Servidor de retorno TCP rodando na porta 9091...");
+  logf_("Servidor de retorno TCP ativo na porta 9091.");
 
   for (;;) {
     int client_sock = accept(server_sock, NULL, NULL);
     if (client_sock < 0) continue;
 
-    logf_("Payload conectado de volta ao servidor local!");
-    
     pthread_mutex_lock(&url_mutex);
     if (strlen(current_target_url) > 0) {
-      // Envia a URL do pacote diretamente para o payload via socket de retorno
       send_all(client_sock, current_target_url, (int)strlen(current_target_url));
       send_all(client_sock, "\n", 1);
-      logf_("URL enviada com sucesso para o payload de retorno!");
+      logf_("URL entregue ao payload com sucesso.");
     }
     pthread_mutex_unlock(&url_mutex);
 
@@ -124,15 +119,9 @@ static void *callback_server_thread(void *arg) {
   return NULL;
 }
 
-// Função que prepara o payload, injeta o IP/Porta de retorno (marcador B4) e envia ao BinLoader[cite: 5]
 static int trigger_bgft_install(const char *pkg_url) {
-  logf_("Iniciando despacho do DirectPackageInstaller...");
-
   int fd = open(PAYLOAD_PATH, O_RDONLY);
-  if (fd < 0) {
-    logf_("AVISO: directpayload.bin nao encontrado, operando em modo estavel.");
-    return 0;
-  }
+  if (fd < 0) return 0;
 
   int size = lseek(fd, 0, SEEK_END);
   lseek(fd, 0, SEEK_SET);
@@ -144,7 +133,6 @@ static int trigger_bgft_install(const char *pkg_url) {
   read(fd, payload_data, size);
   close(fd);
 
-  // Procura o marcador B4 B4 B4 B4 B4 B4 para injetar o IP (127.0.0.1) e Porta (9091)[cite: 5]
   unsigned char marker[6] = {0xb4, 0xb4, 0xb4, 0xb4, 0xb4, 0xb4};
   int found = -1;
   for (int i = 0; i < size - 6; i++) {
@@ -155,19 +143,15 @@ static int trigger_bgft_install(const char *pkg_url) {
   }
 
   if (found != -1) {
-    // 127.0.0.1 em bytes = 127, 0, 0, 1
     payload_data[found + 0] = 127;
     payload_data[found + 1] = 0;
     payload_data[found + 2] = 0;
     payload_data[found + 3] = 1;
-    // Porta 9091 em Little Endian (portas de rede)
     unsigned short port = 9091;
     payload_data[found + 4] = (port >> 8) & 0xFF;
     payload_data[found + 5] = port & 0xFF;
-    logf_("Marcador B4 atualizado com IP e Porta de retorno!");
   }
 
-  // Conecta na porta 9090 do BinLoader do GoldHEN para injetar o binário[cite: 5]
   int sock = socket(AF_INET, SOCK_STREAM, 0);
   if (sock >= 0) {
     struct sockaddr_in addr;
@@ -178,7 +162,6 @@ static int trigger_bgft_install(const char *pkg_url) {
 
     if (connect(sock, (struct sockaddr *)&addr, sizeof(addr)) == 0) {
       send_all(sock, payload_data, size);
-      logf_("Payload enviado com sucesso para o BinLoader (9090)!");
     }
     close(sock);
   }
@@ -194,7 +177,7 @@ static void serve(int c) {
   req[n] = 0;
 
   if (!strncmp(req, "GET /api/install", 16)) {
-    logf_("API /api/install (GET) acionada!");
+    logf_("API /api/install acionada.");
     char raw_url[512] = {0};
     char decoded_url[512] = {0};
     
@@ -210,7 +193,6 @@ static void serve(int c) {
     }
 
     if (strlen(raw_url) == 0) {
-      logf_("ERRO: URL parameter vazio");
       const char *resp = "HTTP/1.1 400 Bad Request\r\nAccess-Control-Allow-Origin: *\r\nContent-Length: 0\r\nConnection: close\r\n\r\n";
       send_all(c, resp, (int)strlen(resp));
       return;
@@ -218,15 +200,11 @@ static void serve(int c) {
 
     url_decode(decoded_url, raw_url);
 
-    logf_("URL alvo definida com sucesso:");
-    logf_(decoded_url);
-
     pthread_mutex_lock(&url_mutex);
     memset(current_target_url, 0, sizeof(current_target_url));
     strcpy(current_target_url, decoded_url);
     pthread_mutex_unlock(&url_mutex);
 
-    // Aciona o mecanismo do payload de retorno
     trigger_bgft_install(decoded_url);
 
     const char *resp = "HTTP/1.1 200 OK\r\nAccess-Control-Allow-Origin: *\r\nContent-Type: application/json\r\nConnection: close\r\n\r\n{\"status\":\"success\"}";
@@ -270,10 +248,9 @@ static void *worker(void *arg) {
 
 int main(void) {
   signal(SIGPIPE, SIG_IGN);
-  logf_("=== INICIO DO APP DEFINITIVO (COM RETORNO TCP) ===");
+  logf_("=== PS4 PATCH STORE - INICIO ESTAVEL ===");
   sceSystemServiceHideSplashScreen();
 
-  // Inicia a thread do servidor TCP de retorno em segundo plano
   pthread_t callback_thread;
   pthread_attr_t attr;
   pthread_attr_init(&attr);
@@ -288,15 +265,11 @@ int main(void) {
   a.sin_family = AF_INET; a.sin_port = htons(PORT); a.sin_addr.s_addr = inet_addr("127.0.0.1");
   
   if (bind(s, (struct sockaddr *)&a, sizeof(a)) < 0 || listen(s, 16) < 0) {
-    logf_("ERRO FATAL: bind/listen falhou");
     return 1;
   }
   
-  logf_("Servidor HTTP principal rodando na porta 8080!");
 #ifndef NO_LAUNCH
-  if (sceSystemServiceLaunchWebBrowser("http://127.0.0.1:8080/") != 0) {
-    logf_("AVISO: Falha ao abrir navegador");
-  }
+  sceSystemServiceLaunchWebBrowser("http://127.0.0.1:8080/");
 #endif
 
   for (;;) {
