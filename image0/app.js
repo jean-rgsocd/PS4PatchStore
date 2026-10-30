@@ -102,37 +102,6 @@
     );
   }
 
-  // Leitura dos primeiros 4KB do PKG via HTTP Range para extrair metadados e Content ID se necessário
-  function fetchPkgMetadata(url, callback) {
-    var xhr = new XMLHttpRequest();
-    xhr.open("GET", url, true);
-    xhr.setRequestHeader("Range", "bytes=0-4095");
-    xhr.timeout = 15000;
-
-    xhr.onload = function () {
-      if (xhr.status === 200 || xhr.status === 206) {
-        // Sucesso na leitura do Range do R2
-        callback(null, xhr.response);
-      } else {
-        callback(new Error("Falha ao ler range HTTP: " + xhr.status));
-      }
-    };
-
-    xhr.onerror = function () {
-      callback(new Error("Erro de rede ao ler metadados do PKG"));
-    };
-
-    xhr.ontimeout = function () {
-      callback(new Error("Timeout ao ler metadados do PKG"));
-    };
-
-    try {
-      xhr.send();
-    } catch (e) {
-      callback(e);
-    }
-  }
-
   function installPkg(url, button) {
     if (!url) {
       showToast("URL do pacote nao configurada.");
@@ -153,103 +122,98 @@
     var pkgIcon = packageValue(button, card, "data-icon");
 
     installBusy = true;
-    if (button) {
+    if (button && button.setAttribute) {
       button.setAttribute("aria-disabled", "true");
     }
 
-    showToast("Lendo metadados do pacote via R2...");
+    showToast("Enviando pedido ao instalador nativo BGFT...");
 
-    // Passo 1: Disparar leitura do Range HTTP antes de enviar para o backend nativo
-    fetchPkgMetadata(url, function (err, headerData) {
-      if (err) {
-        console.warn("Aviso na leitura do Range (prosseguindo com dados basicos):", err.message);
+    var packageData = {
+      type: "direct",
+      url: url,
+      name: pkgName,
+      content_id: pkgContentId,
+      package_type: pkgType,
+      size: pkgSize,
+      icon: pkgIcon
+    };
+
+    var xhr = new XMLHttpRequest();
+    xhr.open("POST", INSTALL_ENDPOINT, true);
+    xhr.setRequestHeader("Content-Type", "text/plain;charset=UTF-8");
+    xhr.timeout = 30000;
+
+    function finish() {
+      installBusy = false;
+      if (button && button.removeAttribute) {
+        button.removeAttribute("aria-disabled");
       }
+    }
 
-      showToast("Enviando pedido ao instalador nativo BGFT...");
-
-      var packageData = {
-        type: "direct",
-        url: url,
-        name: pkgName,
-        content_id: pkgContentId,
-        package_type: pkgType,
-        size: pkgSize,
-        icon: pkgIcon
-      };
-
-      var xhr = new XMLHttpRequest();
-      xhr.open("POST", INSTALL_ENDPOINT, true);
-      xhr.setRequestHeader("Content-Type", "text/plain;charset=UTF-8");
-      xhr.timeout = 30000;
-
-      function finish() {
-        installBusy = false;
-        if (button) {
-          button.removeAttribute("aria-disabled");
-        }
-      }
-
-      xhr.onload = function () {
-        var response = null;
-        try {
-          response = JSON.parse(xhr.responseText);
-        } catch (error) {
-          response = null;
-        }
-
-        finish();
-
-        if (
-          xhr.status >= 200 &&
-          xhr.status < 300 &&
-          response &&
-          response.status === "success"
-        ) {
-          showToast(
-            "Download registrado! Acompanhe nas Notificacoes do PS4."
-          );
-          return;
-        }
-
-        if (response && response.error) {
-          showToast("Erro: " + response.error);
-          return;
-        }
-
-        showToast(
-          "Falha HTTP " + xhr.status + ". " + (xhr.responseText || "Resposta invalida.")
-        );
-      };
-
-      xhr.onerror = function () {
-        finish();
-        showToast("Nao foi possivel conectar ao servidor de instalacao nativa.");
-      };
-
-      xhr.ontimeout = function () {
-        finish();
-        showToast("Tempo esgotado aguardando o instalador.");
-      };
-
+    xhr.onload = function () {
+      var response = null;
       try {
-        xhr.send(JSON.stringify(packageData));
+        response = JSON.parse(xhr.responseText);
       } catch (error) {
-        finish();
-        showToast("Erro ao enviar pedido: " + error.message);
+        response = null;
       }
-    });
+
+      finish();
+
+      if (
+        xhr.status >= 200 &&
+        xhr.status < 300 &&
+        response &&
+        response.status === "success"
+      ) {
+        showToast(
+          "Download registrado! Acompanhe nas Notificacoes do PS4."
+        );
+        return;
+      }
+
+      if (response && response.error) {
+        showToast("Erro: " + response.error);
+        return;
+      }
+
+      showToast(
+        "Falha HTTP " + xhr.status + ". " + (xhr.responseText || "Resposta invalida.")
+      );
+    };
+
+    xhr.onerror = function () {
+      finish();
+      showToast("Nao foi possivel conectar ao servidor de instalacao nativa.");
+    };
+
+    xhr.ontimeout = function () {
+      finish();
+      showToast("Tempo esgotado aguardando o instalador.");
+    };
+
+    try {
+      xhr.send(JSON.stringify(packageData));
+    } catch (error) {
+      finish();
+      showToast("Erro ao enviar pedido: " + error.message);
+    }
   }
 
   function onDownloadClick(event) {
     if (event && event.preventDefault) {
       event.preventDefault();
     }
-    var url = getAttribute(this, "data-pkg");
+
+    var target = (event && event.currentTarget) ? event.currentTarget : this;
+    var url = getAttribute(target, "data-pkg") || (target && target.dataset ? target.dataset.pkg : "");
+
     if (!url) {
       showToast("URL do pacote nao configurada no data-pkg.");
       return;
     }
-    installPkg(url, this);
+
+    installPkg(url, target);
   }
 
   var buttons = document.querySelectorAll("a[data-pkg]");
