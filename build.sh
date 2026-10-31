@@ -1,7 +1,7 @@
 
 #!/usr/bin/env bash
 # Uso: OO_PS4_TOOLCHAIN=/caminho/toolchain bash build.sh
-# Gera quatro pacotes em out/: min, pic, www e full.
+# Gera um unico pacote em out/native/: o app nativo JK Patchs.
 
 set -euo pipefail
 
@@ -99,29 +99,13 @@ echo "=== Lendo cabecalhos dos PKGs ==="
 python3 tools/pkg_info.py image0/index.html \
   || echo "AVISO: algum PKG nao pode ser lido (veja ERRO acima); esses botoes usam os valores do index.html"
 
-# Gerar executável PS4
-python3 tools/make_sfo.py
-make
-
-# Gerar os quatro pacotes
+# Pasta de saida (so o pacote nativo e gerado)
 rm -rf out
 mkdir -p out
 
-for MODE in min pic www full; do
-  echo "=== pacote: $MODE ==="
-
-  mkdir -p "out/$MODE"
-
-  MODE=$MODE python3 tools/make_gp4.py
-
-  cp project.gp4 "out/project-$MODE.gp4"
-
-  run_pkgtool pkg_build project.gp4 "out/$MODE"
-done
-
 # ---------------------------------------------------------------------------
 # App NATIVO: interface desenhada pelo proprio app (sem navegador).
-# Instala como "PS4 Patch Store Nativo" (PSTR00002), ao lado da versao navegador.
+# Unico pacote gerado: "JK Patchs" (PSTR00002) em out/native/.
 # ---------------------------------------------------------------------------
 echo "=== App nativo ==="
 

@@ -1,4 +1,4 @@
-/* PS4 Patch Store - app NATIVO (OpenOrbis).
+/* JK Patchs - app NATIVO (OpenOrbis).
  * Desenha a interface direto na tela (1920x1080, por software), le o controle e instala os pacotes
  * pelo mesmo payload do DirectPackageInstaller usado pela versao navegador.
  *
@@ -247,7 +247,7 @@ static void check_install_result(UI *ui) {
 
 /* ------------------------------------------------------------------ main */
 int main(void) {
-  install_log("=== PS4 PATCH STORE (nativo) ===");
+  install_log("=== JK PATCHS (nativo) ===");
   sceSystemServiceHideSplashScreen();
 
   if (video_init() != 0) return 1;

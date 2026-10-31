@@ -257,10 +257,9 @@ static void draw_topbar(UI *ui) {
   gfx_fill(s, 0, 109, W, 1, C_WHITE, 26);
 
   gfx_rrect(s, MARGIN, 28, 84, 54, 12, C_ACCENT, 255, 3);
-  text_draw_in(s, ui->fb, 26, MARGIN, 84, 64, "PS4", C_ACCENT, 255, 0, 1);
+  text_draw_in(s, ui->fb, 28, MARGIN, 84, 64, "JK", C_ACCENT, 255, 0, 1);
   int x = MARGIN + 84 + 22;
-  x += T(ui, 1, 28, x, 66, "PATCH ", C_TEXT, 255, 3) + 3 + 8;
-  T(ui, 1, 28, x, 66, "STORE", C_ACCENT, 255, 3);
+  T(ui, 1, 28, x, 66, "PATCHS", C_TEXT, 255, 3);
 
   const char *st = "CATÁLOGO LOCAL";
   int w = TW(ui, 1, 20, st, 3);
@@ -469,7 +468,7 @@ static void draw_footer(UI *ui) {
   x = hint(ui, x, "X", "Instalar");
   x = hint(ui, x, "L1  R1", "Categorias");
   x = hint(ui, x, "O", "Voltar ao início");
-  const char *v = "PS4 Patch Store";
+  const char *v = "JK Patchs";
   int w = TW(ui, 0, 20, v, 1);
   T(ui, 0, 20, W - MARGIN - w, 1036, v, C_MUTED, 150, 1);
 }

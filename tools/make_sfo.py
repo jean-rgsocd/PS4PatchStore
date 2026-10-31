@@ -14,7 +14,7 @@ OUT = os.path.join("image0", "sce_sys", "param.sfo")
 # APP=native: app nativo (interface desenhada pelo proprio app). Tem TITLE_ID/CONTENT_ID diferentes
 # para instalar ao lado da versao navegador sem substituir uma pela outra.
 if os.environ.get("APP") == "native":
-    TITLE = "PS4 Patch Store Nativo"
+    TITLE = "JK Patchs"
     TITLE_ID = "PSTR00002"
     CONTENT_ID = "IV0000-PSTR00002_00-PS4PATCHSTORE000"
     OUT = os.path.join("native0", "sce_sys", "param.sfo")
