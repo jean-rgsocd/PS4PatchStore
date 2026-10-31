@@ -99,13 +99,34 @@ static int pad = -1;
 static int user_id = -1;
 
 static void pad_open(void) {
+  static int pad_inited = 0, fails = 0;
+  char m[96];
+
+  /* scePadInit() e obrigatorio ANTES de scePadOpen (sem ele o controle nunca abre). */
+  if (!pad_inited) {
+    int r = scePadInit();
+    snprintf(m, sizeof(m), "scePadInit rc=0x%x", (unsigned)r);
+    install_log(m);
+    pad_inited = 1;
+  }
   if (user_id < 0) {
     OrbisUserServiceInitializeParams p;
     p.priority = ORBIS_KERNEL_PRIO_FIFO_LOWEST;
     sceUserServiceInitialize(&p);
     if (sceUserServiceGetInitialUser(&user_id) < 0) user_id = -1;
+    snprintf(m, sizeof(m), "usuario inicial=%d", user_id);
+    install_log(m);
   }
-  if (user_id >= 0) pad = scePadOpen(user_id, 0, 0, NULL);
+  if (user_id >= 0) {
+    pad = scePadOpen(user_id, 0, 0, NULL);
+    if (pad >= 0) {
+      snprintf(m, sizeof(m), "Controle aberto (handle=%d).", pad);
+      install_log(m);
+    } else if (fails++ < 3) {                      /* nao enche o log a cada tentativa */
+      snprintf(m, sizeof(m), "AVISO: scePadOpen falhou rc=0x%x", (unsigned)pad);
+      install_log(m);
+    }
+  }
 }
 
 /* Estado de repeticao: setas repetem ao segurar; X/O/L1/R1 so disparam ao apertar. */
@@ -130,9 +151,17 @@ static void poll_input(UI *ui) {
   }
   OrbisPadData d;
   memset(&d, 0, sizeof(d));
-  if (scePadReadState(pad, &d) != 0) return;
+  /* So erro negativo conta como falha (o exemplo oficial ignora o retorno). */
+  if (scePadReadState(pad, &d) < 0) return;
 
   uint32_t b = d.buttons;
+  static int logged = 0;
+  if (b && logged < 3) {                          /* prova nos logs que o controle esta sendo lido */
+    char m[64];
+    snprintf(m, sizeof(m), "Botoes lidos: 0x%x", (unsigned)b);
+    install_log(m);
+    logged++;
+  }
   /* analogico esquerdo tambem navega (centro = 0x80) */
   if (d.leftStick.x < 0x40) b |= ORBIS_PAD_BUTTON_LEFT;
   if (d.leftStick.x > 0xC0) b |= ORBIS_PAD_BUTTON_RIGHT;

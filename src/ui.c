@@ -272,7 +272,10 @@ static void draw_heading(UI *ui) {
   T(ui, 1, 22, MARGIN, 168, "ENCONTRE SEU JOGO", C_ACCENT, 255, 4);
   T(ui, 1, 54, MARGIN, 228, "Nosso catálogo", C_TEXT, 255, 0);
   char cnt[48];
-  snprintf(cnt, sizeof(cnt), "%d %s", ui->nfilt, ui->nfilt == 1 ? "coleção" : "coleções");
+  if (ui->nfilt > VISIBLE)                       /* varias paginas: mostra a posicao ("2 de 7 coleções") */
+    snprintf(cnt, sizeof(cnt), "%d de %d coleções", ui->sel + 1, ui->nfilt);
+  else
+    snprintf(cnt, sizeof(cnt), "%d %s", ui->nfilt, ui->nfilt == 1 ? "coleção" : "coleções");
   int w = TW(ui, 0, 26, cnt, 0);
   T(ui, 0, 26, W - MARGIN - w, 226, cnt, C_MUTED, 255, 0);
 }
