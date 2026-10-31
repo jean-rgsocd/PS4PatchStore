@@ -10,6 +10,21 @@ Estrutura: `image0/` (conteudo do app0), `src/main.c` (eboot), `tools/make_sfo.p
    - `out/full/*.pkg`: launcher + site.
 3. `build.log` e `diag.log` vao junto no artefato.
 
+## App nativo (sem navegador)
+Alem dos pacotes acima, o build gera `out/native/*.pkg`: o **PS4 Patch Store Nativo**
+(`PSTR00002`). A interface e desenhada pelo proprio app (1920x1080, por software), com o
+catalogo embutido; o controle navega e o X instala. Ele instala **ao lado** da versao navegador
+(`PSTR00001`), sem substitui-la, entao da para comparar e voltar atras.
+
+- O catalogo vem do mesmo `image0/index.html` (`tools/make_catalog.py` le cards, capas, categorias e
+  botoes depois do `pkg_info.py`). Nao existe segundo lugar para editar.
+- Fonte: DejaVu Sans (`assets/fonts`, licenca livre incluida). Codigo: `src/ps4_main.c` (tela, controle,
+  thread de instalacao), `src/ui.c` (interface), `src/gfx.c` (desenho), `src/install.c` (payload DPI).
+- Diagnostico: `/data/ps4store.log` (linhas "Video ok.", "Catalogo carregado.", "UI pronta." mostram ate onde
+  o app chegou). `diag.log` do artefato lista as bibliotecas e simbolos do app.
+- Controles: setas/analogico esquerdo movem, X instala, O volta ao inicio, L1/R1 trocam de categoria.
+- Testar a interface no PC, sem PS4: `bash tools/sim/run_sim.sh` (gera capturas em `build/sim/out/`).
+
 ## Local (Linux/WSL)
 `OO_PS4_TOOLCHAIN=/caminho/PS4Toolchain bash build.sh`  (resultado em `out/`)
 

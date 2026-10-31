@@ -1,3 +1,4 @@
+
 #!/usr/bin/env bash
 # Uso: OO_PS4_TOOLCHAIN=/caminho/toolchain bash build.sh
 # Gera quatro pacotes em out/: min, pic, www e full.
@@ -117,6 +118,32 @@ for MODE in min pic www full; do
 
   run_pkgtool pkg_build project.gp4 "out/$MODE"
 done
+
+# ---------------------------------------------------------------------------
+# App NATIVO: interface desenhada pelo proprio app (sem navegador).
+# Instala como "PS4 Patch Store Nativo" (PSTR00002), ao lado da versao navegador.
+# ---------------------------------------------------------------------------
+echo "=== App nativo ==="
+
+make native
+
+rm -rf native0/assets native0/sce_sys native0/sce_module
+mkdir -p native0/assets/fonts native0/assets/images native0/sce_sys native0/sce_module
+
+cp image0/directpayload.bin native0/directpayload.bin
+python3 tools/make_catalog.py image0/index.html native0/catalog.dat
+cp assets/fonts/* native0/assets/fonts/
+for IMG in image0/*.png image0/*.jpg; do
+  [ -f "$IMG" ] && cp "$IMG" native0/assets/images/
+done
+cp -r image0/sce_sys/. native0/sce_sys/
+cp -r image0/sce_module/. native0/sce_module/
+
+APP=native python3 tools/make_sfo.py
+MODE=native python3 tools/make_gp4.py
+cp project.gp4 out/project-native.gp4
+mkdir -p out/native
+run_pkgtool pkg_build project.gp4 out/native
 
 # Listar resultados
 ls -laR out

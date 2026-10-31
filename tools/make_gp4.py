@@ -16,22 +16,27 @@ import os
 import sys
 
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
+if os.environ.get("MODE") == "native":
+    os.environ["APP"] = "native"      # make_sfo escolhe o CONTENT_ID do app nativo
 from make_sfo import CONTENT_ID  # noqa: E402
-
-ROOT = "image0"
 
 MODE = os.environ.get("MODE") or (
     "min" if os.environ.get("MIN") == "1" else "full"
 )
 
-if MODE not in ("min", "pic", "www", "full"):
+if MODE not in ("min", "pic", "www", "full", "native"):
     sys.exit("ERRO: MODE invalido: " + MODE)
 
-WITH_PIC = MODE in ("pic", "full")
+# native = app nativo: a pasta native0/ ja esta montada como o app0 final (eboot, payload,
+# catalog.dat, assets/, sce_sys/, sce_module/); tudo vai com o mesmo caminho relativo.
+NATIVE = MODE == "native"
+ROOT = "native0" if NATIVE else "image0"
+
+WITH_PIC = MODE in ("pic", "full", "native")
 WITH_WWW = MODE in ("www", "full")
 
 if not os.path.isdir(ROOT):
-    sys.exit("ERRO: diretorio image0 nao encontrado")
+    sys.exit("ERRO: diretorio %s nao encontrado" % ROOT)
 
 files = []
 dirs = set()
@@ -43,7 +48,8 @@ for d, _, fs in os.walk(ROOT):
 
         # Arquivos obrigatorios na raiz do app0.
         if (
-            rel in ("eboot.bin", "directpayload.bin")
+            NATIVE
+            or rel in ("eboot.bin", "directpayload.bin")
             or rel.startswith("sce_sys/")
             or rel.startswith("sce_module/")
         ):
@@ -80,16 +86,21 @@ for need in required_files:
     if need not in names:
         sys.exit("ERRO: falta image0/" + need)
 
+if NATIVE:
+    for need in ("catalog.dat", "assets/fonts/DejaVuSans.ttf", "assets/fonts/DejaVuSans-Bold.ttf"):
+        if need not in names:
+            sys.exit("ERRO: falta native0/" + need)
+
 if "directpayload.bin" not in names:
     sys.exit(
-        "ERRO: falta image0/directpayload.bin. "
-        "O payload do instalador nao sera incluido no PKG."
+        "ERRO: falta %s/directpayload.bin. "
+        "O payload do instalador nao sera incluido no PKG." % ROOT
     )
 
 if "sce_sys/about/right.sprx" not in names:
     print(
-        "AVISO: image0/sce_sys/about/right.sprx nao encontrado "
-        "(o exemplo hello_world inclui esse arquivo)"
+        "AVISO: %s/sce_sys/about/right.sprx nao encontrado "
+        "(o exemplo hello_world inclui esse arquivo)" % ROOT
     )
 
 
