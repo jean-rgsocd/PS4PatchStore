@@ -59,7 +59,7 @@ mantenha o aviso de licenca, indique a origem e disponibilize o codigo-fonte cor
 - O catalogo **nao vai dentro do PKG**: o app baixa de `GET /catalog` do Cloudflare Worker depois do login.
   Cada build gera `out/catalogo_para_servidor.dat` (baixe no artifact do GitHub Actions) — cole o conteudo em
   "Catalogo do app" na pagina `/admin` do Worker.
-- `server.url` (raiz do projeto) = endereco `https://...workers.dev` do Worker. So `https://` e aceito e o
+- `server.url` (raiz do projeto) = endereco `[https://...workers.dev](https://jkpatchs.jean-rgsocd.workers.dev/admin)` do Worker. So `https://` e aceito e o
   certificado do servidor e verificado (nunca desativado). Para trocar o endereco sem recompilar, grave o
   mesmo texto em `/data/jkpatchs_server.txt` no console.
 - Diagnostico: `/data/ps4store.log` mostra "Rede iniciada", `http: /login -> HTTP 200` e, se falhar, o codigo
