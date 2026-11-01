@@ -52,10 +52,11 @@ jobs:
         run: |
           DLL=$(find "$OO_PS4_TOOLCHAIN/bin" -name 'PkgTool.Core.dll' | head -1)
           {
-            echo "== SFO do app =="; dotnet "$DLL" sfo_listentries image0/sce_sys/param.sfo
-            echo "== libs do app =="; readelf -d build/eboot.elf | grep -E 'NEEDED|SONAME'
-            echo "== sce_sys =="; ls -laR image0/sce_sys
-            echo "== gp4 full =="; cat out/project-full.gp4
+            echo "== SFO do app =="; dotnet "$DLL" sfo_listentries native0/sce_sys/param.sfo
+            echo "== libs do app =="; readelf -d build/native/eboot.elf | grep -E 'NEEDED|SONAME'
+            echo "== libs de rede do toolchain =="; ls "$OO_PS4_TOOLCHAIN/lib" | grep -i -E "http|ssl|net|sysmodule"
+            echo "== conteudo do app =="; ls -laR native0 | head -80
+            echo "== gp4 =="; cat out/project-native.gp4
           } > diag.log 2>&1 || true
           cat diag.log
       - uses: actions/upload-artifact@v4
@@ -63,7 +64,8 @@ jobs:
         with:
           name: ps4-patch-store-pkg
           path: |
-            out/*/*.pkg
-            image0/eboot.bin
+            out/native/*.pkg
+            out/catalogo_para_servidor.dat
+            native0/eboot.bin
             build.log
             diag.log
