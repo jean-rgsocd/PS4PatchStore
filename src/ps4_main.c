@@ -2,7 +2,8 @@
  * Desenha a interface direto na tela (1920x1080, por software), le o controle e instala os pacotes
  * pelo mesmo payload do DirectPackageInstaller usado pela versao navegador.
  *
- * Arquivos esperados em /app0: catalog.dat, directpayload.bin e as pastas assets/fonts e assets/images.
+ * Arquivos esperados em /app0: server.url, directpayload.bin e as pastas assets/fonts e assets/images.
+ * O catalogo vem do servidor (HTTPS) depois do login; nao fica dentro do pacote.
  * Log de diagnostico: /data/ps4store.log */
 #include <stdio.h>
 #include <stdlib.h>
@@ -21,6 +22,7 @@
 #include "ui.h"
 #include "catalog.h"
 #include "install.h"
+#include "auth.h"
 
 /* Heap do libc: a UI usa ~60 MB (tela, fundo, capas, JPEG decodificado). */
 uint64_t sceLibcHeapSize = 256ull * 1024 * 1024;
@@ -29,7 +31,6 @@ uint64_t sceLibcHeapSize = 256ull * 1024 * 1024;
 #define FH        1080
 #define NBUF      2
 #define ASSETS    "/app0/assets"
-#define CATALOG   "/app0/catalog.dat"
 #define TICK_US   16000
 
 /* ------------------------------------------------------------------ video */
@@ -184,6 +185,9 @@ static void poll_input(UI *ui) {
   }
   if (pressed & ORBIS_PAD_BUTTON_CROSS)  ui_key(ui, UI_OK);
   if (pressed & ORBIS_PAD_BUTTON_CIRCLE) ui_key(ui, UI_BACK);
+  if (pressed & ORBIS_PAD_BUTTON_SQUARE) ui_key(ui, UI_SQUARE);
+  if (pressed & ORBIS_PAD_BUTTON_TRIANGLE) ui_key(ui, UI_TRIANGLE);
+  if (pressed & ORBIS_PAD_BUTTON_OPTIONS) ui_key(ui, UI_OPTIONS);
   prev = b;
 }
 
@@ -245,6 +249,50 @@ static void check_install_result(UI *ui) {
   else ui_toast(ui, err[0] ? err : "Falha ao enviar o pedido.", UI_TOAST_ERR);
 }
 
+/* ------------------------------------------------------------------ login / catalogo do servidor */
+static Catalog cat;                  /* o catalogo recebido do servidor (a UI aponta para ele) */
+
+static void on_login(const char *user, const char *pass, void *ud) {
+  (void)ud;
+  auth_start_login(user, pass);
+}
+
+static void on_logout(void *ud) {
+  (void)ud;
+  auth_logout();
+  install_log("Sessao encerrada pelo usuario.");
+}
+
+static void check_auth(UI *ui) {
+  AuthEvent ev;
+  if (!auth_poll(&ev)) return;
+  switch (ev.type) {
+    case AUTH_EV_NEED_LOGIN:
+      ui_show_login(ui, ev.msg);
+      break;
+    case AUTH_EV_LOGIN_FAIL:
+      ui_show_login(ui, ev.msg);
+      break;
+    case AUTH_EV_CATALOG:
+      if (catalog_parse(&cat, ev.text) == 0) {
+        ui_set_user(ui, ev.user);
+        ui_set_catalog(ui, &cat);
+        install_log("Catalogo recebido do servidor.");
+      } else {
+        ui_show_login(ui, "O servidor enviou um catálogo vazio ou inválido.");
+        install_log("ERRO: catalogo do servidor invalido");
+      }
+      break;
+    case AUTH_EV_CATALOG_FAIL:
+      /* sessao continua salva; so mostra o motivo e deixa tentar de novo pela tela de login */
+      ui_show_login(ui, ev.msg[0] ? ev.msg : "Não foi possível baixar o catálogo.");
+      break;
+    default:
+      break;
+  }
+  free(ev.text);
+}
+
 /* ------------------------------------------------------------------ main */
 int main(void) {
   install_log("=== JK PATCHS (nativo) ===");
@@ -259,22 +307,16 @@ int main(void) {
   present(screen);
   install_log("Video ok.");
 
-  static Catalog cat;
-  if (catalog_load(&cat, CATALOG) != 0) {
-    install_log("ERRO: catalog.dat ausente ou vazio");
-    gfx_fill(screen, 0, 0, FW, FH, RGB(0x40, 0x10, 0x10), 255);
-    present(screen);
-    for (;;) sceKernelUsleep(1000000);
-  }
-  install_log("Catalogo carregado.");
-
   install_start_server();
   pad_open();
   if (pad < 0) install_log("AVISO: controle nao abriu; tentando de novo.");
 
-  UI *ui = ui_create(screen, &cat, ASSETS, on_install, NULL);
+  UI *ui = ui_create(screen, NULL, ASSETS, on_install, NULL);
   if (!ui) { install_log("ERRO: ui_create falhou"); return 1; }
-  install_log("UI pronta.");
+  ui_set_auth_handlers(ui, on_login, on_logout, NULL);
+  ui_show_loading(ui, "Conectando ao servidor...");
+  install_log("UI pronta; verificando sessao salva.");
+  auth_start_restore();
 
   ui_draw(ui);
   present(screen);
@@ -283,6 +325,7 @@ int main(void) {
   for (;;) {
     poll_input(ui);
     check_install_result(ui);
+    check_auth(ui);
     ui_tick(ui);
     if (ui_take_dirty(ui)) {
       ui_draw(ui);
