@@ -19,9 +19,10 @@ image0/eboot.bin: build/eboot.elf
 
 # ---------------------------------------------------------------- app nativo (interface propria)
 # Gera native0/eboot.bin. -O2 e essencial: a UI e desenhada por software na CPU do PS4.
-NATIVE_SRC  := ps4_main ui gfx catalog install
+NATIVE_SRC  := ps4_main ui gfx catalog install auth auth_proto
 NATIVE_OBJS := $(addprefix build/native/,$(addsuffix .o,$(NATIVE_SRC)))
-NATIVE_LIBS := -lc -lkernel -lSceVideoOut -lScePad -lSceUserService -lSceSystemService
+NATIVE_LIBS := -lc -lkernel -lSceVideoOut -lScePad -lSceUserService -lSceSystemService \
+  -lSceNet -lSceSsl -lSceHttp -lSceSysmodule
 NATIVE_CFLAGS := --target=x86_64-pc-freebsd12-elf -fPIC -funwind-tables -c -O2 -fno-math-errno -Isrc \
   -isysroot $(TC) -isystem $(TC)/include
 

@@ -1,0 +1,27 @@
+/* Login e catalogo pela rede (HTTPS -> Cloudflare Worker). Tudo roda em uma thread propria; a UI consulta o
+ * resultado com auth_poll() (nao bloqueia). A verificacao do certificado do servidor fica SEMPRE ligada. */
+#ifndef AUTH_H
+#define AUTH_H
+
+enum { AUTH_EV_NONE = 0,
+       AUTH_EV_NEED_LOGIN,     /* nao ha sessao salva (ou expirou): mostrar a tela de login */
+       AUTH_EV_LOGIN_FAIL,     /* msg = motivo */
+       AUTH_EV_CATALOG,        /* text = catalogo (malloc; quem recebe libera) ; user = usuario */
+       AUTH_EV_CATALOG_FAIL }; /* msg = motivo (sem rede, etc.); a sessao salva e mantida */
+
+typedef struct {
+  int type;
+  char msg[200];
+  char user[64];
+  char *text;
+} AuthEvent;
+
+/* Le a URL do servidor (/app0/server.url ou /data/jkpatchs_server.txt). 0 se achou. */
+int auth_server_configured(void);
+
+void auth_start_restore(void);                                  /* tenta a sessao salva e baixa o catalogo */
+void auth_start_login(const char *user, const char *pass);      /* login + catalogo */
+void auth_logout(void);                                         /* apaga a sessao salva */
+int  auth_poll(AuthEvent *ev);                                  /* 1 se havia evento (preenche ev) */
+
+#endif

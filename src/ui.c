@@ -37,7 +37,19 @@
 #define BTN_VISIBLE  3
 #define TOAST_TICKS  360
 
+enum { MODE_LOADING = 0, MODE_LOGIN, MODE_CATALOG };
+#define FLD_MAX 64
+
 struct UI {
+  int mode;
+  UiLoginFn login_fn;
+  UiLogoutFn logout_fn;
+  void *auth_ud;
+  char field[2][FLD_MAX + 1];          /* 0 = usuario, 1 = senha */
+  int cur_field, kr, kc, caps, show_pass;
+  char login_msg[200];
+  char loading_msg[120];
+  char username[64];
   Image *s;
   const Catalog *cat;
   UiInstallFn fn;
@@ -59,6 +71,7 @@ struct UI {
 /* ------------------------------------------------------------------ utilidades */
 static void refilter(UI *ui) {
   ui->nfilt = 0;
+  if (!ui->cat) return;
   const char *id = ui->cat->cat[ui->cat_idx].id;
   for (int i = 0; i < ui->cat->ngame; i++) {
     if (ui->cat_idx == 0 || !strcmp(ui->cat->game[i].category, id)) ui->filt[ui->nfilt++] = i;
@@ -66,7 +79,7 @@ static void refilter(UI *ui) {
 }
 
 static const CatGame *cur_game(UI *ui) {
-  if (ui->nfilt <= 0) return NULL;
+  if (!ui->cat || ui->nfilt <= 0) return NULL;
   return &ui->cat->game[ui->filt[ui->sel]];
 }
 
@@ -132,6 +145,21 @@ static Image *build_bg(UI *ui) {
   return bg;
 }
 
+static void load_thumbs(UI *ui) {
+  char path[320];
+  for (int i = 0; i < CAT_MAX_GAMES; i++) { if (ui->thumb[i]) { img_free(ui->thumb[i]); ui->thumb[i] = NULL; } }
+  if (!ui->cat) return;
+  for (int i = 0; i < ui->cat->ngame; i++) {
+    if (!ui->cat->game[i].cover[0]) continue;
+    snprintf(path, sizeof(path), "%s/images/%s", ui->assets, ui->cat->game[i].cover);
+    Image *raw = img_load(path);
+    if (raw) {
+      ui->thumb[i] = img_scale_cover(raw, COVER_W, COVER_H);
+      img_free(raw);
+    }
+  }
+}
+
 UI *ui_create(Image *surface, const Catalog *cat, const char *assets_dir, UiInstallFn fn, void *user) {
   UI *ui = (UI *)calloc(1, sizeof(UI));
   if (!ui) return NULL;
@@ -151,15 +179,8 @@ UI *ui_create(Image *surface, const Catalog *cat, const char *assets_dir, UiInst
 
   ui->bg = build_bg(ui);
 
-  for (int i = 0; i < cat->ngame; i++) {
-    if (!cat->game[i].cover[0]) continue;
-    snprintf(path, sizeof(path), "%s/images/%s", assets_dir, cat->game[i].cover);
-    Image *raw = img_load(path);
-    if (raw) {
-      ui->thumb[i] = img_scale_cover(raw, COVER_W, COVER_H);
-      img_free(raw);
-    }
-  }
+  if (cat) { load_thumbs(ui); ui->mode = MODE_CATALOG; }
+  else { ui->mode = MODE_LOADING; snprintf(ui->loading_msg, sizeof(ui->loading_msg), "Iniciando..."); }
 
   refilter(ui);
   select_game(ui, 0);
@@ -179,6 +200,124 @@ void ui_set_busy(UI *ui, int busy) {
   ui->dirty = 1;
 }
 
+void ui_set_auth_handlers(UI *ui, UiLoginFn login, UiLogoutFn logout, void *ud) {
+  ui->login_fn = login; ui->logout_fn = logout; ui->auth_ud = ud;
+}
+
+void ui_show_loading(UI *ui, const char *msg) {
+  ui->mode = MODE_LOADING;
+  snprintf(ui->loading_msg, sizeof(ui->loading_msg), "%s", msg ? msg : "Carregando...");
+  ui->dirty = 1;
+}
+
+void ui_show_login(UI *ui, const char *msg) {
+  ui->mode = MODE_LOGIN;
+  snprintf(ui->login_msg, sizeof(ui->login_msg), "%s", msg ? msg : "");
+  memset(ui->field[1], 0, sizeof(ui->field[1]));                 /* a senha nunca fica guardada */
+  ui->show_pass = 0;
+  ui->cur_field = ui->field[0][0] ? 1 : 0;
+  ui->kr = 1; ui->kc = 0;
+  ui->busy = 0;
+  ui->dirty = 1;
+}
+
+void ui_set_user(UI *ui, const char *name) {
+  snprintf(ui->username, sizeof(ui->username), "%s", name ? name : "");
+  ui->dirty = 1;
+}
+
+void ui_set_catalog(UI *ui, const Catalog *cat) {
+  ui->cat = cat;
+  load_thumbs(ui);
+  ui->cat_idx = 0;
+  ui->scroll = 0;
+  refilter(ui);
+  select_game(ui, 0);
+  ui->mode = MODE_CATALOG;
+  ui->busy = 0;
+  ui->dirty = 1;
+}
+
+/* ---- teclado na tela */
+static const char *KB_N[4] = {"1234567890", "qwertyuiop", "asdfghjkl_", "zxcvbnm.-@"};
+static const char *KB_S[4] = {"!#$%^&*()=", "QWERTYUIOP", "ASDFGHJKL:", "ZXCVBNM,+/"};
+#define KB_COLS 10
+#define KB_ACTIONS 5          /* MAIUSC, MOSTRAR, APAGAR, CAMPO, ENTRAR */
+enum { ACT_CAPS = 0, ACT_SHOW, ACT_DEL, ACT_FIELD, ACT_GO };
+
+static void login_msg(UI *ui, const char *m) {
+  snprintf(ui->login_msg, sizeof(ui->login_msg), "%s", m);
+  ui->dirty = 1;
+}
+
+static void field_add(UI *ui, char c) {
+  char *f = ui->field[ui->cur_field];
+  size_t n = strlen(f);
+  if (n >= FLD_MAX) return;
+  if (ui->cur_field == 0 && n >= 32) return;                    /* o servidor limita o usuario a 32 */
+  f[n] = c; f[n + 1] = 0;
+  ui->login_msg[0] = 0;
+  ui->dirty = 1;
+}
+
+static void field_del(UI *ui) {
+  char *f = ui->field[ui->cur_field];
+  size_t n = strlen(f);
+  if (n) { f[n - 1] = 0; ui->dirty = 1; }
+}
+
+static void login_submit(UI *ui) {
+  if (!ui->field[0][0]) { ui->cur_field = 0; login_msg(ui, "Digite o usuário."); return; }
+  if (!ui->field[1][0]) { ui->cur_field = 1; login_msg(ui, "Digite a senha."); return; }
+  if (!ui->login_fn) return;
+  char u[FLD_MAX + 1], p[FLD_MAX + 1];
+  snprintf(u, sizeof(u), "%s", ui->field[0]);
+  snprintf(p, sizeof(p), "%s", ui->field[1]);
+  memset(ui->field[1], 0, sizeof(ui->field[1]));
+  ui_show_loading(ui, "Entrando...");
+  ui->login_fn(u, p, ui->auth_ud);
+  memset(p, 0, sizeof(p));
+}
+
+static void login_key(UI *ui, int key) {
+  switch (key) {
+    case UI_LEFT:  if (ui->kc > 0) { ui->kc--; ui->dirty = 1; } break;
+    case UI_RIGHT: {
+      int max = ui->kr == 4 ? KB_ACTIONS : KB_COLS;
+      if (ui->kc + 1 < max) { ui->kc++; ui->dirty = 1; }
+      break;
+    }
+    case UI_UP:
+      if (ui->kr > 0) {
+        if (ui->kr == 4) ui->kc = ui->kc * 2;
+        ui->kr--; ui->dirty = 1;
+      }
+      break;
+    case UI_DOWN:
+      if (ui->kr < 4) {
+        if (ui->kr == 3) ui->kc = ui->kc / 2;
+        ui->kr++; ui->dirty = 1;
+      }
+      break;
+    case UI_OK:
+      if (ui->kr < 4) {
+        field_add(ui, (ui->caps ? KB_S : KB_N)[ui->kr][ui->kc]);
+      } else if (ui->kc == ACT_CAPS)  { ui->caps = !ui->caps; ui->dirty = 1; }
+      else if (ui->kc == ACT_SHOW)    { ui->show_pass = !ui->show_pass; ui->dirty = 1; }
+      else if (ui->kc == ACT_DEL)     field_del(ui);
+      else if (ui->kc == ACT_FIELD)   { ui->cur_field = !ui->cur_field; ui->dirty = 1; }
+      else                            login_submit(ui);
+      break;
+    case UI_BACK:
+    case UI_SQUARE:   field_del(ui); break;
+    case UI_TRIANGLE:
+    case UI_L1:
+    case UI_R1:       ui->cur_field = !ui->cur_field; ui->dirty = 1; break;
+    case UI_OPTIONS:  login_submit(ui); break;
+    default: break;
+  }
+}
+
 static void trigger_install(UI *ui) {
   const CatGame *g = cur_game(ui);
   if (!g || g->nbtn == 0) return;
@@ -195,6 +334,15 @@ static void trigger_install(UI *ui) {
 }
 
 void ui_key(UI *ui, int key) {
+  if (ui->mode == MODE_LOGIN) { login_key(ui, key); return; }
+  if (ui->mode != MODE_CATALOG) return;
+  if (key == UI_TRIANGLE) {                                     /* sair da conta */
+    if (ui->busy) { ui_toast(ui, "Aguarde o pedido atual terminar.", UI_TOAST_INFO); return; }
+    if (ui->logout_fn) ui->logout_fn(ui->auth_ud);
+    ui->field[0][0] = 0;
+    ui_show_login(ui, "Você saiu da conta.");
+    return;
+  }
   const CatGame *g = cur_game(ui);
   switch (key) {
     case UI_LEFT:
@@ -231,7 +379,8 @@ void ui_key(UI *ui, int key) {
 
 void ui_tick(UI *ui) {
   ui->frame++;
-  if (ui->busy && ui->frame % 6 == 0) ui->dirty = 1;          /* animacao do spinner */
+  if ((ui->busy || ui->mode == MODE_LOADING) && ui->frame % 6 == 0) ui->dirty = 1;   /* spinner */
+  if (ui->mode == MODE_LOGIN && ui->frame % 30 == 0) ui->dirty = 1;                  /* cursor piscando */
   if (ui->toast_left > 0 && !ui->busy) {
     if (--ui->toast_left == 0) ui->dirty = 1;
   }
@@ -261,10 +410,18 @@ static void draw_topbar(UI *ui) {
   int x = MARGIN + 84 + 22;
   T(ui, 1, 28, x, 66, "PATCHS", C_TEXT, 255, 3);
 
-  const char *st = "CATÁLOGO LOCAL";
+  char st[96];
+  if (ui->mode == MODE_CATALOG) {
+    snprintf(st, sizeof(st), "ONLINE  \xC2\xB7  ");
+    size_t n = strlen(st);
+    for (const char *q = ui->username; *q && n + 2 < sizeof(st); q++) st[n++] = (*q >= 'a' && *q <= 'z') ? *q - 32 : *q;
+    st[n] = 0;
+  } else {
+    snprintf(st, sizeof(st), "%s", ui->mode == MODE_LOGIN ? "ACESSO RESTRITO" : "CONECTANDO");
+  }
   int w = TW(ui, 1, 20, st, 3);
   T(ui, 1, 20, W - MARGIN - w, 62, st, C_MUTED, 255, 3);
-  gfx_circle(s, W - MARGIN - w - 22, 55, 7, C_ACCENT, 255);
+  gfx_circle(s, W - MARGIN - w - 22, 55, 7, ui->mode == MODE_CATALOG ? C_ACCENT : C_FOCUS, 255);
 }
 
 static void draw_heading(UI *ui) {
@@ -463,24 +620,148 @@ static int hint(UI *ui, int x, const char *key, const char *label) {
 static void draw_footer(UI *ui) {
   gfx_fill(ui->s, 0, 990, W, 1, C_WHITE, 26);
   int x = MARGIN;
-  x = hint(ui, x, "\xE2\x97\x80 \xE2\x96\xB6", "Coleções");
-  x = hint(ui, x, "\xE2\x96\xB2 \xE2\x96\xBC", "Downloads");
-  x = hint(ui, x, "X", "Instalar");
-  x = hint(ui, x, "L1  R1", "Categorias");
-  x = hint(ui, x, "O", "Voltar ao início");
+  if (ui->mode == MODE_LOGIN) {
+    x = hint(ui, x, "\xE2\x97\x80 \xE2\x96\xB2 \xE2\x96\xBC \xE2\x96\xB6", "Mover");
+    x = hint(ui, x, "X", "Digitar");
+    x = hint(ui, x, "\xE2\x96\xA1", "Apagar");
+    x = hint(ui, x, "\xE2\x96\xB3", "Trocar campo");
+    x = hint(ui, x, "OPTIONS", "Entrar");
+  } else if (ui->mode == MODE_CATALOG) {
+    x = hint(ui, x, "\xE2\x97\x80 \xE2\x96\xB6", "Coleções");
+    x = hint(ui, x, "\xE2\x96\xB2 \xE2\x96\xBC", "Downloads");
+    x = hint(ui, x, "X", "Instalar");
+    x = hint(ui, x, "L1  R1", "Categorias");
+    x = hint(ui, x, "O", "Início");
+    x = hint(ui, x, "\xE2\x96\xB3", "Sair");
+  }
   const char *v = "JK Patchs";
   int w = TW(ui, 0, 20, v, 1);
   T(ui, 0, 20, W - MARGIN - w, 1036, v, C_MUTED, 150, 1);
+}
+
+/* ---- telas de login / carregando */
+#define LG_X   480
+#define LG_W   960
+#define LG_Y   130
+#define LG_H   810
+#define KEY_W  78
+#define KEY_H  66
+#define KEY_G  10
+
+static void draw_field(UI *ui, int idx, int y) {
+  Image *s = ui->s;
+  int x = LG_X + 45, w = LG_W - 90, h = 64;
+  int active = (ui->cur_field == idx);
+  gfx_rrect(s, x, y, w, h, 16, C_BG, 235, 0);
+  gfx_rrect(s, x, y, w, h, 16, active ? C_FOCUS : C_WHITE, active ? 255 : 40, active ? 3 : 2);
+
+  const char *ph = idx == 0 ? "Usuário" : "Senha";
+  char shown[FLD_MAX * 3 + 4];
+  const char *f = ui->field[idx];
+  if (idx == 1 && !ui->show_pass) {
+    int n = (int)strlen(f), o = 0;
+    for (int i = 0; i < n && o + 4 < (int)sizeof(shown); i++) { shown[o++] = (char)0xE2; shown[o++] = (char)0x80; shown[o++] = (char)0xA2; }
+    shown[o] = 0;
+  } else {
+    snprintf(shown, sizeof(shown), "%s", f);
+  }
+  int inner = w - 56;
+  const char *p = shown;
+  while (*p && TW(ui, 0, 30, p, 0) > inner) {                  /* mostra o final do texto se nao couber */
+    p++;
+    while (((unsigned char)*p & 0xC0) == 0x80) p++;
+  }
+  int tx = x + 28, base = y + h / 2 + 10;
+  if (!f[0]) {
+    T(ui, 0, 30, tx, base, ph, C_MUTED, 140, 0);
+    if (active && (ui->frame / 30) % 2 == 0) gfx_fill(s, tx, y + 14, 3, h - 28, C_TEXT, 255);
+  } else {
+    int tw = T(ui, 0, 30, tx, base, p, C_TEXT, 255, 0);
+    if (active && (ui->frame / 30) % 2 == 0) gfx_fill(s, tx + tw + 3, y + 14, 3, h - 28, C_TEXT, 255);
+  }
+}
+
+static void draw_key(UI *ui, int x, int y, int w, int h, const char *label, int sel, int on) {
+  Image *s = ui->s;
+  gfx_rrect(s, x, y, w, h, 14, on ? C_ACCENT : C_PANEL2, 255, 0);
+  if (!on) gfx_rrect(s, x, y, w, h, 14, C_WHITE, 26, 2);
+  text_draw_in(s, ui->fb, 28, x, w, y + h / 2 + 10, label, on ? C_DARKTXT : C_TEXT, 255, 0, 1);
+  if (sel) gfx_rrect(s, x - 5, y - 5, w + 10, h + 10, 18, C_FOCUS, 255, 4);
+}
+
+static void draw_login(UI *ui) {
+  Image *s = ui->s;
+  gfx_rrect(s, LG_X, LG_Y, LG_W, LG_H, 28, C_PANEL, 245, 0);
+  gfx_rrect(s, LG_X, LG_Y, LG_W, LG_H, 28, C_WHITE, 26, 2);
+  int px = LG_X + 45;
+  T(ui, 1, 22, px, LG_Y + 62, "ACESSO RESTRITO", C_ACCENT, 255, 4);
+  T(ui, 1, 46, px, LG_Y + 122, "Entrar", C_TEXT, 255, 0);
+
+  draw_field(ui, 0, LG_Y + 160);
+  draw_field(ui, 1, LG_Y + 236);
+
+  int ky = LG_Y + 332;
+  for (int r = 0; r < 4; r++) {
+    for (int c = 0; c < KB_COLS; c++) {
+      char lab[2] = { (ui->caps ? KB_S : KB_N)[r][c], 0 };
+      draw_key(ui, px + c * (KEY_W + KEY_G), ky + r * (KEY_H + KEY_G), KEY_W, KEY_H, lab,
+               ui->kr == r && ui->kc == c, 0);
+    }
+  }
+  static const char *act[KB_ACTIONS] = {"MAIÚSC", "MOSTRAR", "APAGAR", "CAMPO", "ENTRAR"};
+  static const int aw[KB_ACTIONS] = {150, 160, 150, 140, 0};
+  int ax = px, ay = ky + 4 * (KEY_H + KEY_G), total = LG_W - 90;
+  int used = 0;
+  for (int i = 0; i < KB_ACTIONS - 1; i++) used += aw[i] + KEY_G;
+  for (int i = 0; i < KB_ACTIONS; i++) {
+    int w = aw[i] ? aw[i] : total - used;
+    int on = (i == ACT_CAPS && ui->caps) || (i == ACT_SHOW && ui->show_pass);
+    int sel = (ui->kr == 4 && ui->kc == i);
+    if (i == ACT_GO) {                                           /* botao principal em verde */
+      gfx_rrect(s, ax, ay, w, KEY_H, 14, C_BASE, 255, 0);
+      gfx_rrect(s, ax, ay, w, KEY_H, 14, C_BASE_EDGE, 255, 2);
+      text_draw_in(s, ui->fb, 24, ax, w, ay + KEY_H / 2 + 9, act[i], C_WHITE, 255, 0, 1);
+      if (sel) gfx_rrect(s, ax - 5, ay - 5, w + 10, KEY_H + 10, 18, C_FOCUS, 255, 4);
+    } else {
+      gfx_rrect(s, ax, ay, w, KEY_H, 14, on ? C_ACCENT : C_PANEL2, 255, 0);
+      if (!on) gfx_rrect(s, ax, ay, w, KEY_H, 14, C_WHITE, 26, 2);
+      text_draw_in(s, ui->fb, 21, ax, w, ay + KEY_H / 2 + 8, act[i], on ? C_DARKTXT : C_TEXT, 255, 0, 1);
+      if (sel) gfx_rrect(s, ax - 5, ay - 5, w + 10, KEY_H + 10, 18, C_FOCUS, 255, 4);
+    }
+    ax += w + KEY_G;
+  }
+  if (ui->login_msg[0]) {
+    char buf[200];
+    text_fit(ui->f, 26, ui->login_msg, LG_W - 90, buf, sizeof(buf));
+    text_draw_in(s, ui->f, 26, px, LG_W - 90, LG_Y + LG_H - 34, buf, C_ERR, 255, 0, 1);
+  }
+}
+
+static void draw_loading(UI *ui) {
+  Image *s = ui->s;
+  int w = 760, h = 260, x = (W - w) / 2, y = 400;
+  gfx_rrect(s, x, y, w, h, 28, C_PANEL, 245, 0);
+  gfx_rrect(s, x, y, w, h, 28, C_WHITE, 26, 2);
+  draw_spinner(ui, W / 2, y + 86);
+  char buf[160];
+  text_fit(ui->fb, 32, ui->loading_msg, w - 80, buf, sizeof(buf));
+  text_draw_in(s, ui->fb, 32, x, w, y + 178, buf, C_TEXT, 255, 0, 1);
 }
 
 void ui_draw(UI *ui) {
   if (ui->bg) gfx_blit_surface(ui->s, ui->bg);
   else gfx_fill(ui->s, 0, 0, W, H, C_BG, 255);
   draw_topbar(ui);
-  draw_heading(ui);
-  draw_chips(ui);
-  draw_cards(ui);
-  draw_panel(ui);
-  draw_message_line(ui);
+  if (ui->mode == MODE_CATALOG) {
+    draw_heading(ui);
+    draw_chips(ui);
+    draw_cards(ui);
+    draw_panel(ui);
+    draw_message_line(ui);
+  } else if (ui->mode == MODE_LOGIN) {
+    draw_login(ui);
+  } else {
+    draw_loading(ui);
+  }
   draw_footer(ui);
 }

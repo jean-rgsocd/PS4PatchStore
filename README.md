@@ -50,3 +50,21 @@ O payload `directpayload.bin`, baixado no `build.sh`, vem do projeto
 sob **GNU GPL v3**. Ao distribuir o app com o payload incluso, a GPL v3 vale para essa parte:
 mantenha o aviso de licenca, indique a origem e disponibilize o codigo-fonte correspondente
 (o do payload e o das suas modificacoes). O texto completo esta no `LICENSE` do DirectPackageInstaller.
+
+## Login e catalogo pelo servidor
+
+- O app abre na tela de login (teclado na tela: direcional move, X digita, quadrado apaga, triangulo troca de
+  campo, OPTIONS entra). A sessao fica salva no console (`/data/jkpatchs.sess`, validade definida pelo servidor)
+  e o app entra direto nas proximas vezes. No catalogo, triangulo = sair da conta.
+- O catalogo **nao vai dentro do PKG**: o app baixa de `GET /catalog` do Cloudflare Worker depois do login.
+  Cada build gera `out/catalogo_para_servidor.dat` (baixe no artifact do GitHub Actions) — cole o conteudo em
+  "Catalogo do app" na pagina `/admin` do Worker.
+- `server.url` (raiz do projeto) = endereco `https://...workers.dev` do Worker. So `https://` e aceito e o
+  certificado do servidor e verificado (nunca desativado). Para trocar o endereco sem recompilar, grave o
+  mesmo texto em `/data/jkpatchs_server.txt` no console.
+- Diagnostico: `/data/ps4store.log` mostra "Rede iniciada", `http: /login -> HTTP 200` e, se falhar, o codigo
+  (`0x8095....` = certificado recusado; `0x8043....` = sem conexao/DNS).
+- Teclado: letras minusculas/maiusculas, numeros e `_ . - @` (e com MAIUSC: `! # $ % ^ & * ( ) = : , + /`).
+  Crie as senhas na pagina /admin usando esses caracteres.
+- Aviso: os links dos PKGs no catalogo ainda apontam para o R2 publico; a protecao final e tornar o bucket
+  privado e servir links temporarios (proxima etapa).
