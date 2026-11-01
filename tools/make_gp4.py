@@ -1,4 +1,3 @@
-
 #!/usr/bin/env python3
 """Gera project.gp4 a partir de image0/.
 
@@ -28,7 +27,7 @@ if MODE not in ("min", "pic", "www", "full", "native"):
     sys.exit("ERRO: MODE invalido: " + MODE)
 
 # native = app nativo: a pasta native0/ ja esta montada como o app0 final (eboot, payload,
-# catalog.dat, assets/, sce_sys/, sce_module/); tudo vai com o mesmo caminho relativo.
+# server.url, assets/, sce_sys/, sce_module/); tudo vai com o mesmo caminho relativo.
 NATIVE = MODE == "native"
 ROOT = "native0" if NATIVE else "image0"
 
@@ -87,7 +86,7 @@ for need in required_files:
         sys.exit("ERRO: falta image0/" + need)
 
 if NATIVE:
-    for need in ("catalog.dat", "assets/fonts/DejaVuSans.ttf", "assets/fonts/DejaVuSans-Bold.ttf"):
+    for need in ("assets/fonts/DejaVuSans.ttf", "assets/fonts/DejaVuSans-Bold.ttf"):
         if need not in names:
             sys.exit("ERRO: falta native0/" + need)
 
