@@ -65,6 +65,7 @@ jobs:
           name: ps4-patch-store-pkg
           path: |
             out/native/*.pkg
+            out/patch/*.pkg
             out/catalogo_para_servidor.dat
             native0/eboot.bin
             build.log
