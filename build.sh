@@ -1,4 +1,3 @@
-
 #!/usr/bin/env bash
 # Uso: OO_PS4_TOOLCHAIN=/caminho/toolchain bash build.sh
 # Gera um unico pacote em out/native/: o app nativo JK Patchs.
@@ -133,9 +132,18 @@ cp project.gp4 out/project-native.gp4
 mkdir -p out/native
 run_pkgtool pkg_build project.gp4 out/native
 
+# Pacote de ATUALIZACAO (patch, categoria gp): instala por cima do app ja instalado, sem o DPI recusar
+# "Package Already Installed". Este e o PKG que vai no app.url / R2 para os usuarios que ja tem o app.
+echo "=== Pacote de atualizacao (patch) ==="
+PATCH=1 APP=native python3 tools/make_sfo.py
+PATCH=1 MODE=native python3 tools/make_gp4.py
+cp project.gp4 out/project-patch.gp4
+mkdir -p out/patch
+run_pkgtool pkg_build project.gp4 out/patch || echo "AVISO: PkgTool nao gerou o patch (veja o erro acima)"
+
 # Linha APP do catalogo: avisa os usuarios que existe versao nova do app (usa app.url + src/version.h)
 echo "=== Linha de atualizacao do app ==="
-APKG=$(ls out/native/*.pkg 2>/dev/null | head -1 || true)
+APKG=$(ls out/patch/*.pkg 2>/dev/null | head -1 || true)
 if [ -n "$APKG" ]; then
   python3 tools/make_app_line.py "$APKG" app.url out/catalogo_para_servidor.dat \
     || echo "AVISO: nao foi possivel gerar a linha APP"
