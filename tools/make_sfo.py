@@ -18,6 +18,12 @@ if os.environ.get("APP") == "native":
     TITLE_ID = "PSTR00002"
     CONTENT_ID = "IV0000-PSTR00002_00-PS4PATCHSTORE000"
     OUT = os.path.join("native0", "sce_sys", "param.sfo")
+    # versao do app vem de src/version.h (a mesma que o app compara com a do servidor)
+    import re
+    m = re.search(r'APP_VERSION\s+"([0-9]+\.[0-9]{2})"', open(os.path.join("src", "version.h")).read())
+    if not m:
+        raise SystemExit('ERRO: APP_VERSION em src/version.h deve ter o formato "N.NN" (ex.: "1.01")')
+    VERSION = m.group(1)
 
 
 def s(value, maxsize):

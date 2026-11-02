@@ -23,6 +23,7 @@
 #include "catalog.h"
 #include "install.h"
 #include "auth.h"
+#include "version.h"
 
 /* Heap do libc: a UI usa ~60 MB (tela, fundo, capas, JPEG decodificado). */
 uint64_t sceLibcHeapSize = 256ull * 1024 * 1024;
@@ -244,9 +245,18 @@ static void check_install_result(UI *ui) {
   res_ready = 0;
   pthread_mutex_unlock(&res_mutex);
   if (!ready) return;
-  ui_set_busy(ui, 0);
-  if (code == 0) ui_toast(ui, "Pedido aceito! Acompanhe nas Notificações do PS4.", UI_TOAST_OK);
-  else ui_toast(ui, err[0] ? err : "Falha ao enviar o pedido.", UI_TOAST_ERR);
+  ui_install_done(ui, code, err);
+}
+
+/* ------------------------------------------------------------------ video (navegador do PS4) */
+static void on_open_url(const char *url, void *ud) {
+  (void)ud;
+  if (strncmp(url, "https://", 8) != 0) return;               /* so https */
+  char m[260];
+  snprintf(m, sizeof(m), "Abrindo video: %s", url);
+  install_log(m);
+  /* mesma chamada usada pela versao navegador (uma URL); o prototipo do header e vazio */
+  ((int (*)(const char *))sceSystemServiceLaunchWebBrowser)(url);
 }
 
 /* ------------------------------------------------------------------ login / catalogo do servidor */
@@ -295,7 +305,7 @@ static void check_auth(UI *ui) {
 
 /* ------------------------------------------------------------------ main */
 int main(void) {
-  install_log("=== JK PATCHS (nativo) ===");
+  install_log("=== JK PATCHS (nativo) v" APP_VERSION " ===");
   sceSystemServiceHideSplashScreen();
 
   if (video_init() != 0) return 1;
@@ -314,6 +324,7 @@ int main(void) {
   UI *ui = ui_create(screen, NULL, ASSETS, on_install, NULL);
   if (!ui) { install_log("ERRO: ui_create falhou"); return 1; }
   ui_set_auth_handlers(ui, on_login, on_logout, NULL);
+  ui_set_open_handler(ui, on_open_url, NULL);
   ui_show_loading(ui, "Conectando ao servidor...");
   install_log("UI pronta; verificando sessao salva.");
   auth_start_restore();

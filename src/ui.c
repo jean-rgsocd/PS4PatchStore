@@ -1,4 +1,5 @@
 #include "ui.h"
+#include "version.h"
 
 #include <stdio.h>
 #include <stdlib.h>
@@ -44,6 +45,8 @@ struct UI {
   int mode;
   UiLoginFn login_fn;
   UiLogoutFn logout_fn;
+  UiOpenUrlFn open_fn;
+  void *open_ud;
   void *auth_ud;
   char field[2][FLD_MAX + 1];          /* 0 = usuario, 1 = senha */
   int cur_field, kr, kc, caps, show_pass;
@@ -62,6 +65,7 @@ struct UI {
   int cat_idx, sel, scroll, focus;
 
   int busy, dirty;
+  int updating;                        /* o pedido em andamento e a atualizacao do proprio app */
   unsigned frame;
   char toast[256];
   int toast_left, toast_kind;
@@ -89,6 +93,9 @@ static int default_focus(const CatGame *g) {
   for (int i = g->nbtn - 1; i >= 0; i--) if (!g->btn[i].base) return i;
   return 0;
 }
+
+/* Itens focaveis do painel: os botoes de download e, por ultimo, o botao de video (se houver). */
+static int panel_items(const CatGame *g) { return g ? g->nbtn + (g->video[0] ? 1 : 0) : 0; }
 
 static void fix_scroll(UI *ui) {
   if (ui->sel < ui->scroll) ui->scroll = ui->sel;
@@ -204,6 +211,8 @@ void ui_set_auth_handlers(UI *ui, UiLoginFn login, UiLogoutFn logout, void *ud) 
   ui->login_fn = login; ui->logout_fn = logout; ui->auth_ud = ud;
 }
 
+void ui_set_open_handler(UI *ui, UiOpenUrlFn fn, void *ud) { ui->open_fn = fn; ui->open_ud = ud; }
+
 void ui_show_loading(UI *ui, const char *msg) {
   ui->mode = MODE_LOADING;
   snprintf(ui->loading_msg, sizeof(ui->loading_msg), "%s", msg ? msg : "Carregando...");
@@ -318,9 +327,51 @@ static void login_key(UI *ui, int key) {
   }
 }
 
+/* 1 se o servidor anunciou uma versao do app mais nova que esta (e ha link para baixar). */
+static int update_available(const UI *ui) {
+  if (!ui->cat || !ui->cat->app.url[0] || !ui->cat->app.content_id[0]) return 0;
+  return catalog_version_num(ui->cat->app.version) > catalog_version_num(APP_VERSION);
+}
+
+static void trigger_update(UI *ui) {
+  if (!update_available(ui)) { ui_toast(ui, "Seu app já está na versão mais recente.", UI_TOAST_INFO); return; }
+  if (ui->busy) { ui_toast(ui, "Já existe um pedido em andamento. Aguarde.", UI_TOAST_INFO); return; }
+  const CatApp *a = &ui->cat->app;
+  static CatButton b;                                   /* a copia fica viva ate o app terminar de usar */
+  memset(&b, 0, sizeof(b));
+  snprintf(b.label, sizeof(b.label), "JK Patchs %s", a->version);
+  snprintf(b.name, sizeof(b.name), "JK Patchs %s", a->version);
+  snprintf(b.url, sizeof(b.url), "%s", a->url);
+  snprintf(b.content_id, sizeof(b.content_id), "%s", a->content_id);
+  snprintf(b.type, sizeof(b.type), "%s", a->type[0] ? a->type : "PS4GD");
+  b.size = a->size;
+  ui_toast(ui, "Enviando a atualização do app...", UI_TOAST_INFO);
+  ui->busy = 1;
+  ui->updating = 1;
+  if (ui->fn) ui->fn(&b, ui->user);
+}
+
+void ui_install_done(UI *ui, int code, const char *err) {
+  ui_set_busy(ui, 0);
+  if (code == 0 && ui->updating)
+    ui_toast(ui, "Atualização enviada! Quando terminar nas Notificações, feche e abra o app.", UI_TOAST_OK);
+  else if (code == 0)
+    ui_toast(ui, "Pedido aceito! Acompanhe nas Notificações do PS4.", UI_TOAST_OK);
+  else
+    ui_toast(ui, (err && err[0]) ? err : "Falha ao enviar o pedido.", UI_TOAST_ERR);
+  ui->updating = 0;
+}
+
 static void trigger_install(UI *ui) {
   const CatGame *g = cur_game(ui);
-  if (!g || g->nbtn == 0) return;
+  if (!g || panel_items(g) == 0) return;
+  if (ui->focus >= g->nbtn) {                                   /* botao de video */
+    if (g->video[0] && ui->open_fn) {
+      ui_toast(ui, "Abrindo o vídeo no navegador do PS4...", UI_TOAST_INFO);
+      ui->open_fn(g->video, ui->open_ud);
+    }
+    return;
+  }
   const CatButton *b = &g->btn[ui->focus];
   if (ui->busy) { ui_toast(ui, "Já existe um pedido em andamento. Aguarde.", UI_TOAST_INFO); return; }
   if (!b->url[0]) { ui_toast(ui, "URL do pacote não configurada neste botão.", UI_TOAST_ERR); return; }
@@ -330,6 +381,7 @@ static void trigger_install(UI *ui) {
   }
   ui_toast(ui, "Enviando pedido ao instalador nativo...", UI_TOAST_INFO);
   ui->busy = 1;
+  ui->updating = 0;
   if (ui->fn) ui->fn(b, ui->user);
 }
 
@@ -355,7 +407,7 @@ void ui_key(UI *ui, int key) {
       if (g && ui->focus > 0) { ui->focus--; ui->dirty = 1; }
       break;
     case UI_DOWN:
-      if (g && ui->focus + 1 < g->nbtn) { ui->focus++; ui->dirty = 1; }
+      if (g && ui->focus + 1 < panel_items(g)) { ui->focus++; ui->dirty = 1; }
       break;
     case UI_L1:
     case UI_R1: {
@@ -371,6 +423,9 @@ void ui_key(UI *ui, int key) {
       break;
     case UI_OK:
       trigger_install(ui);
+      break;
+    case UI_SQUARE:
+      trigger_update(ui);
       break;
     default:
       break;
@@ -539,6 +594,17 @@ static void draw_button(UI *ui, const CatButton *b, int x, int y, int w, int foc
   else gfx_rrect(s, x - 8, y - 8, w + 16, BTN_H + 16, r + 8, C_FOCUS, 255, 4);
 }
 
+static void draw_video_button(UI *ui, int x, int y, int w, int focused) {
+  Image *s = ui->s;
+  int r = 20;
+  gfx_rrect(s, x, y, w, BTN_H, r, C_PANEL2, 255, 0);
+  gfx_rrect(s, x, y, w, BTN_H, r, C_WHITE, 40, 2);
+  T(ui, 1, 27, x + 32, y + BTN_H / 2 + 10, "VER VÍDEO DO PATCH", C_TEXT, 255, 0);
+  T(ui, 0, 20, x + w - 56 - 12 - TW(ui, 0, 20, "YouTube", 0), y + BTN_H / 2 + 7, "YouTube", C_MUTED, 255, 0);
+  text_draw_in(s, ui->fb, 30, x + w - 60, 56, y + BTN_H / 2 + 11, "\xE2\x96\xB6", C_ACCENT, 255, 0, 1);
+  if (focused) gfx_rrect(s, x - 8, y - 8, w + 16, BTN_H + 16, r + 8, C_FOCUS, 255, 4);
+}
+
 static void draw_panel(UI *ui) {
   Image *s = ui->s;
   gfx_rrect(s, PANEL_X, PANEL_Y, PANEL_W, PANEL_H, 26, C_PANEL, 240, 0);
@@ -552,7 +618,8 @@ static void draw_panel(UI *ui) {
   if (tl < 1) tl = 1;
   int desc_y = PANEL_Y + 128 + (tl - 1) * 56 + 54;
 
-  int nb = g->nbtn < BTN_VISIBLE ? g->nbtn : BTN_VISIBLE;
+  int items = panel_items(g);
+  int nb = items < BTN_VISIBLE ? items : BTN_VISIBLE;
   int bottom = PANEL_Y + PANEL_H - 44;
   int btn_top = bottom - (nb > 0 ? nb * BTN_H + (nb - 1) * BTN_GAP : 0);
   int lines = (btn_top - 28 - desc_y) / 36 + 1;
@@ -560,7 +627,7 @@ static void draw_panel(UI *ui) {
   if (lines > 5) lines = 5;
   text_wrap(s, ui->f, 25, px, desc_y, iw, 36, lines, g->desc, C_MUTED, 255);
 
-  if (g->nbtn == 0) {
+  if (items == 0) {
     text_draw_in(s, ui->f, 24, px, iw, bottom - 20, "Nenhum download disponível ainda.", C_MUTED, 255, 0, 0);
     return;
   }
@@ -569,10 +636,12 @@ static void draw_panel(UI *ui) {
   if (ui->focus >= BTN_VISIBLE) first = ui->focus - BTN_VISIBLE + 1;
   for (int i = 0; i < nb; i++) {
     int bi = first + i;
-    draw_button(ui, &g->btn[bi], px, btn_top + i * (BTN_H + BTN_GAP), iw, bi == ui->focus);
+    int y = btn_top + i * (BTN_H + BTN_GAP);
+    if (bi < g->nbtn) draw_button(ui, &g->btn[bi], px, y, iw, bi == ui->focus);
+    else draw_video_button(ui, px, y, iw, bi == ui->focus);
   }
   if (first > 0) T(ui, 1, 22, PANEL_X + PANEL_W - 44, btn_top - 10, "\xE2\x96\xB2", C_MUTED, 255, 0);
-  if (first + nb < g->nbtn) T(ui, 1, 22, PANEL_X + PANEL_W - 44, bottom + 32, "\xE2\x96\xBC", C_MUTED, 255, 0);
+  if (first + nb < items) T(ui, 1, 22, PANEL_X + PANEL_W - 44, bottom + 32, "\xE2\x96\xBC", C_MUTED, 255, 0);
 }
 
 static void draw_spinner(UI *ui, int cx, int cy) {
@@ -599,6 +668,17 @@ static void draw_message_line(UI *ui) {
     gfx_rrect(s, x, y, w, h, h / 2, edge, 255, 3);
     if (ui->busy) draw_spinner(ui, x + pad + 6, y + h / 2);
     T(ui, 0, 26, x + pad + extra, y + h / 2 + 9, buf, C_TEXT, 255, 0);
+    return;
+  }
+  if (update_available(ui)) {
+    char buf[200];
+    snprintf(buf, sizeof(buf), "Atualização disponível: JK Patchs %s (você tem %s).  Aperte  \xE2\x96\xA1  para atualizar.",
+             ui->cat->app.version, APP_VERSION);
+    int tw = TW(ui, 1, 26, buf, 0);
+    int w = tw + 68, h = 62, x = (W - w) / 2, y = 912;
+    gfx_rrect(s, x, y, w, h, h / 2, C_PANEL2, 250, 0);
+    gfx_rrect(s, x, y, w, h, h / 2, C_FOCUS, 255, 3);
+    T(ui, 1, 26, x + 34, y + h / 2 + 9, buf, C_TEXT, 255, 0);
     return;
   }
   text_wrap(s, ui->f, 20, MARGIN, 940, W - 2 * MARGIN, 30, 2,
@@ -633,8 +713,10 @@ static void draw_footer(UI *ui) {
     x = hint(ui, x, "L1  R1", "Categorias");
     x = hint(ui, x, "O", "Início");
     x = hint(ui, x, "\xE2\x96\xB3", "Sair");
+    if (update_available(ui)) x = hint(ui, x, "\xE2\x96\xA1", "Atualizar app");
   }
-  const char *v = "JK Patchs";
+  char v[48];
+  snprintf(v, sizeof(v), "JK Patchs  v%s", APP_VERSION);
   int w = TW(ui, 0, 20, v, 1);
   T(ui, 0, 20, W - MARGIN - w, 1036, v, C_MUTED, 150, 1);
 }

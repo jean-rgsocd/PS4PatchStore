@@ -21,6 +21,19 @@ static int split(char *line, char **f, int max) {
   return n;
 }
 
+int catalog_version_num(const char *v) {
+  int major = 0, minor = 0, i = 0;
+  if (!v || !v[0]) return 0;
+  while (v[i] >= '0' && v[i] <= '9') major = major * 10 + (v[i++] - '0');
+  if (v[i] == '.') {
+    i++;
+    int digits = 0;
+    while (v[i] >= '0' && v[i] <= '9' && digits < 2) { minor = minor * 10 + (v[i++] - '0'); digits++; }
+    if (digits == 1) minor *= 10;                       /* "1.5" = 1.50 */
+  }
+  return major * 100 + minor;
+}
+
 int catalog_parse(Catalog *c, char *text) {
   memset(c, 0, sizeof(*c));
   copy(c->cat[0].id, sizeof(c->cat[0].id), "all");
@@ -41,7 +54,13 @@ int catalog_parse(Catalog *c, char *text) {
     char *f[12];
     int n = split(line, f, 12);
 
-    if (!strcmp(f[0], "CAT") && n >= 3) {
+    if (!strcmp(f[0], "APP") && n >= 6) {
+      copy(c->app.version, sizeof(c->app.version), f[1]);
+      copy(c->app.url, sizeof(c->app.url), f[2]);
+      copy(c->app.content_id, sizeof(c->app.content_id), f[3]);
+      c->app.size = strtoull(f[4], NULL, 10);
+      copy(c->app.type, sizeof(c->app.type), f[5]);
+    } else if (!strcmp(f[0], "CAT") && n >= 3) {
       if (!strcmp(f[1], "all")) {                       /* so renomeia o "todas" */
         copy(c->cat[0].label, sizeof(c->cat[0].label), f[2]);
       } else if (c->ncat < CAT_MAX_CATS) {
@@ -58,6 +77,7 @@ int catalog_parse(Catalog *c, char *text) {
       copy(g->kicker, sizeof(g->kicker), f[4]);
       copy(g->title, sizeof(g->title), f[5]);
       copy(g->desc, sizeof(g->desc), f[6]);
+      if (n >= 8 && !strncmp(f[7], "https://", 8)) copy(g->video, sizeof(g->video), f[7]);
     } else if (!strcmp(f[0], "BTN") && n >= 8 && g && g->nbtn < CAT_MAX_BTNS) {
       CatButton *b = &g->btn[g->nbtn++];
       copy(b->label, sizeof(b->label), f[1]);

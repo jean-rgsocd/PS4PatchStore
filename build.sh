@@ -133,5 +133,13 @@ cp project.gp4 out/project-native.gp4
 mkdir -p out/native
 run_pkgtool pkg_build project.gp4 out/native
 
+# Linha APP do catalogo: avisa os usuarios que existe versao nova do app (usa app.url + src/version.h)
+echo "=== Linha de atualizacao do app ==="
+APKG=$(ls out/native/*.pkg 2>/dev/null | head -1 || true)
+if [ -n "$APKG" ]; then
+  python3 tools/make_app_line.py "$APKG" app.url out/catalogo_para_servidor.dat \
+    || echo "AVISO: nao foi possivel gerar a linha APP"
+fi
+
 # Listar resultados
 ls -laR out

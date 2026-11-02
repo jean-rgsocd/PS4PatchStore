@@ -40,7 +40,7 @@ class Parser(HTMLParser):
         if tag == "article" and "game-card" in cls:
             self.game = {"category": a.get("data-category", ""), "cover": "", "tag": "",
                          "kicker": "", "title": "", "desc": "", "btns": [],
-                         "name": a.get("data-name", "")}
+                         "name": a.get("data-name", ""), "video": a.get("data-video", "").strip()}
             self.depth = 1
             return
         if self.game is None:
@@ -116,8 +116,12 @@ def main():
         cover = g["cover"]
         if cover and not os.path.exists(os.path.join(root, cover)):
             print("AVISO: capa nao encontrada: %s (card '%s')" % (cover, g["title"]))
-        lines.append("GAME\t%s\t%s\t%s\t%s\t%s\t%s" % (
-            g["category"], cover, g["tag"], g["kicker"], g["title"], g["desc"]))
+        video = g.get("video", "")
+        if video and not video.startswith("https://"):
+            print("AVISO: data-video de '%s' precisa comecar com https:// (ignorado)" % g["title"])
+            video = ""
+        lines.append("GAME\t%s\t%s\t%s\t%s\t%s\t%s\t%s" % (
+            g["category"], cover, g["tag"], g["kicker"], g["title"], g["desc"], video))
         for b in g["btns"]:
             if not re.match(r"https?://", b["url"]):
                 skipped += 1

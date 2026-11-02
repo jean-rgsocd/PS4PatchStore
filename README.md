@@ -59,7 +59,7 @@ mantenha o aviso de licenca, indique a origem e disponibilize o codigo-fonte cor
 - O catalogo **nao vai dentro do PKG**: o app baixa de `GET /catalog` do Cloudflare Worker depois do login.
   Cada build gera `out/catalogo_para_servidor.dat` (baixe no artifact do GitHub Actions) — cole o conteudo em
   "Catalogo do app" na pagina `/admin` do Worker.
-- `server.url` (raiz do projeto) = endereco `[https://...workers.dev](https://jkpatchs.jean-rgsocd.workers.dev/admin)` do Worker. So `https://` e aceito e o
+- `server.url` (raiz do projeto) = endereco `https://...workers.dev` do Worker. So `https://` e aceito e o
   certificado do servidor e verificado (nunca desativado). Para trocar o endereco sem recompilar, grave o
   mesmo texto em `/data/jkpatchs_server.txt` no console.
 - Diagnostico: `/data/ps4store.log` mostra "Rede iniciada", `http: /login -> HTTP 200` e, se falhar, o codigo
@@ -68,3 +68,13 @@ mantenha o aviso de licenca, indique a origem e disponibilize o codigo-fonte cor
   Crie as senhas na pagina /admin usando esses caracteres.
 - Aviso: os links dos PKGs no catalogo ainda apontam para o R2 publico; a protecao final e tornar o bucket
   privado e servir links temporarios (proxima etapa).
+
+## Atualizacao automatica do app
+
+O app avisa quando existe versao nova e se atualiza usando o mesmo instalador dos patches (so quem tem login ve o aviso).
+1. Aumente `APP_VERSION` em `src/version.h` (ex.: "1.00" -> "1.01"). Esse numero tambem vai para o `param.sfo` (aparece no tile).
+2. `app.url` (raiz do projeto) = link publico do PKG do app no R2, ex.: `https://pub-xxxx.r2.dev/JKPatchs.pkg`.
+3. Faca o build e baixe o artifact. Suba o PKG de `out/native/` no R2 **com o nome que esta no `app.url`** (renomeie ao subir).
+4. So depois de subir o PKG, cole o `catalogo_para_servidor.dat` (agora com a linha `APP`) no `/admin`.
+5. Quem abrir o app com versao menor ve "Atualizacao disponivel" e aperta quadrado; depois fecha e abre o app.
+A primeira versao com esse recurso precisa ser instalada manualmente (as antigas nao sabem se atualizar).
