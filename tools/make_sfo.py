@@ -24,9 +24,9 @@ if os.environ.get("APP") == "native":
     if not m:
         raise SystemExit('ERRO: APP_VERSION em src/version.h deve ter o formato "N.NN" (ex.: "1.01")')
     VERSION = m.group(1)
-    # Content ID muda a cada versao (final = versao sem ponto: 1.02 -> 102) para o DPI nao recusar
-    # com "Package Already Installed". O TITLE_ID continua o mesmo, entao o PS4 instala por cima.
-    CONTENT_ID = "IV0000-PSTR00002_00-PS4PATCHSTORE" + VERSION.replace(".", "")
+    # O PS4 espera "NN.NN" (ex.: 01.03), como nos patches reais.
+    VERSION = "%02d.%s" % (int(VERSION.split(".")[0]), VERSION.split(".")[1])
+
 
 
 def s(value, maxsize):
@@ -50,6 +50,12 @@ ENTRIES = {
     "TITLE_ID": s(TITLE_ID, 12),
     "VERSION": s(VERSION, 8),
 }
+
+# Patch (gp): como nos patches reais, o content id e o TITLE_ID sao os do app base, VERSION fica
+# na versao base (01.00) e APP_VER carrega a versao do patch; inclui FORMAT=obs.
+if os.environ.get("PATCH") == "1":
+    ENTRIES["VERSION"] = s("01.00", 8)
+    ENTRIES["FORMAT"] = s("obs", 4)
 
 
 def build():
