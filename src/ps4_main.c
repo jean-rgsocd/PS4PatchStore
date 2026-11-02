@@ -288,6 +288,13 @@ static void check_auth(UI *ui) {
         ui_set_user(ui, ev.user);
         ui_set_catalog(ui, &cat);
         install_log("Catalogo recebido do servidor.");
+        {
+          char m[200];
+          snprintf(m, sizeof(m), "Versao do app: instalada=%s | servidor=%s (link do PKG: %s, id: %s)", APP_VERSION,
+                   cat.app.version[0] ? cat.app.version : "sem linha APP", cat.app.url[0] ? "sim" : "nao",
+                   cat.app.content_id[0] ? "sim" : "nao");
+          install_log(m);
+        }
       } else {
         ui_show_login(ui, "O servidor enviou um catálogo vazio ou inválido.");
         install_log("ERRO: catalogo do servidor invalido");
