@@ -42,7 +42,7 @@ ENTRIES = {
     "APP_TYPE": i(1),
     "APP_VER": s(VERSION, 8),
     "ATTRIBUTE": i(0),
-    "CATEGORY": s("gd", 4),
+    "CATEGORY": s("gp" if os.environ.get("PATCH") == "1" else "gd", 4),
     "CONTENT_ID": s(CONTENT_ID, 48),
     "DOWNLOAD_DATA_SIZE": i(0),
     "SYSTEM_VER": i(0),
