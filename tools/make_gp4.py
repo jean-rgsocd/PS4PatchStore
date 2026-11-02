@@ -137,7 +137,7 @@ file_xml = "".join(
 xml = '''<?xml version="1.0"?>
 <psproject fmt="gp4" version="1000">
   <volume>
-    <volume_type>pkg_ps4_app</volume_type>
+    <volume_type>%s</volume_type>
     <volume_id>PS4VOLUME</volume_id>
     <volume_ts>2026-10-29 12:00:00</volume_ts>
     <package content_id="%s" passcode="00000000000000000000000000000000" storage_type="digital25" app_type="full"/>
@@ -155,7 +155,7 @@ xml = '''<?xml version="1.0"?>
   <rootdir>
 %s  </rootdir>
 </psproject>
-''' % (CONTENT_ID, file_xml, tree("", 0))
+''' % ("pkg_ps4_patch" if os.environ.get("PATCH") == "1" else "pkg_ps4_app", CONTENT_ID, file_xml, tree("", 0))
 
 
 with open("project.gp4", "w", encoding="utf-8") as fh:
