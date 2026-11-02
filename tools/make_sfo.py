@@ -24,6 +24,9 @@ if os.environ.get("APP") == "native":
     if not m:
         raise SystemExit('ERRO: APP_VERSION em src/version.h deve ter o formato "N.NN" (ex.: "1.01")')
     VERSION = m.group(1)
+    # Content ID muda a cada versao (final = versao sem ponto: 1.02 -> 102) para o DPI nao recusar
+    # com "Package Already Installed". O TITLE_ID continua o mesmo, entao o PS4 instala por cima.
+    CONTENT_ID = "IV0000-PSTR00002_00-PS4PATCHSTORE" + VERSION.replace(".", "")
 
 
 def s(value, maxsize):
