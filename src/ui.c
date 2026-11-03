@@ -38,9 +38,9 @@
 #define BTN_GAP      16
 #define BTN_VISIBLE  3
 #define TOAST_TICKS  360
-#define SPLASH_FADE 200            /* ~3,3 s: comeca a sumir revelando a tela de baixo */
-#define SPLASH_END  236
-#define SPLASH_SKIP_FROM 45        /* depois de ~0,75 s qualquer tecla pula */
+#define SPLASH_FADE 140            /* ~2,3 s: o conteudo comeca a sumir */
+#define SPLASH_END  158            /* ~2,6 s no total (60 ticks por segundo) */
+#define SPLASH_SKIP_FROM 30        /* depois de 0,5 s qualquer tecla pula */
 
 enum { MODE_LOADING = 0, MODE_LOGIN, MODE_CATALOG };
 #define FLD_MAX 64
@@ -61,6 +61,8 @@ struct UI {
   Image *logo;                         /* selo JK Patchs do cabecalho (assets/images/logo_jk.png) */
   Image *logo_full;                    /* original (350x350) para a abertura e a tela de login */
   int splash;                          /* ticks da animacao de abertura; >= SPLASH_END = terminou */
+  Image *splash_base;                  /* fundo da abertura, pronto (so copia por quadro) */
+  Image *splash_logo;                  /* logo ja no tamanho final (sem redimensionar por quadro) */
   const Catalog *cat;
   UiInstallFn fn;
   void *user;
@@ -518,7 +520,14 @@ void ui_key(UI *ui, int key) {
 
 void ui_tick(UI *ui) {
   ui->frame++;
-  if (ui->splash < SPLASH_END) { ui->splash++; ui->dirty = 1; }
+  if (ui->splash < SPLASH_END) {
+    ui->splash++;
+    if (ui->splash % 2 == 0 || ui->splash >= SPLASH_END) ui->dirty = 1;      /* 30 quadros por segundo bastam e pesam metade */
+    if (ui->splash >= SPLASH_END) {                                           /* acabou: libera a memoria da abertura */
+      if (ui->splash_base) { img_free(ui->splash_base); ui->splash_base = NULL; }
+      if (ui->splash_logo) { img_free(ui->splash_logo); ui->splash_logo = NULL; }
+    }
+  }
   if (ui->vid_mode) vid_tick(ui);
   if ((ui->busy || ui->mode == MODE_LOADING) && ui->frame % 6 == 0) ui->dirty = 1;   /* spinner */
   if (ui->mode == MODE_LOGIN && ui->frame % 30 == 0) ui->dirty = 1;                  /* cursor piscando */
@@ -1013,50 +1022,37 @@ static int ease(int p) { int q = 1000 - clampi(p, 0, 1000); return 1000 - (int)(
 
 static void draw_splash_content(UI *ui, int t, int amul) {      /* amul: 0..255 (some no fim) */
   Image *s = ui->s;
-  int cx = W / 2, cy = H / 2 - 60;
-  int e_logo = ease((t - 6) * 1000 / 60), e_txt = ease((t - 56) * 1000 / 45), e_bar = ease((t - 30) * 1000 / 120);
-  int R = 170;
-  /* brilho suave atras da logo (cresce junto com a entrada) */
-  for (int i = 4; i >= 1; i--) {
-    int rr = R + 20 * i + 30 * e_logo / 1000;
-    gfx_circle(s, cx, cy, rr, C_ACCENT, (6 * e_logo / 1000) * amul / 255);
-  }
-  /* pulso lento no anel externo */
-  int ph = (t * 3) % 240; ph = ph > 120 ? 240 - ph : ph;
-  gfx_ring_arc(s, cx, cy, R + 14, 3, C_ACCENT, ((50 + ph) * e_logo / 1000) * amul / 255);
-  if (ui->logo_full) {
-    int sz = (R * 2) * (820 + 180 * e_logo / 1000) / 1000;
-    Image *sc = img_scale(ui->logo_full, sz, sz);
-    if (sc) { gfx_blit(s, sc, cx - sz / 2, cy - sz / 2, 0, (255 * e_logo / 1000) * amul / 255); img_free(sc); }
+  int cx = W / 2, cy = H / 2 - 60, R = 170;
+  int e_logo = ease((t - 6) * 1000 / 42), e_txt = ease((t - 40) * 1000 / 40);
+  int slide = 26 - 26 * e_logo / 1000;
+  if (ui->splash_logo) {
+    gfx_blit(s, ui->splash_logo, cx - ui->splash_logo->w / 2, cy - ui->splash_logo->h / 2 + slide, 0,
+             (255 * e_logo / 1000) * amul / 255);
   } else {
     text_draw_in(s, ui->fb, 96, 0, W, cy + 30, "JK", C_ACCENT, (255 * e_logo / 1000) * amul / 255, 4, 1);
   }
-  const char *msg = "Os melhores Patchs de PS4";
   int a = (255 * e_txt / 1000) * amul / 255;
-  int slide = 18 - 18 * e_txt / 1000;
-  text_draw_in(s, ui->fb, 44, 0, W, cy + R + 100 + slide, msg, C_TEXT, a, 2, 1);
-  /* barrinha de progresso fina embaixo do texto */
-  int bw = 360, bx = cx - bw / 2, by = cy + R + 140;
-  gfx_rrect(s, bx, by, bw, 5, 2, C_WHITE, (36 * e_txt / 1000) * amul / 255, 0);
-  int fw = bw * e_bar / 1000;
-  if (fw > 4) gfx_rrect(s, bx, by, fw, 5, 2, C_ACCENT, a, 0);
+  text_draw_in(s, ui->fb, 44, 0, W, cy + R + 100 + (18 - 18 * e_txt / 1000), "Os melhores Patchs de PS4", C_TEXT, a, 2, 1);
 }
 
+/* O fundo e a logo sao preparados uma vez; por quadro so ha uma copia + a logo + o texto (leve para o PS4). */
 static void draw_splash(UI *ui) {
   int t = ui->splash;
-  if (t < SPLASH_FADE) {
-    if (ui->bg) gfx_blit_surface(ui->s, ui->bg); else gfx_fill(ui->s, 0, 0, W, H, C_BG, 255);
-    gfx_fill(ui->s, 0, 0, W, H, C_BG, 120);
-    draw_splash_content(ui, t, 255);
-  } else {
-    int k = clampi((SPLASH_END - t) * 255 / (SPLASH_END - SPLASH_FADE), 0, 255);   /* 255 -> 0 */
-    draw_scene(ui);                                  /* a tela de verdade aparece por baixo */
-    gfx_fill(ui->s, 0, 0, W, H, C_BG, k);
-    draw_splash_content(ui, t, k);
+  if (!ui->splash_base) {
+    ui->splash_base = img_new(W, H);
+    if (ui->splash_base) {
+      if (ui->bg) gfx_blit_surface(ui->splash_base, ui->bg); else gfx_fill(ui->splash_base, 0, 0, W, H, C_BG, 255);
+      gfx_fill(ui->splash_base, 0, 0, W, H, C_BG, 120);
+    }
+    if (ui->logo_full) ui->splash_logo = img_scale(ui->logo_full, 340, 340);
   }
+  if (ui->splash_base) gfx_blit_surface(ui->s, ui->splash_base);
+  else gfx_fill(ui->s, 0, 0, W, H, C_BG, 255);
+  int k = t < SPLASH_FADE ? 255 : clampi((SPLASH_END - t) * 255 / (SPLASH_END - SPLASH_FADE), 0, 255);
+  draw_splash_content(ui, t, k);
 }
 
-void ui_skip_splash(UI *ui) { ui->splash = SPLASH_END; ui->dirty = 1; }
+void ui_skip_splash(UI *ui) { ui->splash = SPLASH_END - 1; ui_tick(ui); ui->dirty = 1; }
 
 static void draw_scene(UI *ui) {
   if (ui->bg) gfx_blit_surface(ui->s, ui->bg);
