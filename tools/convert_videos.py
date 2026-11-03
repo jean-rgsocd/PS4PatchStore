@@ -13,10 +13,12 @@ html, outdir = sys.argv[1], sys.argv[2]
 os.makedirs(outdir, exist_ok=True)
 here = os.path.dirname(os.path.abspath(__file__))
 urls = sorted(set(re.findall(r'data-video="([^"]+\.mp4)"', open(html, encoding="utf-8").read(), re.I)))
-ok = fail = 0
-for u in urls:
+import concurrent.futures as cf
+
+
+def conv(u):
     name = urllib.parse.unquote(u.rsplit("/", 1)[-1])[:-4] + ".jkv"
-    tmp = os.path.join(outdir, "_tmp.mp4")
+    tmp = os.path.join(outdir, "_tmp_" + name + ".mp4")
     try:
         req = urllib.request.Request(u, headers={"User-Agent": "Mozilla/5.0"})
         with urllib.request.urlopen(req, timeout=120) as r, open(tmp, "wb") as f:
@@ -26,11 +28,15 @@ for u in urls:
                     break
                 f.write(b)
         subprocess.run([sys.executable, os.path.join(here, "mp4_to_jkv.py"), tmp, os.path.join(outdir, name)], check=True)
-        ok += 1
+        return 1
     except Exception as e:  # noqa: BLE001
-        print("AVISO: nao converti %s (%s)" % (u, e))
-        fail += 1
+        print("AVISO: nao converti %s (%s)" % (u, e), flush=True)
+        return 0
     finally:
         if os.path.exists(tmp):
             os.remove(tmp)
-print("videos convertidos: %d, falhas: %d" % (ok, fail))
+
+
+with cf.ThreadPoolExecutor(max_workers=3) as ex:
+    res = list(ex.map(conv, urls))
+print("videos convertidos: %d, falhas: %d" % (sum(res), len(res) - sum(res)), flush=True)
