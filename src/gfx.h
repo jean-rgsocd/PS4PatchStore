@@ -14,6 +14,7 @@ typedef struct Font Font;
 Image *img_new(int w, int h);
 void   img_free(Image *im);
 Image *img_load(const char *path);                       /* PNG/JPG; NULL se falhar */
+Image *img_decode(const unsigned char *data, int len);   /* JPEG/PNG na memoria; NULL se falhar */
 Image *img_scale(const Image *src, int w, int h);        /* bilinear/area */
 Image *img_scale_cover(const Image *src, int w, int h);  /* preenche w x h cortando o excesso */
 
@@ -28,6 +29,7 @@ void gfx_circle(Image *s, int cx, int cy, int r, uint32_t rgb, int alpha);
 void gfx_ring_arc(Image *s, int cx, int cy, int r, int thick, uint32_t rgb, int alpha);
 /* Copia uma imagem (com alpha) com cantos arredondados de raio r. */
 void gfx_blit(Image *s, const Image *im, int x, int y, int r, int alpha);
+void gfx_blit_scaled(Image *dst, const Image *src, int x, int y, int w, int h);   /* bilinear rapido, opaco */
 void gfx_blit_surface(Image *dst, const Image *src);     /* copia total (mesmo tamanho) */
 
 Font *font_load(const char *path);

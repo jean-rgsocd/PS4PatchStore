@@ -81,6 +81,22 @@ Image *img_load(const char *path) {
   return im;
 }
 
+/* Decodifica um JPEG/PNG que ja esta na memoria (usado pelos quadros do video). */
+Image *img_decode(const unsigned char *data, int len) {
+  int w, h, comp;
+  unsigned char *rgba = stbi_load_from_memory(data, len, &w, &h, &comp, 4);
+  if (!rgba) return NULL;
+  Image *im = img_new(w, h);
+  if (im) {
+    for (int i = 0; i < w * h; i++) {
+      const unsigned char *p = rgba + 4 * i;
+      im->px[i] = 0xFF000000u | ((uint32_t)p[0] << 16) | ((uint32_t)p[1] << 8) | p[2];
+    }
+  }
+  stbi_image_free(rgba);
+  return im;
+}
+
 static uint32_t sample_bilinear(const Image *s, float fx, float fy) {
   if (fx < 0) fx = 0;
   if (fy < 0) fy = 0;
@@ -280,6 +296,42 @@ void gfx_blit(Image *s, const Image *im, int x, int y, int r, int alpha) {
         a = a * rr_cov(i, j, im->w, im->h, r) / 255;
       a = a * alpha / 255;
       if (a) { uint32_t *p = &s->px[yy * s->w + xx]; *p = blend(*p, c & 0xFFFFFF, a); }
+    }
+  }
+}
+
+/* Copia src esticada para (dx,dy,dw,dh) com interpolacao bilinear em inteiros (rapido; opaco). */
+static uint32_t lerp_px(uint32_t a, uint32_t b, unsigned w) {
+  unsigned rb = (((a & 0x00FF00FFu) * (256 - w) + (b & 0x00FF00FFu) * w) >> 8) & 0x00FF00FFu;
+  unsigned gg = (((a & 0x0000FF00u) * (256 - w) + (b & 0x0000FF00u) * w) >> 8) & 0x0000FF00u;
+  return rb | gg;
+}
+void gfx_blit_scaled(Image *d, const Image *s, int dx, int dy, int dw, int dh) {
+  if (dw <= 0 || dh <= 0 || dw > 1920 || dx < 0 || dy < 0 || dx + dw > d->w || dy + dh > d->h) return;
+  static int x0t[1920], x1t[1920];
+  static unsigned wxt[1920];
+  int xs = (int)(((long long)s->w << 16) / dw), ys = (int)(((long long)s->h << 16) / dh);
+  for (int x = 0; x < dw; x++) {
+    int fx = x * xs + xs / 2 - 32768;
+    if (fx < 0) fx = 0;
+    x0t[x] = fx >> 16;
+    if (x0t[x] > s->w - 1) x0t[x] = s->w - 1;
+    x1t[x] = x0t[x] + 1 < s->w ? x0t[x] + 1 : s->w - 1;
+    wxt[x] = (unsigned)((fx >> 8) & 255);
+  }
+  for (int y = 0; y < dh; y++) {
+    int fy = y * ys + ys / 2 - 32768;
+    if (fy < 0) fy = 0;
+    int y0 = fy >> 16;
+    if (y0 > s->h - 1) y0 = s->h - 1;
+    int y1 = y0 + 1 < s->h ? y0 + 1 : s->h - 1;
+    unsigned wy = (unsigned)((fy >> 8) & 255);
+    const uint32_t *r0 = s->px + (size_t)y0 * s->w, *r1 = s->px + (size_t)y1 * s->w;
+    uint32_t *o = d->px + (size_t)(dy + y) * d->w + dx;
+    for (int x = 0; x < dw; x++) {
+      uint32_t top = lerp_px(r0[x0t[x]], r0[x1t[x]], wxt[x]);
+      uint32_t bot = lerp_px(r1[x0t[x]], r1[x1t[x]], wxt[x]);
+      o[x] = GFX_A | lerp_px(top, bot, wy);
     }
   }
 }

@@ -24,4 +24,7 @@ void auth_start_login(const char *user, const char *pass);      /* login + catal
 void auth_logout(void);                                         /* apaga a sessao salva */
 int  auth_poll(AuthEvent *ev);                                  /* 1 se havia evento (preenche ev) */
 
+/* Baixa uma URL https para um arquivo (video do catalogo). pct 0..100; cancel != 0 interrompe. 0 = ok. */
+int  auth_download(const char *url, const char *dest, volatile int *pct, volatile int *cancel, char *err, int cap);
+
 #endif

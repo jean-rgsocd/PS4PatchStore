@@ -33,6 +33,7 @@ void ui_draw(UI *ui);
 void ui_set_busy(UI *ui, int busy);
 /* Resultado da instalacao pedida (code 0 = pedido aceito). Mostra a mensagem certa (inclusive para a atualizacao do app). */
 void ui_install_done(UI *ui, int code, const char *err);
+/* Video dentro do app: chamar uma vez com os ganchos de plataforma ja registrados em vp_init(). */
 void ui_toast(UI *ui, const char *msg, int kind);
 
 #endif

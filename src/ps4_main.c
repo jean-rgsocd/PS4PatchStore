@@ -17,6 +17,7 @@
 #include <orbis/Pad.h>
 #include <orbis/UserService.h>
 #include <orbis/SystemService.h>
+#include <orbis/AudioOut.h>
 
 #include "gfx.h"
 #include "ui.h"
@@ -24,6 +25,7 @@
 #include "install.h"
 #include "auth.h"
 #include "version.h"
+#include "vplayer.h"
 
 /* Heap do libc: a UI usa ~60 MB (tela, fundo, capas, JPEG decodificado). */
 uint64_t sceLibcHeapSize = 256ull * 1024 * 1024;
@@ -248,6 +250,34 @@ static void check_install_result(UI *ui) {
   ui_install_done(ui, code, err);
 }
 
+/* ------------------------------------------------------------------ video dentro do app (audio + ganchos) */
+static int aud = -1;
+
+static int vp_audio_open(void) {
+  sceAudioOutInit();
+  aud = sceAudioOutOpen(ORBIS_USER_SERVICE_USER_ID_SYSTEM, ORBIS_AUDIO_OUT_PORT_TYPE_MAIN, 0, 256, 48000,
+                        ORBIS_AUDIO_OUT_PARAM_FORMAT_S16_MONO);
+  if (aud < 0) {
+    char m[80];
+    snprintf(m, sizeof(m), "AVISO: audio nao abriu (0x%x); video sem som.", (unsigned)aud);
+    install_log(m);
+    aud = -1;
+    return -1;
+  }
+  return 0;
+}
+static void vp_audio_write(const int16_t *pcm, int n) {
+  for (int i = 0; i + 256 <= n && aud >= 0; i += 256) sceAudioOutOutput(aud, pcm + i);
+}
+static void vp_audio_close(void) {
+  if (aud >= 0) { sceAudioOutOutput(aud, NULL); sceAudioOutClose(aud); aud = -1; }
+}
+static void vp_sleep(unsigned us) { sceKernelUsleep(us); }
+
+static const VpPlatform VP_PLAT = {
+  auth_download, vp_audio_open, vp_audio_write, vp_audio_close, vp_sleep, install_log, "/data/jkpatchs_video.tmp"
+};
+
 /* ------------------------------------------------------------------ video (navegador do PS4) */
 static void on_open_url(const char *url, void *ud) {
   (void)ud;
@@ -324,6 +354,7 @@ int main(void) {
   present(screen);
   install_log("Video ok.");
 
+  vp_init(&VP_PLAT);
   install_start_server();
   pad_open();
   if (pad < 0) install_log("AVISO: controle nao abriu; tentando de novo.");

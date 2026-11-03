@@ -1,5 +1,6 @@
 #include "ui.h"
 #include "version.h"
+#include "vplayer.h"
 
 #include <stdio.h>
 #include <stdlib.h>
@@ -70,6 +71,11 @@ struct UI {
   char toast[256];
   int toast_left, toast_kind;
   char assets[256];
+
+  /* video dentro do app: 0 = nenhum, 1 = janela, 2 = minimizado (PiP) */
+  int vid_mode, vdirty, base_stale, vlast_state, vlast_pct, vlast_sec;
+  char vtitle[96], vurl[240];
+  Image *vframe, *base;
 };
 
 /* ------------------------------------------------------------------ utilidades */
@@ -362,10 +368,14 @@ void ui_install_done(UI *ui, int code, const char *err) {
   ui->updating = 0;
 }
 
+static int is_jkv(const char *u);
+static void vid_open(UI *ui, const CatGame *g);
+
 static void trigger_install(UI *ui) {
   const CatGame *g = cur_game(ui);
   if (!g || panel_items(g) == 0) return;
   if (ui->focus >= g->nbtn) {                                   /* botao de video */
+    if (g->video[0] && is_jkv(g->video)) { vid_open(ui, g); return; }          /* player dentro do app */
     if (g->video[0] && ui->open_fn) {
       ui_toast(ui, "Abrindo o vídeo no navegador do PS4...", UI_TOAST_INFO);
       ui->open_fn(g->video, ui->open_ud);
@@ -385,11 +395,69 @@ static void trigger_install(UI *ui) {
   if (ui->fn) ui->fn(b, ui->user);
 }
 
+
+/* ------------------------------------------------------------------ video dentro do app */
+static void vid_close(UI *ui) {
+  if (!ui->vid_mode) return;
+  ui->vid_mode = 0;
+  vp_stop();
+  if (ui->vframe) { img_free(ui->vframe); ui->vframe = NULL; }
+  ui->dirty = 1;
+}
+
+static int is_jkv(const char *u) {
+  size_t n = strlen(u);
+  return n > 4 && strcmp(u + n - 4, ".jkv") == 0;
+}
+
+static void vid_open(UI *ui, const CatGame *g) {
+  if (vp_busy()) { ui_toast(ui, "Aguarde o vídeo anterior terminar de fechar e tente de novo.", UI_TOAST_INFO); return; }
+  snprintf(ui->vtitle, sizeof(ui->vtitle), "%s", g->title);
+  snprintf(ui->vurl, sizeof(ui->vurl), "%s", g->video);
+  if (vp_load(g->video) != 0) { ui_toast(ui, "Não foi possível iniciar o vídeo.", UI_TOAST_ERR); return; }
+  ui->vid_mode = 1;
+  ui->vlast_state = -1;
+  ui->vlast_pct = -1;
+  ui->vlast_sec = -1;
+  ui->base_stale = 1;
+  ui->dirty = 1;
+}
+
+static void vid_key(UI *ui, int key) {
+  int st = vp_state();
+  if (key == UI_BACK && ui->vid_mode == 1) { vid_close(ui); return; }
+  if (key == UI_TRIANGLE) {
+    if (ui->vid_mode == 1 && st != VP_ERROR) { ui->vid_mode = 2; ui->base_stale = 1; ui->dirty = 1; }
+    else vid_close(ui);
+    return;
+  }
+  if (key == UI_OPTIONS && ui->vid_mode == 2) { ui->vid_mode = 1; ui->base_stale = 1; ui->dirty = 1; return; }
+  if (key == UI_OK && ui->vid_mode == 1) {
+    if (st == VP_PLAYING) { vp_set_paused(!vp_paused()); ui->vdirty = 1; }
+    else if (st == VP_ENDED) { if (vp_busy() == 0) vp_load(ui->vurl); }
+    else if (st == VP_ERROR) vid_close(ui);
+  }
+}
+
+static void vid_tick(UI *ui) {
+  Image *f = vp_take_frame();
+  if (f) { if (ui->vframe) img_free(ui->vframe); ui->vframe = f; ui->vdirty = 1; }
+  int st = vp_state();
+  if (st == VP_IDLE && !vp_busy()) { vid_close(ui); return; }
+  int pct = vp_progress(), sec = (int)vp_position();
+  if (st != ui->vlast_state || (st == VP_DOWNLOADING && pct != ui->vlast_pct) || (st == VP_PLAYING && sec != ui->vlast_sec)) {
+    ui->vlast_state = st; ui->vlast_pct = pct; ui->vlast_sec = sec;
+    ui->vdirty = 1;
+  }
+}
+
 void ui_key(UI *ui, int key) {
   if (ui->mode == MODE_LOGIN) { login_key(ui, key); return; }
   if (ui->mode != MODE_CATALOG) return;
+  if (ui->vid_mode == 1 || (ui->vid_mode == 2 && (key == UI_TRIANGLE || key == UI_OPTIONS))) { vid_key(ui, key); return; }
   if (key == UI_TRIANGLE) {                                     /* sair da conta */
     if (ui->busy) { ui_toast(ui, "Aguarde o pedido atual terminar.", UI_TOAST_INFO); return; }
+    vid_close(ui);
     if (ui->logout_fn) ui->logout_fn(ui->auth_ud);
     ui->field[0][0] = 0;
     ui_show_login(ui, "Você saiu da conta.");
@@ -434,6 +502,7 @@ void ui_key(UI *ui, int key) {
 
 void ui_tick(UI *ui) {
   ui->frame++;
+  if (ui->vid_mode) vid_tick(ui);
   if ((ui->busy || ui->mode == MODE_LOADING) && ui->frame % 6 == 0) ui->dirty = 1;   /* spinner */
   if (ui->mode == MODE_LOGIN && ui->frame % 30 == 0) ui->dirty = 1;                  /* cursor piscando */
   if (ui->toast_left > 0 && !ui->busy) {
@@ -442,8 +511,10 @@ void ui_tick(UI *ui) {
 }
 
 int ui_take_dirty(UI *ui) {
-  int d = ui->dirty;
+  int d = ui->dirty || ui->vdirty;
+  if (ui->dirty) ui->base_stale = 1;
   ui->dirty = 0;
+  ui->vdirty = 0;
   return d;
 }
 
@@ -600,7 +671,7 @@ static void draw_video_button(UI *ui, int x, int y, int w, int focused) {
   gfx_rrect(s, x, y, w, BTN_H, r, C_PANEL2, 255, 0);
   gfx_rrect(s, x, y, w, BTN_H, r, C_WHITE, 40, 2);
   T(ui, 1, 27, x + 32, y + BTN_H / 2 + 10, "VER VÍDEO DO PATCH", C_TEXT, 255, 0);
-  T(ui, 0, 20, x + w - 56 - 12 - TW(ui, 0, 20, "YouTube", 0), y + BTN_H / 2 + 7, "YouTube", C_MUTED, 255, 0);
+  T(ui, 0, 20, x + w - 56 - 12 - TW(ui, 0, 20, "Assistir", 0), y + BTN_H / 2 + 7, "Assistir", C_MUTED, 255, 0);
   text_draw_in(s, ui->fb, 30, x + w - 60, 56, y + BTN_H / 2 + 11, "\xE2\x96\xB6", C_ACCENT, 255, 0, 1);
   if (focused) gfx_rrect(s, x - 8, y - 8, w + 16, BTN_H + 16, r + 8, C_FOCUS, 255, 4);
 }
@@ -830,7 +901,82 @@ static void draw_loading(UI *ui) {
   text_draw_in(s, ui->fb, 32, x, w, y + 178, buf, C_TEXT, 255, 0, 1);
 }
 
-void ui_draw(UI *ui) {
+
+/* ---- janela do video */
+static void fmt_time(char *out, int cap, double sec) {
+  int s = (int)sec;
+  snprintf(out, (size_t)cap, "%d:%02d", s / 60, s % 60);
+}
+
+static void draw_video_overlay(UI *ui) {
+  Image *s = ui->s;
+  int st = vp_state();
+  int win = ui->vid_mode == 1;
+  int ax, ay, aw, ah;                                           /* area do video */
+  if (win) { ax = 480; ay = 250; aw = 960; ah = 540; }
+  else { ax = W - MARGIN - 384; ay = 124; aw = 384; ah = 216; }
+
+  if (win) {
+    gfx_rrect(s, 450, 170, 1020, 700, 26, C_PANEL, 250, 0);
+    gfx_rrect(s, 450, 170, 1020, 700, 26, C_WHITE, 30, 2);
+    char t[120];
+    text_fit(ui->fb, 30, ui->vtitle, 940, t, sizeof(t));
+    T(ui, 1, 30, 480, 222, t, C_TEXT, 255, 0);
+  } else {
+    gfx_rrect(s, ax - 6, ay - 6, aw + 12, ah + 12, 14, C_PANEL, 250, 0);
+    gfx_rrect(s, ax - 6, ay - 6, aw + 12, ah + 12, 14, C_ACCENT, 200, 2);
+  }
+  gfx_fill(s, ax, ay, aw, ah, C_BLACK, 255);
+
+  int vw = 0, vh = 0;
+  if (ui->vframe && vp_aspect(&vw, &vh)) {
+    int dw = aw, dh = aw * vh / vw;
+    if (dh > ah) { dh = ah; dw = ah * vw / vh; }
+    if (dw > 0 && dh > 0) gfx_blit_scaled(s, ui->vframe, ax + (aw - dw) / 2, ay + (ah - dh) / 2, dw, dh);
+  }
+
+  char msg[200] = "";
+  if (st == VP_DOWNLOADING) snprintf(msg, sizeof(msg), "Carregando vídeo...  %d%%", vp_progress());
+  else if (st == VP_ERROR) vp_error(msg, sizeof(msg));
+  else if (st == VP_ENDED) snprintf(msg, sizeof(msg), "Fim do vídeo");
+  else if (st == VP_PLAYING && vp_paused()) snprintf(msg, sizeof(msg), "Pausado");
+  if (msg[0]) {
+    if (st != VP_DOWNLOADING) gfx_fill(s, ax, ay, aw, ah, C_BLACK, st == VP_ERROR ? 255 : 120);
+    char b[200];
+    text_fit(ui->fb, win ? 34 : 20, msg, aw - 40, b, sizeof(b));
+    text_draw_in(s, ui->fb, win ? 34 : 20, ax, aw, ay + ah / 2 + (win ? 12 : 7), b, st == VP_ERROR ? C_ERR : C_TEXT, 255, 0, 1);
+    if (st == VP_DOWNLOADING) {
+      int bw = aw - 120 > 0 ? aw - 120 : aw;
+      int by = ay + ah / 2 + (win ? 50 : 22);
+      gfx_rrect(s, ax + (aw - bw) / 2, by, bw, win ? 10 : 6, 4, C_WHITE, 40, 0);
+      int fw = bw * vp_progress() / 100;
+      if (fw > 6) gfx_rrect(s, ax + (aw - bw) / 2, by, fw, win ? 10 : 6, 4, C_ACCENT, 255, 0);
+    }
+  }
+
+  double dur = vp_duration(), pos = vp_position();
+  if (dur > 0 && (st == VP_PLAYING || st == VP_ENDED)) {
+    int fw = (int)((double)aw * (pos > dur ? dur : pos) / dur);
+    gfx_fill(s, ax, ay + ah + (win ? 14 : 0), aw, win ? 8 : 5, C_WHITE, 50);
+    if (fw > 0) gfx_fill(s, ax, ay + ah + (win ? 14 : 0), fw, win ? 8 : 5, C_ACCENT, 255);
+  }
+  if (win) {
+    char a[24], b[24], tm[64];
+    fmt_time(a, sizeof(a), pos);
+    fmt_time(b, sizeof(b), dur);
+    snprintf(tm, sizeof(tm), "%s / %s", a, b);
+    T(ui, 0, 24, 480, 842, tm, C_MUTED, 255, 0);
+    const char *hint_txt = st == VP_ENDED ? "X repetir    \xE2\x96\xB3 minimizar    O fechar"
+                         : st == VP_DOWNLOADING ? "\xE2\x96\xB3 minimizar    O cancelar"
+                         : "X pausar    \xE2\x96\xB3 minimizar    O fechar";
+    int hw = TW(ui, 0, 24, hint_txt, 0);
+    T(ui, 0, 24, 1440 - hw, 842, hint_txt, C_TEXT, 255, 0);
+  } else {
+    text_draw_in(s, ui->f, 16, ax, aw, ay + ah - 12, "OPTIONS ampliar   \xE2\x96\xB3 fechar", C_TEXT, 220, 0, 0);
+  }
+}
+
+static void draw_scene(UI *ui) {
   if (ui->bg) gfx_blit_surface(ui->s, ui->bg);
   else gfx_fill(ui->s, 0, 0, W, H, C_BG, 255);
   draw_topbar(ui);
@@ -846,4 +992,21 @@ void ui_draw(UI *ui) {
     draw_loading(ui);
   }
   draw_footer(ui);
+}
+
+void ui_draw(UI *ui) {
+  if (!(ui->vid_mode && ui->mode == MODE_CATALOG)) { draw_scene(ui); return; }
+  /* video ativo: o catalogo fica guardado em 'base' e so a janela do video e redesenhada a cada quadro */
+  if (!ui->base) ui->base = img_new(W, H);
+  if (ui->base && (ui->base_stale || ui->dirty)) {
+    draw_scene(ui);
+    if (ui->vid_mode == 1) gfx_fill(ui->s, 0, 0, W, H, C_BLACK, 150);
+    gfx_blit_surface(ui->base, ui->s);
+    ui->base_stale = 0;
+  } else if (ui->base) {
+    gfx_blit_surface(ui->s, ui->base);
+  } else {
+    draw_scene(ui);
+  }
+  draw_video_overlay(ui);
 }

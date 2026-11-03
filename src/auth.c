@@ -212,6 +212,61 @@ out:
   return 0;
 }
 
+/* Baixa uma URL https qualquer (video) direto para um arquivo, com porcentagem. Verificacao de certificado ligada. */
+int auth_download(const char *url, const char *dest, volatile int *pct, volatile int *cancel, char *err, int cap) {
+  if (strncmp(url, "https://", 8) != 0) { snprintf(err, (size_t)cap, "Link de vídeo inválido (precisa ser https)."); return -1; }
+  if (net_init() != 0) { snprintf(err, (size_t)cap, "Não foi possível iniciar a rede do app."); return -1; }
+  int tpl = -1, conn = -1, req = -1, rc = 0, status = 0;
+  FILE *f = NULL;
+  unsigned char *buf = (unsigned char *)malloc(16384);
+  if (!buf) { snprintf(err, (size_t)cap, "Sem memória."); return -1; }
+  *pct = 0;
+  tpl = sceHttpCreateTemplate(http_ctx, USER_AGENT, ORBIS_HTTP_VERSION_1_1, 1);
+  if (tpl < 0) { rc = tpl; goto out; }
+  sceHttpSetResolveTimeOut(tpl, 10 * 1000 * 1000);
+  sceHttpSetConnectTimeOut(tpl, 15 * 1000 * 1000);
+  sceHttpSetSendTimeOut(tpl, 15 * 1000 * 1000);
+  conn = sceHttpCreateConnectionWithURL(tpl, url, 0);
+  if (conn < 0) { rc = conn; goto out; }
+  req = sceHttpCreateRequestWithURL(conn, ORBIS_METHOD_GET, url, 0);
+  if (req < 0) { rc = req; goto out; }
+  rc = sceHttpSendRequest(req, NULL, 0);
+  if (rc < 0) { logrc("video: SendRequest", rc); goto out; }
+  rc = sceHttpGetStatusCode(req, &status);
+  if (rc < 0) goto out;
+  if (status != 200) {
+    snprintf(err, (size_t)cap, status == 404 ? "Vídeo não encontrado no servidor (404)." : "O servidor recusou o vídeo (HTTP %d).", status);
+    { char w[96]; snprintf(w, sizeof(w), "video: HTTP %d", status); install_log(w); }
+    rc = 0; status = -1; goto out;
+  }
+  int cl_res = 0;
+  size_t total = 0;
+  if (sceHttpGetResponseContentLength(req, &cl_res, &total) < 0 || cl_res != 0) total = 0;
+  f = fopen(dest, "wb");
+  if (!f) { snprintf(err, (size_t)cap, "Não foi possível gravar o vídeo no console."); rc = 0; status = -1; goto out; }
+  size_t got = 0;
+  for (;;) {
+    if (*cancel) { rc = 0; status = -2; break; }
+    int n = sceHttpReadData(req, buf, 16384);
+    if (n < 0) { rc = n; logrc("video: ReadData", rc); break; }
+    if (n == 0) break;
+    if (fwrite(buf, 1, (size_t)n, f) != (size_t)n) { snprintf(err, (size_t)cap, "Sem espaço para gravar o vídeo."); rc = 0; status = -1; break; }
+    got += (size_t)n;
+    if (total > 0) *pct = (int)((got * 100) / total);
+  }
+  if (rc == 0 && status == 200) *pct = 100;
+out:
+  if (f) fclose(f);
+  if (req >= 0) sceHttpDeleteRequest(req);
+  if (conn >= 0) sceHttpDeleteConnection(conn);
+  if (tpl >= 0) sceHttpDeleteTemplate(tpl);
+  free(buf);
+  if (rc != 0) { describe_error(rc, err, (size_t)cap); return -1; }
+  if (status == -2) return -1;                        /* cancelado pelo usuario (sem mensagem) */
+  if (status != 200) return -1;                       /* err ja preenchido */
+  return 0;
+}
+
 /* ------------------------------------------------------------------ tarefas */
 static int fetch_catalog(const char *user, const char *token, int silent_login_needed) {
   char err[200] = "";
