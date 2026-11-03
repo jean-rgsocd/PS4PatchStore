@@ -6,7 +6,7 @@ jobs:
     steps:
       - uses: actions/checkout@v4
       - name: Dependencias
-        run: sudo apt-get update && sudo apt-get install -y clang lld jq python3 unzip libicu-dev ffmpeg
+        run: sudo apt-get update && sudo apt-get install -y clang lld jq python3 unzip libicu-dev
       - name: Baixar OpenOrbis Toolchain
         env:
           GH_TOKEN: ${{ github.token }}
@@ -66,8 +66,23 @@ jobs:
           path: |
             out/native/*.pkg
             out/patch/*.pkg
-            out/videos/*.jkv
             out/catalogo_para_servidor.dat
             native0/eboot.bin
             build.log
             diag.log
+
+  # Conversao dos videos (MP4 -> .jkv). Roda em paralelo, sem atrasar o PKG. O resultado sai no artifact "videos-jkv".
+  videos:
+    runs-on: ubuntu-22.04
+    timeout-minutes: 40
+    steps:
+      - uses: actions/checkout@v4
+      - name: ffmpeg
+        run: sudo apt-get update && sudo apt-get install -y ffmpeg
+      - name: Converter videos
+        run: python3 -u tools/convert_videos.py image0/index.html out/videos
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: videos-jkv
+          path: out/videos/*.jkv
