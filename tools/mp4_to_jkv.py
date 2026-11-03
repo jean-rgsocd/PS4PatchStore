@@ -2,7 +2,8 @@
 """Converte um video (MP4 etc.) para o formato .jkv que o JK Patchs toca dentro do app.
 
 .jkv = quadros JPEG (MJPEG) + audio IMA-ADPCM mono 24 kHz, intercalados.
-Uso: python3 tools/mp4_to_jkv.py entrada.mp4 saida.jkv [largura=480] [fps=15] [qualidade=6]
+Uso: python3 tools/mp4_to_jkv.py entrada.mp4 saida.jkv [largura=480] [fps=15] [qualidade=6] [max_segundos=120]
+A entrada pode ser um link https. So os primeiros max_segundos viram .jkv (o app baixa o arquivo inteiro antes de tocar).
 Precisa do ffmpeg instalado. Qualidade: 2 (melhor/maior) ... 31 (pior/menor).
 """
 import os
@@ -61,13 +62,14 @@ def main():
     width = int(sys.argv[3]) if len(sys.argv) > 3 else 480
     fps = int(sys.argv[4]) if len(sys.argv) > 4 else 15
     qual = int(sys.argv[5]) if len(sys.argv) > 5 else 6
+    maxs = sys.argv[6] if len(sys.argv) > 6 else os.environ.get("JKV_MAX_SEC", "120")
     spf = ARATE // fps
     with tempfile.TemporaryDirectory() as tmp:
-        subprocess.run(["ffmpeg", "-v", "error", "-y", "-i", src, "-an", "-vf", "fps=%d,scale=%d:-2" % (fps, width),
+        subprocess.run(["ffmpeg", "-v", "error", "-y", "-i", src, "-t", maxs, "-an", "-vf", "fps=%d,scale=%d:-2" % (fps, width),
                         "-c:v", "mjpeg", "-pix_fmt", "yuvj420p", "-q:v", str(qual), os.path.join(tmp, "f%06d.jpg")],
                        check=True)
         pcm_path = os.path.join(tmp, "a.raw")
-        subprocess.run(["ffmpeg", "-v", "error", "-y", "-i", src, "-vn", "-ac", "1", "-ar", str(ARATE),
+        subprocess.run(["ffmpeg", "-v", "error", "-y", "-i", src, "-t", maxs, "-vn", "-ac", "1", "-ar", str(ARATE),
                         "-f", "s16le", pcm_path], check=False)
         pcm = open(pcm_path, "rb").read() if os.path.exists(pcm_path) else b""
         frames = sorted(glob.glob(os.path.join(tmp, "f*.jpg")))
