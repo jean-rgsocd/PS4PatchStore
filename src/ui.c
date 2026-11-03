@@ -42,12 +42,15 @@
 #define SPLASH_END  158            /* ~2,6 s no total (60 ticks por segundo) */
 #define SPLASH_SKIP_FROM 30        /* depois de 0,5 s qualquer tecla pula */
 
-enum { MODE_LOADING = 0, MODE_LOGIN, MODE_CATALOG };
+enum { MODE_LOADING = 0, MODE_LOGIN, MODE_CATALOG, MODE_QR };
 #define FLD_MAX 64
 
 struct UI {
   int mode;
   UiLoginFn login_fn;
+  UiLoginFn register_fn;
+  Image *qr;                           /* QR Code do WhatsApp do admin (assets/images/qr_whatsapp.png) */
+  char qr_user[64];
   UiLogoutFn logout_fn;
   UiOpenUrlFn open_fn;
   void *open_ud;
@@ -194,6 +197,8 @@ UI *ui_create(Image *surface, const Catalog *cat, const char *assets_dir, UiInst
     snprintf(lp, sizeof(lp), "%s/images/logo_jk.png", assets_dir);
     Image *raw = img_load(lp);
     if (raw) { ui->logo = img_scale(raw, 88, 88); ui->logo_full = raw; }
+    snprintf(lp, sizeof(lp), "%s/images/qr_whatsapp.png", assets_dir);
+    ui->qr = img_load(lp);
   }
 
   char path[320];
@@ -232,6 +237,15 @@ void ui_set_auth_handlers(UI *ui, UiLoginFn login, UiLogoutFn logout, void *ud) 
 }
 
 void ui_set_open_handler(UI *ui, UiOpenUrlFn fn, void *ud) { ui->open_fn = fn; ui->open_ud = ud; }
+void ui_set_register_handler(UI *ui, UiLoginFn fn) { ui->register_fn = fn; }
+
+void ui_show_register_done(UI *ui, const char *user) {
+  ui->mode = MODE_QR;
+  snprintf(ui->qr_user, sizeof(ui->qr_user), "%s", user ? user : "");
+  memset(ui->field[1], 0, sizeof(ui->field[1]));
+  ui->busy = 0;
+  ui->dirty = 1;
+}
 
 void ui_show_loading(UI *ui, const char *msg) {
   ui->mode = MODE_LOADING;
@@ -271,8 +285,8 @@ void ui_set_catalog(UI *ui, const Catalog *cat) {
 static const char *KB_N[4] = {"1234567890", "qwertyuiop", "asdfghjkl_", "zxcvbnm.-@"};
 static const char *KB_S[4] = {"!#$%^&*()=", "QWERTYUIOP", "ASDFGHJKL:", "ZXCVBNM,+/"};
 #define KB_COLS 10
-#define KB_ACTIONS 5          /* MAIUSC, MOSTRAR, APAGAR, CAMPO, ENTRAR */
-enum { ACT_CAPS = 0, ACT_SHOW, ACT_DEL, ACT_FIELD, ACT_GO };
+#define KB_ACTIONS 6          /* MAIUSC, MOSTRAR, APAGAR, CAMPO, CADASTRAR, ENTRAR */
+enum { ACT_CAPS = 0, ACT_SHOW, ACT_DEL, ACT_FIELD, ACT_REG, ACT_GO };
 
 static void login_msg(UI *ui, const char *m) {
   snprintf(ui->login_msg, sizeof(ui->login_msg), "%s", m);
@@ -308,6 +322,28 @@ static void login_submit(UI *ui) {
   memset(p, 0, sizeof(p));
 }
 
+/* Cadastro: valida aqui (o servidor valida de novo) e envia; a conta nasce pendente. */
+static void register_submit(UI *ui) {
+  const char *u = ui->field[0], *p = ui->field[1];
+  size_t un = strlen(u), pn = strlen(p);
+  if (un < 2) { ui->cur_field = 0; login_msg(ui, "Escolha um usuário com pelo menos 2 caracteres."); return; }
+  for (size_t i = 0; i < un; i++) {
+    char c = u[i];
+    if (!((c >= 'a' && c <= 'z') || (c >= '0' && c <= '9') || c == '_' || c == '.' || c == '-')) {
+      ui->cur_field = 0; login_msg(ui, "Usuário: só letras minúsculas, números, . _ -"); return;
+    }
+  }
+  if (pn < 8) { ui->cur_field = 1; login_msg(ui, "A senha precisa ter pelo menos 8 caracteres."); return; }
+  if (!ui->register_fn) return;
+  char uu[FLD_MAX + 1], pp[FLD_MAX + 1];
+  snprintf(uu, sizeof(uu), "%s", u);
+  snprintf(pp, sizeof(pp), "%s", p);
+  memset(ui->field[1], 0, sizeof(ui->field[1]));
+  ui_show_loading(ui, "Enviando cadastro...");
+  ui->register_fn(uu, pp, ui->auth_ud);
+  memset(pp, 0, sizeof(pp));
+}
+
 static void login_key(UI *ui, int key) {
   switch (key) {
     case UI_LEFT:  if (ui->kc > 0) { ui->kc--; ui->dirty = 1; } break;
@@ -318,7 +354,7 @@ static void login_key(UI *ui, int key) {
     }
     case UI_UP:
       if (ui->kr > 0) {
-        if (ui->kr == 4) ui->kc = ui->kc * 2;
+        if (ui->kr == 4) { ui->kc = ui->kc * 2; if (ui->kc > KB_COLS - 1) ui->kc = KB_COLS - 1; }
         ui->kr--; ui->dirty = 1;
       }
       break;
@@ -335,6 +371,7 @@ static void login_key(UI *ui, int key) {
       else if (ui->kc == ACT_SHOW)    { ui->show_pass = !ui->show_pass; ui->dirty = 1; }
       else if (ui->kc == ACT_DEL)     field_del(ui);
       else if (ui->kc == ACT_FIELD)   { ui->cur_field = !ui->cur_field; ui->dirty = 1; }
+      else if (ui->kc == ACT_REG)     register_submit(ui);
       else                            login_submit(ui);
       break;
     case UI_BACK:
@@ -471,6 +508,10 @@ void ui_key(UI *ui, int key) {
     return;
   }
   if (ui->mode == MODE_LOGIN) { login_key(ui, key); return; }
+  if (ui->mode == MODE_QR) {                                      /* tela do QR: qualquer botao de voltar/confirmar */
+    if (key == UI_BACK || key == UI_OK || key == UI_OPTIONS) ui_show_login(ui, "Depois que o admin ativar, toque em ENTRAR.");
+    return;
+  }
   if (ui->mode != MODE_CATALOG) return;
   if (ui->vid_mode == 1 || (ui->vid_mode == 2 && (key == UI_TRIANGLE || key == UI_OPTIONS))) { vid_key(ui, key); return; }
   if (key == UI_TRIANGLE) {                                     /* sair da conta */
@@ -575,7 +616,7 @@ static void draw_topbar(UI *ui) {
     for (const char *q = ui->username; *q && n + 2 < sizeof(st); q++) st[n++] = (*q >= 'a' && *q <= 'z') ? *q - 32 : *q;
     st[n] = 0;
   } else {
-    snprintf(st, sizeof(st), "%s", ui->mode == MODE_LOGIN ? "ACESSO RESTRITO" : "CONECTANDO");
+    snprintf(st, sizeof(st), "%s", ui->mode == MODE_LOGIN ? "ACESSO RESTRITO" : ui->mode == MODE_QR ? "CADASTRO ENVIADO" : "CONECTANDO");
   }
   int w = TW(ui, 1, 20, st, 3);
   T(ui, 1, 20, W - MARGIN - w, 62, st, C_MUTED, 255, 3);
@@ -809,6 +850,8 @@ static void draw_footer(UI *ui) {
     x = hint(ui, x, "\xE2\x96\xA1", "Apagar");
     x = hint(ui, x, "\xE2\x96\xB3", "Trocar campo");
     x = hint(ui, x, "OPTIONS", "Entrar");
+  } else if (ui->mode == MODE_QR) {
+    x = hint(ui, x, "O", "Voltar ao login");
   } else if (ui->mode == MODE_CATALOG) {
     x = hint(ui, x, "\xE2\x97\x80 \xE2\x96\xB6", "Coleções");
     x = hint(ui, x, "\xE2\x96\xB2 \xE2\x96\xBC", "Downloads");
@@ -897,8 +940,8 @@ static void draw_login(UI *ui) {
                ui->kr == r && ui->kc == c, 0);
     }
   }
-  static const char *act[KB_ACTIONS] = {"MAIÚSC", "MOSTRAR", "APAGAR", "CAMPO", "ENTRAR"};
-  static const int aw[KB_ACTIONS] = {150, 160, 150, 140, 0};
+  static const char *act[KB_ACTIONS] = {"MAIÚSC", "MOSTRAR", "APAGAR", "CAMPO", "CADASTRAR", "ENTRAR"};
+  static const int aw[KB_ACTIONS] = {125, 140, 125, 105, 195, 0};
   int ax = px, ay = ky + 4 * (KEY_H + KEY_G), total = LG_W - 90;
   int used = 0;
   for (int i = 0; i < KB_ACTIONS - 1; i++) used += aw[i] + KEY_G;
@@ -924,6 +967,26 @@ static void draw_login(UI *ui) {
     text_fit(ui->f, 26, ui->login_msg, LG_W - 90, buf, sizeof(buf));
     text_draw_in(s, ui->f, 26, px, LG_W - 90, LG_Y + LG_H - 34, buf, C_ERR, 255, 0, 1);
   }
+}
+
+static void draw_qr(UI *ui) {
+  Image *s = ui->s;
+  gfx_rrect(s, LG_X, LG_Y, LG_W, LG_H, 28, C_PANEL, 245, 0);
+  gfx_rrect(s, LG_X, LG_Y, LG_W, LG_H, 28, C_WHITE, 26, 2);
+  text_draw_in(s, ui->fb, 44, LG_X, LG_W, LG_Y + 72, "Cadastro enviado!", C_ACCENT, 255, 0, 1);
+  char l[160];
+  snprintf(l, sizeof(l), "Usuário: %s", ui->qr_user);
+  text_draw_in(s, ui->fb, 30, LG_X, LG_W, LG_Y + 122, l, C_TEXT, 255, 0, 1);
+  text_draw_in(s, ui->f, 26, LG_X, LG_W, LG_Y + 168, "Sua conta está aguardando ativação.", C_MUTED, 255, 0, 1);
+  int q = 450, qx = LG_X + (LG_W - q) / 2, qy = LG_Y + 192;     /* o PNG ja tem 450x450 (10 px por modulo): sem redimensionar */
+  gfx_rrect(s, qx - 8, qy - 8, q + 16, q + 16, 18, RGB(255, 255, 255), 255, 0);
+  if (ui->qr) {
+    gfx_blit(s, ui->qr, qx, qy, 0, 255);
+  } else {
+    text_draw_in(s, ui->f, 24, qx, q, qy + q / 2, "(QR Code indisponível)", C_DARKTXT, 255, 0, 1);
+  }
+  text_draw_in(s, ui->fb, 28, LG_X, LG_W, qy + q + 58, "Escaneie com o celular e fale com o admin no WhatsApp", C_TEXT, 255, 0, 1);
+  text_draw_in(s, ui->f, 24, LG_X, LG_W, qy + q + 96, "Quando ele ativar sua conta (30 dias), volte e toque em ENTRAR.", C_MUTED, 255, 0, 1);
 }
 
 static void draw_loading(UI *ui) {
@@ -1066,6 +1129,8 @@ static void draw_scene(UI *ui) {
     draw_message_line(ui);
   } else if (ui->mode == MODE_LOGIN) {
     draw_login(ui);
+  } else if (ui->mode == MODE_QR) {
+    draw_qr(ui);
   } else {
     draw_loading(ui);
   }
