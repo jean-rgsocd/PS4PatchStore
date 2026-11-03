@@ -194,6 +194,66 @@ static void poll_input(UI *ui) {
   prev = b;
 }
 
+/* ------------------------------------------------------------------ atualizacao do proprio app (EXPERIMENTAL)
+ * O DPI recusa reinstalar o app por cima ("Package Already Installed"), entao: 1) baixa o PKG novo so para conferir que
+ * existe e esta inteiro; 2) pede ao sistema para desinstalar o JK Patchs; 3) manda o PKG novo ao DPI.
+ * A desinstalacao usa libSceAppInstUtil carregada em tempo de execucao (nao depende de lib de link). */
+#define OWN_TITLE "PSTR00002"
+#define OWN_ID_PREFIX "IV0000-PSTR00002"
+#define UPD_TMP "/data/jkpatchs_update.tmp"
+
+static int update_check_pkg(const CatButton *b, char *err, int cap) {
+  volatile int pct = 0, cancel = 0;
+  if (auth_download(b->url, UPD_TMP, &pct, &cancel, err, cap) != 0) return -1;
+  FILE *f = fopen(UPD_TMP, "rb");
+  unsigned char h[4] = {0, 0, 0, 0};
+  long sz = 0;
+  if (f) { if (fread(h, 1, 4, f) != 4) h[0] = 0; fseek(f, 0, SEEK_END); sz = ftell(f); fclose(f); }
+  unlink(UPD_TMP);
+  if (!(h[0] == 0x7F && h[1] == 'C' && h[2] == 'N' && h[3] == 'T')) {
+    snprintf(err, (size_t)cap, "O arquivo da atualização no servidor não é um PKG válido.");
+    return -1;
+  }
+  if (b->size > 0 && (uint64_t)sz != (uint64_t)b->size) {
+    snprintf(err, (size_t)cap, "O PKG da atualização veio com tamanho diferente do catálogo. Gere o catálogo de novo.");
+    return -1;
+  }
+  return 0;
+}
+
+static int self_uninstall(char *err, int cap) {
+  typedef int32_t (*FnVoid)(void);
+  typedef int32_t (*FnTitle)(const char *);
+  uint32_t h = sceKernelLoadStartModule("/system/common/lib/libSceAppInstUtil.sprx", 0, NULL, 0, NULL, NULL);
+  char m[120];
+  if ((int32_t)h < 0) {
+    snprintf(m, sizeof(m), "update: LoadStartModule AppInstUtil falhou (0x%x)", (unsigned)h);
+    install_log(m);
+    snprintf(err, (size_t)cap, "Não foi possível acessar o instalador do sistema (0x%x).", (unsigned)h);
+    return -1;
+  }
+  void *fi = NULL, *fu = NULL;
+  int r1 = sceKernelDlsym((int32_t)h, "sceAppInstUtilInitialize", &fi);
+  int r2 = sceKernelDlsym((int32_t)h, "sceAppInstUtilAppUnInstall", &fu);
+  if (r1 < 0 || r2 < 0 || !fi || !fu) {
+    snprintf(m, sizeof(m), "update: dlsym falhou (init 0x%x, uninstall 0x%x)", (unsigned)r1, (unsigned)r2);
+    install_log(m);
+    snprintf(err, (size_t)cap, "Função de desinstalação não encontrada neste console.");
+    return -1;
+  }
+  int32_t ri = ((FnVoid)fi)();
+  snprintf(m, sizeof(m), "update: AppInstUtilInitialize rc=0x%x", (unsigned)ri);
+  install_log(m);
+  int32_t ru = ((FnTitle)fu)(OWN_TITLE);
+  snprintf(m, sizeof(m), "update: AppUnInstall(%s) rc=0x%x", OWN_TITLE, (unsigned)ru);
+  install_log(m);
+  if (ru != 0) {
+    snprintf(err, (size_t)cap, "O sistema não deixou apagar o app (0x%x). Apague o JK Patchs e instale a nova versão.", (unsigned)ru);
+    return -1;
+  }
+  return 0;
+}
+
 /* ------------------------------------------------------------------ instalacao (thread) */
 typedef struct { CatButton btn; } Job;
 
@@ -204,7 +264,22 @@ static char res_err[200];
 static void *install_thread(void *arg) {
   Job *j = (Job *)arg;
   char err[200] = "";
-  int rc = install_pkg(j->btn.url, j->btn.name, j->btn.content_id, j->btn.type, j->btn.size, err, sizeof(err));
+  int rc;
+  if (!strncmp(j->btn.content_id, OWN_ID_PREFIX, strlen(OWN_ID_PREFIX))) {      /* atualizacao do proprio app */
+    install_log("update: conferindo o PKG novo no servidor...");
+    rc = update_check_pkg(&j->btn, err, sizeof(err));
+    if (rc == 0) {
+      install_log("update: PKG ok; removendo a versao instalada...");
+      rc = self_uninstall(err, sizeof(err));
+      if (rc == 0) {
+        install_log("update: versao antiga removida; enviando o PKG novo ao DPI.");
+        sceKernelSleep(3);
+      }
+    }
+    if (rc != 0) goto done;
+  }
+  rc = install_pkg(j->btn.url, j->btn.name, j->btn.content_id, j->btn.type, j->btn.size, err, sizeof(err));
+done:
   pthread_mutex_lock(&res_mutex);
   res_code = rc;
   snprintf(res_err, sizeof(res_err), "%s", err);
