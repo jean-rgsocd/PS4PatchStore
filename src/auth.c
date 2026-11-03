@@ -337,6 +337,31 @@ static void *login_thread(void *arg) {
   return NULL;
 }
 
+static void *register_thread(void *arg) {
+  LoginJob *j = (LoginJob *)arg;
+  char body[600], err[200] = "", token[300] = "";
+  char *resp = NULL;
+  int st = 0;
+  long exp = 0;
+
+  if (auth_build_login_body(j->user, j->pass, body, sizeof(body)) != 0) {
+    post_event(AUTH_EV_REGISTER_FAIL, "Usuário ou senha longos demais.", NULL, NULL);
+  } else if (http_do(1, "/register", body, NULL, &st, &resp, err, sizeof(err)) != 0) {
+    post_event(AUTH_EV_REGISTER_FAIL, err, NULL, NULL);
+  } else {
+    if (auth_parse_login(st, resp, token, sizeof(token), &exp, err, sizeof(err)) != 0) {   /* "OK\ncadastrado" */
+      post_event(AUTH_EV_REGISTER_FAIL, err, NULL, NULL);
+    } else {
+      install_log("Cadastro enviado (aguardando ativacao).");
+      post_event(AUTH_EV_REGISTER_OK, NULL, j->user, NULL);
+    }
+    free(resp);
+  }
+  memset(j, 0, sizeof(*j));
+  free(j);
+  return NULL;
+}
+
 static int spawn(void *(*fn)(void *), void *arg) {
   pthread_t t;
   pthread_attr_t at;
@@ -378,6 +403,22 @@ void auth_start_login(const char *user, const char *pass) {
   if (spawn(login_thread, j) != 0) {
     free(j);
     post_event(AUTH_EV_LOGIN_FAIL, "Não foi possível iniciar a rede.", NULL, NULL);
+  }
+}
+
+void auth_start_register(const char *user, const char *pass) {
+  if (auth_server_configured() != 0) {
+    post_event(AUTH_EV_REGISTER_FAIL, "Servidor não configurado (arquivo server.url).", NULL, NULL);
+    return;
+  }
+  if (!begin()) return;
+  LoginJob *j = (LoginJob *)calloc(1, sizeof(*j));
+  if (!j) { post_event(AUTH_EV_REGISTER_FAIL, "Sem memória.", NULL, NULL); return; }
+  snprintf(j->user, sizeof(j->user), "%s", user);
+  snprintf(j->pass, sizeof(j->pass), "%s", pass);
+  if (spawn(register_thread, j) != 0) {
+    free(j);
+    post_event(AUTH_EV_REGISTER_FAIL, "Não foi possível iniciar a rede.", NULL, NULL);
   }
 }
 
