@@ -1,4 +1,3 @@
-
 #!/usr/bin/env bash
 # Uso: OO_PS4_TOOLCHAIN=/caminho/toolchain bash build.sh
 # Gera um unico pacote em out/native/: o app nativo JK Patchs.
@@ -118,8 +117,6 @@ cp image0/directpayload.bin native0/directpayload.bin
 # O catalogo NAO vai dentro do pacote: o app baixa do servidor depois do login.
 # Este arquivo e o que voce cola em "Catalogo do app" na pagina /admin do servidor.
 python3 tools/make_catalog.py image0/index.html out/catalogo_para_servidor.dat
-# Videos do app: baixa cada MP4 do R2 e converte para .jkv (o player do app toca .jkv). Suba out/videos/*.jkv no R2, pasta JKV/.
-python3 tools/convert_videos.py image0/index.html out/videos || echo "AVISO: conversao de videos falhou (veja acima)"
 # Endereco do servidor de login (https://...workers.dev). Editado em server.url na raiz do projeto.
 if [ -f server.url ]; then cp server.url native0/server.url; else echo "AVISO: server.url ausente; o app mostrara 'servidor nao configurado'"; fi
 cp assets/fonts/* native0/assets/fonts/
