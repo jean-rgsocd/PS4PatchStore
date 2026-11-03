@@ -18,23 +18,13 @@ import concurrent.futures as cf
 
 def conv(u):
     name = urllib.parse.unquote(u.rsplit("/", 1)[-1])[:-4] + ".jkv"
-    tmp = os.path.join(outdir, "_tmp_" + name + ".mp4")
     try:
-        req = urllib.request.Request(u, headers={"User-Agent": "Mozilla/5.0"})
-        with urllib.request.urlopen(req, timeout=120) as r, open(tmp, "wb") as f:
-            while True:
-                b = r.read(1 << 20)
-                if not b:
-                    break
-                f.write(b)
-        subprocess.run([sys.executable, os.path.join(here, "mp4_to_jkv.py"), tmp, os.path.join(outdir, name)], check=True)
+        # O ffmpeg le o link direto e so le o trecho que vira .jkv (nao baixa o MP4 inteiro quando o servidor permite).
+        subprocess.run([sys.executable, os.path.join(here, "mp4_to_jkv.py"), u, os.path.join(outdir, name)], check=True)
         return 1
     except Exception as e:  # noqa: BLE001
         print("AVISO: nao converti %s (%s)" % (u, e), flush=True)
         return 0
-    finally:
-        if os.path.exists(tmp):
-            os.remove(tmp)
 
 
 with cf.ThreadPoolExecutor(max_workers=3) as ex:
