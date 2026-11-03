@@ -6,7 +6,7 @@ jobs:
     steps:
       - uses: actions/checkout@v4
       - name: Dependencias
-        run: sudo apt-get update && sudo apt-get install -y clang lld jq python3 unzip libicu-dev
+        run: sudo apt-get update && sudo apt-get install -y clang lld jq python3 unzip libicu-dev ffmpeg
       - name: Baixar OpenOrbis Toolchain
         env:
           GH_TOKEN: ${{ github.token }}
@@ -66,6 +66,7 @@ jobs:
           path: |
             out/native/*.pkg
             out/patch/*.pkg
+            out/videos/*.jkv
             out/catalogo_para_servidor.dat
             native0/eboot.bin
             build.log
