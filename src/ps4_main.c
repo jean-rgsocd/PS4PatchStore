@@ -18,6 +18,7 @@
 #include <orbis/UserService.h>
 #include <orbis/SystemService.h>
 #include <orbis/AudioOut.h>
+#include <orbis/Sysmodule.h>
 
 #include "gfx.h"
 #include "ui.h"
@@ -224,17 +225,41 @@ static int update_check_pkg(const CatButton *b, char *err, int cap) {
 static int self_uninstall(char *err, int cap) {
   typedef int32_t (*FnVoid)(void);
   typedef int32_t (*FnTitle)(const char *);
-  uint32_t h = sceKernelLoadStartModule("/system/common/lib/libSceAppInstUtil.sprx", 0, NULL, 0, NULL, NULL);
-  char m[120];
-  if ((int32_t)h < 0) {
-    snprintf(m, sizeof(m), "update: LoadStartModule AppInstUtil falhou (0x%x)", (unsigned)h);
+  char m[160];
+  int32_t h = -1;
+  /* 1) pelo sysmodule interno (a forma que o sistema usa); 2) acha o modulo na lista; 3) caminhos diretos. */
+  {
+    uint32_t sr = sceSysmoduleLoadModuleInternal(ORBIS_SYSMODULE_INTERNAL_APP_INST_UTIL);
+    snprintf(m, sizeof(m), "update: sysmodule AppInstUtil rc=0x%x", (unsigned)sr);
     install_log(m);
-    snprintf(err, (size_t)cap, "Não foi possível acessar o instalador do sistema (0x%x).", (unsigned)h);
+    OrbisKernelModule list[256];
+    size_t cnt = 0;
+    if (sceKernelGetModuleList(list, 256, &cnt) == 0) {
+      for (size_t i = 0; i < cnt && i < 256; i++) {
+        OrbisKernelModuleInfo mi;
+        memset(&mi, 0, sizeof(mi));
+        mi.size = sizeof(mi);
+        if (sceKernelGetModuleInfo(list[i], &mi) == 0 && strstr(mi.name, "AppInstUtil")) { h = (int32_t)list[i]; break; }
+      }
+    }
+  }
+  if (h < 0) {
+    static const char *paths[] = { "libSceAppInstUtil.sprx", "/system/common/lib/libSceAppInstUtil.sprx",
+                                   "/system/priv/lib/libSceAppInstUtil.sprx", "/system/common/lib/libSceAppInstUtil.so" };
+    for (int i = 0; i < 4 && h < 0; i++) {
+      uint32_t r = sceKernelLoadStartModule(paths[i], 0, NULL, 0, NULL, NULL);
+      snprintf(m, sizeof(m), "update: LoadStartModule(%s) = 0x%x", paths[i], (unsigned)r);
+      install_log(m);
+      if ((int32_t)r >= 0) h = (int32_t)r;
+    }
+  }
+  if (h < 0) {
+    snprintf(err, (size_t)cap, "Não foi possível acessar o instalador do sistema para apagar o app.");
     return -1;
   }
   void *fi = NULL, *fu = NULL;
-  int r1 = sceKernelDlsym((int32_t)h, "sceAppInstUtilInitialize", &fi);
-  int r2 = sceKernelDlsym((int32_t)h, "sceAppInstUtilAppUnInstall", &fu);
+  int r1 = sceKernelDlsym(h, "sceAppInstUtilInitialize", &fi);
+  int r2 = sceKernelDlsym(h, "sceAppInstUtilAppUnInstall", &fu);
   if (r1 < 0 || r2 < 0 || !fi || !fu) {
     snprintf(m, sizeof(m), "update: dlsym falhou (init 0x%x, uninstall 0x%x)", (unsigned)r1, (unsigned)r2);
     install_log(m);
