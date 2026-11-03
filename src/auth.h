@@ -7,7 +7,9 @@ enum { AUTH_EV_NONE = 0,
        AUTH_EV_NEED_LOGIN,     /* nao ha sessao salva (ou expirou): mostrar a tela de login */
        AUTH_EV_LOGIN_FAIL,     /* msg = motivo */
        AUTH_EV_CATALOG,        /* text = catalogo (malloc; quem recebe libera) ; user = usuario */
-       AUTH_EV_CATALOG_FAIL }; /* msg = motivo (sem rede, etc.); a sessao salva e mantida */
+       AUTH_EV_CATALOG_FAIL,   /* msg = motivo (sem rede, etc.); a sessao salva e mantida */
+       AUTH_EV_REGISTER_OK,    /* cadastro enviado; a conta fica pendente ate o admin ativar */
+       AUTH_EV_REGISTER_FAIL };/* msg = motivo (usuario ja existe, etc.) */
 
 typedef struct {
   int type;
@@ -21,6 +23,7 @@ int auth_server_configured(void);
 
 void auth_start_restore(void);                                  /* tenta a sessao salva e baixa o catalogo */
 void auth_start_login(const char *user, const char *pass);      /* login + catalogo */
+void auth_start_register(const char *user, const char *pass);   /* cadastro (conta nasce pendente) */
 void auth_logout(void);                                         /* apaga a sessao salva */
 int  auth_poll(AuthEvent *ev);                                  /* 1 se havia evento (preenche ev) */
 
