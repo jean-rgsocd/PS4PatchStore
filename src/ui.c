@@ -55,6 +55,7 @@ struct UI {
   char loading_msg[120];
   char username[64];
   Image *s;
+  Image *logo;                         /* selo JK Patchs do cabecalho (assets/images/logo_jk.png) */
   const Catalog *cat;
   UiInstallFn fn;
   void *user;
@@ -181,6 +182,12 @@ UI *ui_create(Image *surface, const Catalog *cat, const char *assets_dir, UiInst
   ui->fn = fn;
   ui->user = user;
   snprintf(ui->assets, sizeof(ui->assets), "%s", assets_dir);
+  {
+    char lp[300];
+    snprintf(lp, sizeof(lp), "%s/images/logo_jk.png", assets_dir);
+    Image *raw = img_load(lp);
+    if (raw) { ui->logo = img_scale(raw, 88, 88); img_free(raw); }
+  }
 
   char path[320];
   snprintf(path, sizeof(path), "%s/fonts/DejaVuSans.ttf", assets_dir);
@@ -531,10 +538,16 @@ static void draw_topbar(UI *ui) {
   gfx_fill(s, 0, 0, W, 110, C_BG, 120);
   gfx_fill(s, 0, 109, W, 1, C_WHITE, 26);
 
-  gfx_rrect(s, MARGIN, 28, 84, 54, 12, C_ACCENT, 255, 3);
-  text_draw_in(s, ui->fb, 28, MARGIN, 84, 64, "JK", C_ACCENT, 255, 0, 1);
-  int x = MARGIN + 84 + 22;
-  T(ui, 1, 28, x, 66, "PATCHS", C_TEXT, 255, 3);
+  int x;
+  if (ui->logo) {
+    gfx_blit(s, ui->logo, MARGIN, 11, 0, 255);
+    x = MARGIN + 88 + 20;
+  } else {
+    gfx_rrect(s, MARGIN, 28, 84, 54, 12, C_ACCENT, 255, 3);
+    text_draw_in(s, ui->fb, 28, MARGIN, 84, 64, "JK", C_ACCENT, 255, 0, 1);
+    x = MARGIN + 84 + 22;
+  }
+  T(ui, 1, 28, x, 66, ui->logo ? "JK PATCHS" : "PATCHS", C_TEXT, 255, 3);
 
   char st[96];
   if (ui->mode == MODE_CATALOG) {
