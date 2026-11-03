@@ -120,6 +120,10 @@ def main():
         if video and not video.startswith("https://"):
             print("AVISO: data-video de '%s' precisa comecar com https:// (ignorado)" % g["title"])
             video = ""
+        # O app toca .jkv (gerado de cada MP4 pelo build). Mesmo link, pasta /JKV/ e extensao .jkv.
+        if video.lower().endswith(".mp4"):
+            video = video[:-4] + ".jkv"
+            video = video.replace("/MP4/", "/JKV/")
         lines.append("GAME\t%s\t%s\t%s\t%s\t%s\t%s\t%s" % (
             g["category"], cover, g["tag"], g["kicker"], g["title"], g["desc"], video))
         for b in g["btns"]:
