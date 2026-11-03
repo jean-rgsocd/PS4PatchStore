@@ -37,6 +37,7 @@
 #define BTN_H        84
 #define BTN_GAP      16
 #define BTN_VISIBLE  3
+static int g_bh = BTN_H;                /* altura do botao em uso (menor quando o painel tem 4 itens) */
 #define TOAST_TICKS  360
 #define SPLASH_FADE 140            /* ~2,3 s: o conteudo comeca a sumir */
 #define SPLASH_END  158            /* ~2,6 s no total (60 ticks por segundo) */
@@ -718,10 +719,10 @@ static void draw_button(UI *ui, const CatButton *b, int x, int y, int w, int foc
   Image *s = ui->s;
   int r = 20;
   if (b->base) {
-    gfx_rrect(s, x, y, w, BTN_H, r, C_BASE, 255, 0);
-    gfx_rrect(s, x, y, w, BTN_H, r, C_BASE_EDGE, 255, 2);
+    gfx_rrect(s, x, y, w, g_bh, r, C_BASE, 255, 0);
+    gfx_rrect(s, x, y, w, g_bh, r, C_BASE_EDGE, 255, 2);
   } else {
-    gfx_rrect(s, x, y, w, BTN_H, r, C_ACCENT, 255, 0);
+    gfx_rrect(s, x, y, w, g_bh, r, C_ACCENT, 255, 0);
   }
   uint32_t fg = b->base ? C_WHITE : C_DARKTXT;
   char info[48];
@@ -731,22 +732,22 @@ static void draw_button(UI *ui, const CatButton *b, int x, int y, int w, int foc
   int avail = w - 40 - arrow_w - (iw ? iw + 24 : 0);
   char lab[128];
   text_fit(ui->fb, 27, b->label, avail, lab, sizeof(lab));
-  T(ui, 1, 27, x + 32, y + BTN_H / 2 + 10, lab, fg, 255, 0);
-  if (info[0]) T(ui, 0, 20, x + w - arrow_w - 12 - iw, y + BTN_H / 2 + 7, info, fg, 190, 0);
-  text_draw_in(s, ui->fb, 30, x + w - arrow_w - 4, arrow_w, y + BTN_H / 2 + 11, "\xE2\x86\x93", fg, 255, 0, 1);
-  if (!focused) gfx_rrect(s, x, y, w, BTN_H, r, C_BG, 70, 0);
-  else gfx_rrect(s, x - 8, y - 8, w + 16, BTN_H + 16, r + 8, C_FOCUS, 255, 4);
+  T(ui, 1, 27, x + 32, y + g_bh / 2 + 10, lab, fg, 255, 0);
+  if (info[0]) T(ui, 0, 20, x + w - arrow_w - 12 - iw, y + g_bh / 2 + 7, info, fg, 190, 0);
+  text_draw_in(s, ui->fb, 30, x + w - arrow_w - 4, arrow_w, y + g_bh / 2 + 11, "\xE2\x86\x93", fg, 255, 0, 1);
+  if (!focused) gfx_rrect(s, x, y, w, g_bh, r, C_BG, 70, 0);
+  else gfx_rrect(s, x - 8, y - 8, w + 16, g_bh + 16, r + 8, C_FOCUS, 255, 4);
 }
 
 static void draw_video_button(UI *ui, int x, int y, int w, int focused) {
   Image *s = ui->s;
   int r = 20;
-  gfx_rrect(s, x, y, w, BTN_H, r, C_PANEL2, 255, 0);
-  gfx_rrect(s, x, y, w, BTN_H, r, C_WHITE, 40, 2);
-  T(ui, 1, 27, x + 32, y + BTN_H / 2 + 10, "VER VÍDEO DO PATCH", C_TEXT, 255, 0);
-  T(ui, 0, 20, x + w - 56 - 12 - TW(ui, 0, 20, "Assistir", 0), y + BTN_H / 2 + 7, "Assistir", C_MUTED, 255, 0);
-  text_draw_in(s, ui->fb, 30, x + w - 60, 56, y + BTN_H / 2 + 11, "\xE2\x96\xB6", C_ACCENT, 255, 0, 1);
-  if (focused) gfx_rrect(s, x - 8, y - 8, w + 16, BTN_H + 16, r + 8, C_FOCUS, 255, 4);
+  gfx_rrect(s, x, y, w, g_bh, r, C_PANEL2, 255, 0);
+  gfx_rrect(s, x, y, w, g_bh, r, C_WHITE, 40, 2);
+  T(ui, 1, 27, x + 32, y + g_bh / 2 + 10, "VER VÍDEO DO PATCH", C_TEXT, 255, 0);
+  T(ui, 0, 20, x + w - 56 - 12 - TW(ui, 0, 20, "Assistir", 0), y + g_bh / 2 + 7, "Assistir", C_MUTED, 255, 0);
+  text_draw_in(s, ui->fb, 30, x + w - 60, 56, y + g_bh / 2 + 11, "\xE2\x96\xB6", C_ACCENT, 255, 0, 1);
+  if (focused) gfx_rrect(s, x - 8, y - 8, w + 16, g_bh + 16, r + 8, C_FOCUS, 255, 4);
 }
 
 static void draw_panel(UI *ui) {
@@ -763,9 +764,13 @@ static void draw_panel(UI *ui) {
   int desc_y = PANEL_Y + 128 + (tl - 1) * 56 + 54;
 
   int items = panel_items(g);
-  int nb = items < BTN_VISIBLE ? items : BTN_VISIBLE;
+  /* ate 4 itens (ex.: FC 27 = 3 downloads + video) cabem todos, com botoes um pouco mais baixos */
+  int vis = items <= 4 ? 4 : BTN_VISIBLE;
+  int gap = items <= 4 ? 12 : BTN_GAP;
+  g_bh = items <= 4 ? 62 : BTN_H;
+  int nb = items < vis ? items : vis;
   int bottom = PANEL_Y + PANEL_H - 44;
-  int btn_top = bottom - (nb > 0 ? nb * BTN_H + (nb - 1) * BTN_GAP : 0);
+  int btn_top = bottom - (nb > 0 ? nb * g_bh + (nb - 1) * gap : 0);
   int lines = (btn_top - 28 - desc_y) / 36 + 1;
   if (lines < 1) lines = 1;
   if (lines > 5) lines = 5;
@@ -777,10 +782,10 @@ static void draw_panel(UI *ui) {
   }
   /* janela de botoes que acompanha o foco */
   int first = 0;
-  if (ui->focus >= BTN_VISIBLE) first = ui->focus - BTN_VISIBLE + 1;
+  if (ui->focus >= vis) first = ui->focus - vis + 1;
   for (int i = 0; i < nb; i++) {
     int bi = first + i;
-    int y = btn_top + i * (BTN_H + BTN_GAP);
+    int y = btn_top + i * (g_bh + gap);
     if (bi < g->nbtn) draw_button(ui, &g->btn[bi], px, y, iw, bi == ui->focus);
     else draw_video_button(ui, px, y, iw, bi == ui->focus);
   }
