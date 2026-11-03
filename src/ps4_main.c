@@ -311,6 +311,11 @@ static void on_login(const char *user, const char *pass, void *ud) {
   auth_start_login(user, pass);
 }
 
+static void on_register(const char *user, const char *pass, void *ud) {
+  (void)ud;
+  auth_start_register(user, pass);
+}
+
 static void on_logout(void *ud) {
   (void)ud;
   auth_logout();
@@ -325,7 +330,11 @@ static void check_auth(UI *ui) {
       ui_show_login(ui, ev.msg);
       break;
     case AUTH_EV_LOGIN_FAIL:
+    case AUTH_EV_REGISTER_FAIL:
       ui_show_login(ui, ev.msg);
+      break;
+    case AUTH_EV_REGISTER_OK:
+      ui_show_register_done(ui, ev.user);
       break;
     case AUTH_EV_CATALOG:
       if (catalog_parse(&cat, ev.text) == 0) {
@@ -376,6 +385,7 @@ int main(void) {
   UI *ui = ui_create(screen, NULL, ASSETS, on_install, NULL);
   if (!ui) { install_log("ERRO: ui_create falhou"); return 1; }
   ui_set_auth_handlers(ui, on_login, on_logout, NULL);
+  ui_set_register_handler(ui, on_register);
   ui_set_open_handler(ui, on_open_url, NULL);
   ui_show_loading(ui, "Conectando ao servidor...");
   install_log("UI pronta; verificando sessao salva.");
