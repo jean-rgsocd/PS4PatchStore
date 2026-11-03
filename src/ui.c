@@ -38,6 +38,9 @@
 #define BTN_GAP      16
 #define BTN_VISIBLE  3
 #define TOAST_TICKS  360
+#define SPLASH_FADE 200            /* ~3,3 s: comeca a sumir revelando a tela de baixo */
+#define SPLASH_END  236
+#define SPLASH_SKIP_FROM 45        /* depois de ~0,75 s qualquer tecla pula */
 
 enum { MODE_LOADING = 0, MODE_LOGIN, MODE_CATALOG };
 #define FLD_MAX 64
@@ -56,6 +59,8 @@ struct UI {
   char username[64];
   Image *s;
   Image *logo;                         /* selo JK Patchs do cabecalho (assets/images/logo_jk.png) */
+  Image *logo_full;                    /* original (350x350) para a abertura e a tela de login */
+  int splash;                          /* ticks da animacao de abertura; >= SPLASH_END = terminou */
   const Catalog *cat;
   UiInstallFn fn;
   void *user;
@@ -186,7 +191,7 @@ UI *ui_create(Image *surface, const Catalog *cat, const char *assets_dir, UiInst
     char lp[300];
     snprintf(lp, sizeof(lp), "%s/images/logo_jk.png", assets_dir);
     Image *raw = img_load(lp);
-    if (raw) { ui->logo = img_scale(raw, 88, 88); img_free(raw); }
+    if (raw) { ui->logo = img_scale(raw, 88, 88); ui->logo_full = raw; }
   }
 
   char path[320];
@@ -459,6 +464,10 @@ static void vid_tick(UI *ui) {
 }
 
 void ui_key(UI *ui, int key) {
+  if (ui->splash < SPLASH_END) {                                  /* durante a abertura as teclas so pulam */
+    if (ui->splash >= SPLASH_SKIP_FROM && ui->splash < SPLASH_FADE) ui->splash = SPLASH_FADE;
+    return;
+  }
   if (ui->mode == MODE_LOGIN) { login_key(ui, key); return; }
   if (ui->mode != MODE_CATALOG) return;
   if (ui->vid_mode == 1 || (ui->vid_mode == 2 && (key == UI_TRIANGLE || key == UI_OPTIONS))) { vid_key(ui, key); return; }
@@ -509,6 +518,7 @@ void ui_key(UI *ui, int key) {
 
 void ui_tick(UI *ui) {
   ui->frame++;
+  if (ui->splash < SPLASH_END) { ui->splash++; ui->dirty = 1; }
   if (ui->vid_mode) vid_tick(ui);
   if ((ui->busy || ui->mode == MODE_LOADING) && ui->frame % 6 == 0) ui->dirty = 1;   /* spinner */
   if (ui->mode == MODE_LOGIN && ui->frame % 30 == 0) ui->dirty = 1;                  /* cursor piscando */
@@ -860,6 +870,10 @@ static void draw_login(UI *ui) {
   gfx_rrect(s, LG_X, LG_Y, LG_W, LG_H, 28, C_PANEL, 245, 0);
   gfx_rrect(s, LG_X, LG_Y, LG_W, LG_H, 28, C_WHITE, 26, 2);
   int px = LG_X + 45;
+  if (ui->logo) {
+    Image *lg = ui->logo_full ? img_scale(ui->logo_full, 116, 116) : NULL;
+    if (lg) { gfx_blit(s, lg, LG_X + LG_W - 45 - 116, LG_Y + 26, 0, 255); img_free(lg); }
+  }
   T(ui, 1, 22, px, LG_Y + 62, "ACESSO RESTRITO", C_ACCENT, 255, 4);
   T(ui, 1, 46, px, LG_Y + 122, "Entrar", C_TEXT, 255, 0);
 
@@ -989,6 +1003,61 @@ static void draw_video_overlay(UI *ui) {
   }
 }
 
+
+static void draw_scene(UI *ui);
+/* ------------------------------------------------------------------ abertura animada */
+
+static int clampi(int v, int lo, int hi) { return v < lo ? lo : (v > hi ? hi : v); }
+/* ease-out cubico, entrada/saida 0..1000 */
+static int ease(int p) { int q = 1000 - clampi(p, 0, 1000); return 1000 - (int)((long)q * q / 1000 * q / 1000); }
+
+static void draw_splash_content(UI *ui, int t, int amul) {      /* amul: 0..255 (some no fim) */
+  Image *s = ui->s;
+  int cx = W / 2, cy = H / 2 - 60;
+  int e_logo = ease((t - 6) * 1000 / 60), e_txt = ease((t - 56) * 1000 / 45), e_bar = ease((t - 30) * 1000 / 120);
+  int R = 170;
+  /* brilho suave atras da logo (cresce junto com a entrada) */
+  for (int i = 4; i >= 1; i--) {
+    int rr = R + 20 * i + 30 * e_logo / 1000;
+    gfx_circle(s, cx, cy, rr, C_ACCENT, (6 * e_logo / 1000) * amul / 255);
+  }
+  /* pulso lento no anel externo */
+  int ph = (t * 3) % 240; ph = ph > 120 ? 240 - ph : ph;
+  gfx_ring_arc(s, cx, cy, R + 14, 3, C_ACCENT, ((50 + ph) * e_logo / 1000) * amul / 255);
+  if (ui->logo_full) {
+    int sz = (R * 2) * (820 + 180 * e_logo / 1000) / 1000;
+    Image *sc = img_scale(ui->logo_full, sz, sz);
+    if (sc) { gfx_blit(s, sc, cx - sz / 2, cy - sz / 2, 0, (255 * e_logo / 1000) * amul / 255); img_free(sc); }
+  } else {
+    text_draw_in(s, ui->fb, 96, 0, W, cy + 30, "JK", C_ACCENT, (255 * e_logo / 1000) * amul / 255, 4, 1);
+  }
+  const char *msg = "Os melhores Patchs de PS4";
+  int a = (255 * e_txt / 1000) * amul / 255;
+  int slide = 18 - 18 * e_txt / 1000;
+  text_draw_in(s, ui->fb, 44, 0, W, cy + R + 100 + slide, msg, C_TEXT, a, 2, 1);
+  /* barrinha de progresso fina embaixo do texto */
+  int bw = 360, bx = cx - bw / 2, by = cy + R + 140;
+  gfx_rrect(s, bx, by, bw, 5, 2, C_WHITE, (36 * e_txt / 1000) * amul / 255, 0);
+  int fw = bw * e_bar / 1000;
+  if (fw > 4) gfx_rrect(s, bx, by, fw, 5, 2, C_ACCENT, a, 0);
+}
+
+static void draw_splash(UI *ui) {
+  int t = ui->splash;
+  if (t < SPLASH_FADE) {
+    if (ui->bg) gfx_blit_surface(ui->s, ui->bg); else gfx_fill(ui->s, 0, 0, W, H, C_BG, 255);
+    gfx_fill(ui->s, 0, 0, W, H, C_BG, 120);
+    draw_splash_content(ui, t, 255);
+  } else {
+    int k = clampi((SPLASH_END - t) * 255 / (SPLASH_END - SPLASH_FADE), 0, 255);   /* 255 -> 0 */
+    draw_scene(ui);                                  /* a tela de verdade aparece por baixo */
+    gfx_fill(ui->s, 0, 0, W, H, C_BG, k);
+    draw_splash_content(ui, t, k);
+  }
+}
+
+void ui_skip_splash(UI *ui) { ui->splash = SPLASH_END; ui->dirty = 1; }
+
 static void draw_scene(UI *ui) {
   if (ui->bg) gfx_blit_surface(ui->s, ui->bg);
   else gfx_fill(ui->s, 0, 0, W, H, C_BG, 255);
@@ -1008,6 +1077,7 @@ static void draw_scene(UI *ui) {
 }
 
 void ui_draw(UI *ui) {
+  if (ui->splash < SPLASH_END) { draw_splash(ui); return; }
   if (!(ui->vid_mode && ui->mode == MODE_CATALOG)) { draw_scene(ui); return; }
   /* video ativo: o catalogo fica guardado em 'base' e so a janela do video e redesenhada a cada quadro */
   if (!ui->base) ui->base = img_new(W, H);

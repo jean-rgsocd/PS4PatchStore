@@ -27,6 +27,7 @@ void ui_show_login(UI *ui, const char *msg);          /* msg: erro/aviso (pode s
 void ui_set_catalog(UI *ui, const Catalog *cat);      /* o Catalog precisa continuar valido enquanto a UI o usa */
 void ui_set_user(UI *ui, const char *name);
 void ui_key(UI *ui, int key);
+void ui_skip_splash(UI *ui);          /* pula a abertura animada (usado pelo simulador) */
 void ui_tick(UI *ui);                 /* chamar ~60x por segundo */
 int  ui_take_dirty(UI *ui);           /* 1 se precisa redesenhar (e zera a flag) */
 void ui_draw(UI *ui);
