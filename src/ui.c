@@ -3,6 +3,8 @@
 #include "vplayer.h"
 
 #include <stdio.h>
+#include <pthread.h>
+#include <sys/stat.h>
 #include <stdlib.h>
 #include <string.h>
 
@@ -55,6 +57,12 @@ struct UI {
   UiLogoutFn logout_fn;
   UiOpenUrlFn open_fn;
   void *open_ud;
+  UiCoverFetchFn cover_fetch;          /* baixa capas remotas (https) */
+  void *cover_ud;
+  char cover_dir[200];
+  int cover_gen;                       /* muda a cada catalogo novo: downloads antigos sao ignorados */
+  volatile int cover_pending;          /* ha capa baixada esperando ser carregada */
+  int cover_ready[CAT_MAX_GAMES];
   void *auth_ud;
   char field[2][FLD_MAX + 1];          /* 0 = usuario, 1 = senha */
   int cur_field, kr, kc, caps, show_pass;
@@ -170,19 +178,121 @@ static Image *build_bg(UI *ui) {
   return bg;
 }
 
-static void load_thumbs(UI *ui) {
-  char path[320];
-  for (int i = 0; i < CAT_MAX_GAMES; i++) { if (ui->thumb[i]) { img_free(ui->thumb[i]); ui->thumb[i] = NULL; } }
-  if (!ui->cat) return;
-  for (int i = 0; i < ui->cat->ngame; i++) {
-    if (!ui->cat->game[i].cover[0]) continue;
-    snprintf(path, sizeof(path), "%s/images/%s", ui->assets, ui->cat->game[i].cover);
-    Image *raw = img_load(path);
-    if (raw) {
-      ui->thumb[i] = img_scale_cover(raw, COVER_W, COVER_H);
-      img_free(raw);
+/* ---- capas remotas: o app guarda a imagem baixada em cover_dir (nome = hash do link) e a reaproveita nas proximas aberturas.
+ * Para trocar uma capa: suba a imagem NOVA no R2 com outro nome (ou ...png?v=2) e troque o link no catalogo. */
+static pthread_mutex_t cover_mu = PTHREAD_MUTEX_INITIALIZER;
+typedef struct { UI *ui; int gen, n; int idx[CAT_MAX_GAMES]; char url[CAT_MAX_GAMES][256]; char dest[CAT_MAX_GAMES][320]; } CoverJobs;
+
+static int is_remote_cover(const char *c) { return !strncmp(c, "https://", 8); }
+
+static void cover_cache_path(const UI *ui, const char *url, char *out, size_t cap) {
+  unsigned h = 2166136261u;
+  for (const char *p = url; *p; p++) { h ^= (unsigned char)*p; h *= 16777619u; }
+  snprintf(out, cap, "%s/%08x.img", ui->cover_dir, h);
+}
+
+static void *cover_worker(void *arg) {
+  CoverJobs *J = (CoverJobs *)arg;
+  UI *ui = J->ui;
+  for (int k = 0; k < J->n; k++) {
+    pthread_mutex_lock(&cover_mu); int cur = ui->cover_gen; pthread_mutex_unlock(&cover_mu);
+    if (cur != J->gen) break;                                   /* catalogo mudou: este lote nao serve mais */
+    char tmp[340];
+    snprintf(tmp, sizeof(tmp), "%s.tmp", J->dest[k]);
+    if (ui->cover_fetch(J->url[k], tmp, ui->cover_ud) == 0 && rename(tmp, J->dest[k]) == 0) {
+      pthread_mutex_lock(&cover_mu);
+      if (ui->cover_gen == J->gen) { ui->cover_ready[J->idx[k]] = 1; ui->cover_pending = 1; }
+      pthread_mutex_unlock(&cover_mu);
+    } else {
+      remove(tmp);
     }
   }
+  free(J);
+  return NULL;
+}
+
+static void cover_start(UI *ui, CoverJobs *J) {
+  pthread_t t;
+  pthread_attr_t at;
+  pthread_attr_init(&at);
+  pthread_attr_setstacksize(&at, 512 * 1024);
+  pthread_attr_setdetachstate(&at, PTHREAD_CREATE_DETACHED);
+  int r = pthread_create(&t, &at, cover_worker, J);
+  pthread_attr_destroy(&at);
+  if (r != 0) free(J);
+  (void)ui;
+}
+
+static Image *thumb_from_file(const char *path) {
+  Image *raw = img_load(path);
+  if (!raw) return NULL;
+  Image *t = img_scale_cover(raw, COVER_W, COVER_H);
+  img_free(raw);
+  return t;
+}
+
+static void load_thumbs(UI *ui) {
+  char path[320];
+  pthread_mutex_lock(&cover_mu);
+  ui->cover_gen++;
+  for (int i = 0; i < CAT_MAX_GAMES; i++) ui->cover_ready[i] = 0;
+  ui->cover_pending = 0;
+  int gen = ui->cover_gen;
+  pthread_mutex_unlock(&cover_mu);
+  for (int i = 0; i < CAT_MAX_GAMES; i++) { if (ui->thumb[i]) { img_free(ui->thumb[i]); ui->thumb[i] = NULL; } }
+  if (!ui->cat) return;
+  CoverJobs *J = NULL;
+  for (int i = 0; i < ui->cat->ngame; i++) {
+    const char *cv = ui->cat->game[i].cover;
+    if (!cv[0]) continue;
+    if (is_remote_cover(cv)) {
+      if (!ui->cover_fetch || !ui->cover_dir[0]) continue;
+      cover_cache_path(ui, cv, path, sizeof(path));
+      ui->thumb[i] = thumb_from_file(path);                     /* ja baixada antes? */
+      if (!ui->thumb[i]) {
+        const char *base = strrchr(cv, '/'); base = base ? base + 1 : cv;       /* capa de reserva dentro do app, se tiver */
+        char nm[96]; snprintf(nm, sizeof(nm), "%s", base);
+        char *q = strchr(nm, '?'); if (q) *q = 0;
+        char bp[512]; snprintf(bp, sizeof(bp), "%s/images/%s", ui->assets, nm);
+        ui->thumb[i] = thumb_from_file(bp);
+        if (!J) { J = (CoverJobs *)calloc(1, sizeof(CoverJobs)); if (J) { J->ui = ui; J->gen = gen; } }
+        if (J && J->n < CAT_MAX_GAMES) {
+          snprintf(J->url[J->n], sizeof(J->url[0]), "%s", cv);
+          snprintf(J->dest[J->n], sizeof(J->dest[0]), "%s", path);
+          J->idx[J->n++] = i;
+        }
+      }
+      continue;
+    }
+    snprintf(path, sizeof(path), "%s/images/%s", ui->assets, cv);
+    ui->thumb[i] = thumb_from_file(path);
+  }
+  if (J) { if (J->n > 0) cover_start(ui, J); else free(J); }
+}
+
+/* chamado do ui_tick: carrega as capas que terminaram de baixar */
+static void cover_poll(UI *ui) {
+  if (!ui->cover_pending) return;
+  int ready[CAT_MAX_GAMES];
+  pthread_mutex_lock(&cover_mu);
+  memcpy(ready, ui->cover_ready, sizeof(ready));
+  memset(ui->cover_ready, 0, sizeof(ui->cover_ready));
+  ui->cover_pending = 0;
+  pthread_mutex_unlock(&cover_mu);
+  for (int i = 0; i < CAT_MAX_GAMES && ui->cat; i++) {
+    if (!ready[i] || i >= ui->cat->ngame) continue;
+    char path[320];
+    cover_cache_path(ui, ui->cat->game[i].cover, path, sizeof(path));
+    Image *t = thumb_from_file(path);
+    if (t) { if (ui->thumb[i]) img_free(ui->thumb[i]); ui->thumb[i] = t; ui->dirty = 1; }
+    else remove(path);                                          /* arquivo ruim: apaga para tentar de novo na proxima abertura */
+  }
+}
+
+void ui_set_cover_fetcher(UI *ui, UiCoverFetchFn fn, const char *dir, void *ud) {
+  ui->cover_fetch = fn; ui->cover_ud = ud;
+  snprintf(ui->cover_dir, sizeof(ui->cover_dir), "%s", dir ? dir : "");
+  if (ui->cover_dir[0]) mkdir(ui->cover_dir, 0777);
 }
 
 UI *ui_create(Image *surface, const Catalog *cat, const char *assets_dir, UiInstallFn fn, void *user) {
@@ -570,6 +680,7 @@ void ui_tick(UI *ui) {
       if (ui->splash_logo) { img_free(ui->splash_logo); ui->splash_logo = NULL; }
     }
   }
+  cover_poll(ui);
   if (ui->vid_mode) vid_tick(ui);
   if ((ui->busy || ui->mode == MODE_LOADING) && ui->frame % 6 == 0) ui->dirty = 1;   /* spinner */
   if (ui->mode == MODE_LOGIN && ui->frame % 30 == 0) ui->dirty = 1;                  /* cursor piscando */
