@@ -311,6 +311,13 @@ static void on_login(const char *user, const char *pass, void *ud) {
   auth_start_login(user, pass);
 }
 
+static int on_cover_fetch(const char *url, const char *dest, void *ud) {
+  (void)ud;
+  volatile int pct = 0, cancel = 0;
+  char err[160];
+  return auth_download(url, dest, &pct, &cancel, err, sizeof(err));
+}
+
 static void on_register(const char *user, const char *pass, void *ud) {
   (void)ud;
   auth_start_register(user, pass);
@@ -387,6 +394,7 @@ int main(void) {
   ui_set_auth_handlers(ui, on_login, on_logout, NULL);
   ui_set_register_handler(ui, on_register);
   ui_set_open_handler(ui, on_open_url, NULL);
+  ui_set_cover_fetcher(ui, on_cover_fetch, "/data/jkcovers", NULL);
   ui_show_loading(ui, "Conectando ao servidor...");
   install_log("UI pronta; verificando sessao salva.");
   auth_start_restore();
