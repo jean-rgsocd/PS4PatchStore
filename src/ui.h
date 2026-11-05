@@ -17,11 +17,15 @@ typedef void (*UiLoginFn)(const char *user, const char *pass, void *ud);
 typedef void (*UiLogoutFn)(void *ud);
 /* Abre um link https (video) no navegador do PS4. */
 typedef void (*UiOpenUrlFn)(const char *url, void *ud);
+/* Baixa uma imagem https para o arquivo dest (chamado fora da thread principal). Retorna 0 se deu certo. */
+typedef int (*UiCoverFetchFn)(const char *url, const char *dest, void *ud);
 
 /* cat pode ser NULL (o app comeca na tela de login/carregando e recebe o catalogo depois). */
 UI  *ui_create(Image *surface, const Catalog *cat, const char *assets_dir, UiInstallFn fn, void *user);
 void ui_set_auth_handlers(UI *ui, UiLoginFn login, UiLogoutFn logout, void *ud);
 void ui_set_open_handler(UI *ui, UiOpenUrlFn fn, void *ud);
+/* Capas remotas: dir = pasta onde as imagens baixadas ficam guardadas (cache entre aberturas do app). */
+void ui_set_cover_fetcher(UI *ui, UiCoverFetchFn fn, const char *dir, void *ud);
 void ui_set_register_handler(UI *ui, UiLoginFn fn);   /* botao CADASTRAR da tela de login */
 void ui_show_register_done(UI *ui, const char *user);  /* cadastro enviado: mostra o QR Code do WhatsApp do admin */
 void ui_show_loading(UI *ui, const char *msg);
