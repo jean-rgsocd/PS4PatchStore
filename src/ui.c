@@ -53,6 +53,8 @@ struct UI {
   UiLoginFn login_fn;
   UiLoginFn register_fn;
   Image *qr;                           /* QR Code do WhatsApp do admin (assets/images/qr_whatsapp.png) */
+  Image *pix;                          /* QR Code do Pix de apoio (assets/images/qr_pix.png); sem o arquivo, o botao nao aparece */
+  int pix_open;
   char qr_user[64];
   UiLogoutFn logout_fn;
   UiOpenUrlFn open_fn;
@@ -312,6 +314,8 @@ UI *ui_create(Image *surface, const Catalog *cat, const char *assets_dir, UiInst
     if (raw) { ui->logo = img_scale(raw, 88, 88); ui->logo_full = raw; }
     snprintf(lp, sizeof(lp), "%s/images/qr_whatsapp.png", assets_dir);
     ui->qr = img_load(lp);
+    snprintf(lp, sizeof(lp), "%s/images/qr_pix.png", assets_dir);
+    ui->pix = img_load(lp);
   }
 
   char path[320];
@@ -391,6 +395,7 @@ void ui_set_plan(UI *ui, const char *text, int level) {
 
 void ui_set_catalog(UI *ui, const Catalog *cat) {
   ui->cat = cat;
+  ui->pix_open = 0;
   load_thumbs(ui);
   ui->cat_idx = 0;
   ui->scroll = 0;
@@ -633,6 +638,11 @@ void ui_key(UI *ui, int key) {
     return;
   }
   if (ui->mode != MODE_CATALOG) return;
+  if (ui->pix_open) {                                             /* tela de apoio (Pix): qualquer botao de voltar fecha */
+    if (key == UI_BACK || key == UI_OK || key == UI_OPTIONS || key == UI_TRIANGLE) { ui->pix_open = 0; ui->dirty = 1; }
+    return;
+  }
+  if (key == UI_OPTIONS && ui->pix && !ui->vid_mode) { ui->pix_open = 1; ui->dirty = 1; return; }
   if (ui->vid_mode == 1 || (ui->vid_mode == 2 && (key == UI_TRIANGLE || key == UI_OPTIONS))) { vid_key(ui, key); return; }
   if (key == UI_TRIANGLE) {                                     /* sair da conta */
     if (ui->busy) { ui_toast(ui, "Aguarde o pedido atual terminar.", UI_TOAST_INFO); return; }
@@ -742,6 +752,17 @@ static void draw_topbar(UI *ui) {
   int w = TW(ui, 1, 20, st, 3);
   T(ui, 1, 20, W - MARGIN - w, 62, st, C_MUTED, 255, 3);
   gfx_circle(s, W - MARGIN - w - 22, 55, 7, ui->mode == MODE_CATALOG ? C_ACCENT : C_FOCUS, 255);
+
+  if (ui->mode == MODE_CATALOG && ui->pix) {               /* convite de apoio: abre a tela do Pix com OPTIONS */
+    const char *lab = "Apoie o app";
+    int kw = TW(ui, 1, 16, "OPTIONS", 1) + 22, lw = TW(ui, 0, 20, lab, 0);
+    int cw = kw + lw + 40, cx = W - MARGIN - w - 22 - 7 - 44 - cw, cy = 33;
+    gfx_rrect(s, cx, cy, cw, 44, 22, C_PANEL2, 255, 0);
+    gfx_rrect(s, cx, cy, cw, 44, 22, C_ACCENT, 120, 2);
+    gfx_rrect(s, cx + 8, cy + 8, kw, 28, 9, C_BG, 200, 0);
+    text_draw_in(s, ui->fb, 16, cx + 8, kw, cy + 28, "OPTIONS", C_ACCENT, 255, 1, 1);
+    T(ui, 0, 20, cx + 8 + kw + 12, cy + 30, lab, C_TEXT, 255, 0);
+  }
 
   if (ui->mode == MODE_CATALOG && ui->plan[0]) {          /* plano e vencimento, logo abaixo do "ONLINE" */
     uint32_t pc = ui->plan_level == 2 ? C_ERR : ui->plan_level == 1 ? C_FOCUS : C_ACCENT;
@@ -983,6 +1004,8 @@ static void draw_footer(UI *ui) {
     x = hint(ui, x, "OPTIONS", "Entrar");
   } else if (ui->mode == MODE_QR) {
     x = hint(ui, x, "O", "Voltar ao login");
+  } else if (ui->mode == MODE_CATALOG && ui->pix_open) {
+    x = hint(ui, x, "O", "Voltar");
   } else if (ui->mode == MODE_CATALOG) {
     x = hint(ui, x, "\xE2\x97\x80 \xE2\x96\xB6", "Coleções");
     x = hint(ui, x, "\xE2\x96\xB2 \xE2\x96\xBC", "Downloads");
@@ -1118,6 +1141,20 @@ static void draw_qr(UI *ui) {
   }
   text_draw_in(s, ui->fb, 28, LG_X, LG_W, qy + q + 58, "Escaneie com o celular e fale com o admin no WhatsApp", C_TEXT, 255, 0, 1);
   text_draw_in(s, ui->f, 24, LG_X, LG_W, qy + q + 96, "Quando ele ativar sua conta (30 dias), volte e toque em ENTRAR.", C_MUTED, 255, 0, 1);
+}
+
+static void draw_pix(UI *ui) {
+  Image *s = ui->s;
+  gfx_fill(s, 0, 0, W, H, C_BLACK, 190);
+  int cw = 900, ch = 840, cx = (W - cw) / 2, cy = 120;
+  gfx_rrect(s, cx, cy, cw, ch, 28, C_PANEL, 250, 0);
+  gfx_rrect(s, cx, cy, cw, ch, 28, C_WHITE, 26, 2);
+  text_draw_in(s, ui->fb, 44, cx, cw, cy + 82, "Gostou do nosso App?", C_ACCENT, 255, 0, 1);
+  text_draw_in(s, ui->f, 28, cx, cw, cy + 136, "Ajude a mantê-lo atualizado. Colabore com R$ 10!", C_TEXT, 255, 0, 1);
+  int qx = cx + (cw - ui->pix->w) / 2, qy = cy + 170;
+  gfx_rrect(s, qx - 10, qy - 10, ui->pix->w + 20, ui->pix->h + 20, 18, RGB(255, 255, 255), 255, 0);
+  gfx_blit(s, ui->pix, qx, qy, 0, 255);
+  text_draw_in(s, ui->f, 24, cx, cw, qy + ui->pix->h + 58, "Abra o app do seu banco  \xE2\x80\xBA  Pix  \xE2\x80\xBA  Ler QR Code", C_MUTED, 255, 0, 1);
 }
 
 static void draw_loading(UI *ui) {
@@ -1258,6 +1295,7 @@ static void draw_scene(UI *ui) {
     draw_cards(ui);
     draw_panel(ui);
     draw_message_line(ui);
+    if (ui->pix_open && ui->pix) draw_pix(ui);
   } else if (ui->mode == MODE_LOGIN) {
     draw_login(ui);
   } else if (ui->mode == MODE_QR) {
