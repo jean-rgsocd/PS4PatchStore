@@ -48,7 +48,8 @@ class Parser(HTMLParser):
         if tag not in VOID:
             self.depth += 1
         if tag == "img" and "cover" in cls:
-            self.game["cover"] = os.path.basename(a.get("src", ""))
+            src = a.get("src", "").strip()
+            self.game["cover"] = src if re.match(r"https://", src) else os.path.basename(src)   # https = capa baixada pelo app
         elif tag == "span" and "card-tag" in cls:
             self.cap = ["tag", ""]
         elif tag == "p" and "card-kicker" in cls:
@@ -114,7 +115,7 @@ def main():
     total_btn = skipped = 0
     for g in p.games:
         cover = g["cover"]
-        if cover and not os.path.exists(os.path.join(root, cover)):
+        if cover and not cover.startswith("https://") and not os.path.exists(os.path.join(root, cover)):
             print("AVISO: capa nao encontrada: %s (card '%s')" % (cover, g["title"]))
         video = g.get("video", "")
         if video and not video.startswith("https://"):
