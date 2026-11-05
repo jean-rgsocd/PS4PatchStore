@@ -20,7 +20,7 @@ typedef struct {
 
 typedef struct {
   char category[32];
-  char cover[96];          /* nome do arquivo em assets/images */
+  char cover[256];         /* nome do arquivo em assets/images OU link https de uma imagem (baixada e guardada no console) */
   char tag[32];
   char kicker[96];
   char title[96];
