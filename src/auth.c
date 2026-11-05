@@ -31,17 +31,23 @@ static AuthEvent evq;
 
 static char server[256];                     /* sem barra final */
 
-static void post_event(int type, const char *msg, const char *user, char *text) {
+static void post_event2(int type, const char *msg, const char *user, char *text, const char *plan, long plan_now) {
   pthread_mutex_lock(&mu);
   if (have_ev && evq.text) free(evq.text);
   memset(&evq, 0, sizeof(evq));
   evq.type = type;
   if (msg) snprintf(evq.msg, sizeof(evq.msg), "%s", msg);
   if (user) snprintf(evq.user, sizeof(evq.user), "%s", user);
+  if (plan) snprintf(evq.plan, sizeof(evq.plan), "%s", plan);
+  evq.plan_now = plan_now;
   evq.text = text;
   have_ev = 1;
   running = 0;
   pthread_mutex_unlock(&mu);
+}
+
+static void post_event(int type, const char *msg, const char *user, char *text) {
+  post_event2(type, msg, user, text, NULL, 0);
 }
 
 static void logrc(const char *what, int rc) {            /* "o que" falhou + codigo em hexa */
@@ -290,7 +296,19 @@ static int fetch_catalog(const char *user, const char *token, int silent_login_n
     post_event(AUTH_EV_CATALOG_FAIL, m, user, NULL);
     return -1;
   }
-  post_event(AUTH_EV_CATALOG, NULL, user, resp);
+  /* Plano do usuario (para o topo do app). Se falhar, o app so nao mostra o plano. */
+  char plan[48] = "";
+  long now = 0;
+  {
+    char e2[200] = "";
+    char *r2 = NULL;
+    int s2 = 0;
+    if (http_do(0, "/me", NULL, token, &s2, &r2, e2, sizeof(e2)) == 0) {
+      if (auth_parse_me(s2, r2, plan, sizeof(plan), &now) != 0) { plan[0] = 0; now = 0; }
+      free(r2);
+    }
+  }
+  post_event2(AUTH_EV_CATALOG, NULL, user, resp, plan, now);
   return 0;
 }
 

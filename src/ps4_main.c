@@ -25,6 +25,7 @@
 #include "catalog.h"
 #include "install.h"
 #include "auth.h"
+#include "auth_proto.h"
 #include "version.h"
 #include "vplayer.h"
 
@@ -346,6 +347,11 @@ static void check_auth(UI *ui) {
     case AUTH_EV_CATALOG:
       if (catalog_parse(&cat, ev.text) == 0) {
         ui_set_user(ui, ev.user);
+        {
+          char pt[96];
+          int lv = auth_plan_text(ev.plan, ev.plan_now, pt, sizeof(pt));
+          ui_set_plan(ui, lv >= 0 ? pt : "", lv >= 0 ? lv : 0);
+        }
         ui_set_catalog(ui, &cat);
         install_log("Catalogo recebido do servidor.");
         {

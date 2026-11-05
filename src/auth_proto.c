@@ -81,3 +81,80 @@ int auth_parse_login(int http, const char *body, char *token, size_t tcap, long 
   else snprintf(err, ecap, "Resposta inesperada do servidor (HTTP %d).", http);
   return -1;
 }
+
+/* ------------------------------------------------------------------ plano (/me) */
+int auth_parse_me(int http, const char *body, char *plan, size_t pcap, long *now) {
+  if (now) *now = 0;
+  if (plan && pcap) plan[0] = 0;
+  if (http != 200 || !body || strncmp(body, "OK\n", 3) != 0 || !plan || pcap < 2) return -1;
+  const char *p = strchr(body + 3, '\n');                /* pula a linha do usuario */
+  if (!p) return -1;
+  p++;
+  const char *e = strchr(p, '\n');
+  size_t n = e ? (size_t)(e - p) : strlen(p);
+  if (n == 0 || n >= pcap) return -1;
+  for (size_t i = 0; i < n; i++)
+    if (!isalnum((unsigned char)p[i]) && !strchr(":.-", p[i])) return -1;
+  memcpy(plan, p, n);
+  plan[n] = 0;
+  if (e && now) {
+    const char *st = strchr(e + 1, '\n');                /* pula a linha do estado */
+    if (st) *now = atol(st + 1);
+  }
+  return 0;
+}
+
+static long days_from_civil(long y, int m, int d) {
+  y -= m <= 2;
+  long era = (y >= 0 ? y : y - 399) / 400;
+  long yoe = y - era * 400;
+  long doy = (153 * (m > 2 ? m - 3 : m + 9) + 2) / 5 + d - 1;
+  long doe = yoe * 365 + yoe / 4 - yoe / 100 + doy;
+  return era * 146097 + doe - 719468;
+}
+
+static void civil_from_days(long z, int *y, int *m, int *d) {
+  z += 719468;
+  long era = (z >= 0 ? z : z - 146096) / 146097;
+  long doe = z - era * 146097;
+  long yoe = (doe - doe / 1460 + doe / 36524 - doe / 146096) / 365;
+  long yy = yoe + era * 400;
+  long doy = doe - (365 * yoe + yoe / 4 - yoe / 100);
+  long mp = (5 * doy + 2) / 153;
+  *d = (int)(doy - (153 * mp + 2) / 5 + 1);
+  *m = (int)(mp < 10 ? mp + 3 : mp - 9);
+  *y = (int)(yy + (*m <= 2));
+}
+
+int auth_plan_text(const char *plan, long now, char *out, size_t cap) {
+  if (!out || cap == 0) return -1;
+  out[0] = 0;
+  if (!plan || !plan[0]) return -1;
+  if (!strcmp(plan, "ilimitado")) { snprintf(out, cap, "PLANO ILIMITADO"); return 0; }
+
+  int Y, M, D, h = 0, mi = 0, sec = 0;
+  if (sscanf(plan, "%d-%d-%dT%d:%d:%d", &Y, &M, &D, &h, &mi, &sec) < 3) return -1;
+  if (Y < 2020 || Y > 2100 || M < 1 || M > 12 || D < 1 || D > 31) return -1;
+  long exp = days_from_civil(Y, M, D) * 86400L + h * 3600L + mi * 60L + sec;
+
+  long loc = exp - 3 * 3600L;                              /* data no horario de Brasilia (igual ao painel) */
+  int y, m, d;
+  civil_from_days(loc >= 0 ? loc / 86400 : (loc - 86399) / 86400, &y, &m, &d);
+  char date[16];
+  snprintf(date, sizeof(date), "%02d/%02d/%04d", d, m, y);
+
+  if (now < 1700000000L) {                                 /* sem hora confiavel: so a data */
+    snprintf(out, cap, "PLANO ATIVO  \xC2\xB7  EXPIRA %s", date);
+    return 0;
+  }
+  long diff = exp - now;
+  if (diff < 0) { snprintf(out, cap, "PLANO VENCIDO  \xC2\xB7  %s", date); return 2; }
+  long days = (diff + 86399) / 86400;                      /* arredonda para cima, como o painel */
+  if (days <= 5) {
+    if (days <= 0) snprintf(out, cap, "PLANO EXPIRA HOJE  \xC2\xB7  %s", date);
+    else snprintf(out, cap, "PLANO EXPIRA EM %ld %s  \xC2\xB7  %s", days, days == 1 ? "DIA" : "DIAS", date);
+    return 1;
+  }
+  snprintf(out, cap, "PLANO ATIVO  \xC2\xB7  EXPIRA %s", date);
+  return 0;
+}

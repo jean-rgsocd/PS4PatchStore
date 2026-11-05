@@ -32,6 +32,7 @@ void ui_show_loading(UI *ui, const char *msg);
 void ui_show_login(UI *ui, const char *msg);          /* msg: erro/aviso (pode ser NULL); limpa a senha */
 void ui_set_catalog(UI *ui, const Catalog *cat);      /* o Catalog precisa continuar valido enquanto a UI o usa */
 void ui_set_user(UI *ui, const char *name);
+void ui_set_plan(UI *ui, const char *text, int level);   /* linha do plano no topo; text vazio/NULL esconde. level: 0 ok, 1 aviso, 2 vencido */
 void ui_key(UI *ui, int key);
 void ui_skip_splash(UI *ui);          /* pula a abertura animada (usado pelo simulador) */
 void ui_tick(UI *ui);                 /* chamar ~60x por segundo */

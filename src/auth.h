@@ -15,6 +15,8 @@ typedef struct {
   int type;
   char msg[200];
   char user[64];
+  char plan[48];          /* AUTH_EV_CATALOG: plano do usuario ("ilimitado" ou data ISO); vazio se o servidor nao informou */
+  long plan_now;          /* hora do servidor (segundos) quando o plano foi lido; 0 = desconhecida */
   char *text;
 } AuthEvent;
 

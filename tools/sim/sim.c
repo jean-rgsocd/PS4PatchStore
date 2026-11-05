@@ -44,6 +44,8 @@ int main(int argc, char **argv) {
   UI *ui = ui_create(s, &cat, argv[1], on_install, NULL);
   if (!ui) return 1;
 
+  ui_set_user(ui, "jn");
+  ui_set_plan(ui, "PLANO ATIVO  \xC2\xB7  EXPIRA 05/12/2026", 0);
   frame(ui, s, argv[3], "01_inicio");
   ui_key(ui, UI_RIGHT);  frame(ui, s, argv[3], "02_segundo_card");
   ui_key(ui, UI_UP);     frame(ui, s, argv[3], "03_foco_base");
@@ -61,6 +63,8 @@ int main(int argc, char **argv) {
   ui_key(ui, UI_R1);     frame(ui, s, argv[3], "08_categoria_patches");
   ui_key(ui, UI_R1); ui_key(ui, UI_R1); ui_key(ui, UI_R1);
   ui_key(ui, UI_L1);     frame(ui, s, argv[3], "09_categoria_copa");
+  ui_set_plan(ui, "PLANO EXPIRA EM 3 DIAS  \xC2\xB7  05/12/2026", 1);  frame(ui, s, argv[3], "10_plano_aviso");
+  ui_set_plan(ui, "PLANO ILIMITADO", 0);  frame(ui, s, argv[3], "11_plano_ilimitado");
   printf("instalacoes disparadas: %d (esperado 1) ultima=%s\n", installs, last_name);
   return installs == 1 ? 0 : 1;
 }

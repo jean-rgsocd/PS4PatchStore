@@ -69,6 +69,8 @@ struct UI {
   char login_msg[200];
   char loading_msg[120];
   char username[64];
+  char plan[96];                       /* texto do plano no topo (vazio = nao mostra) */
+  int plan_level;                      /* 0 normal, 1 aviso (perto de vencer), 2 vencido */
   Image *s;
   Image *logo;                         /* selo JK Patchs do cabecalho (assets/images/logo_jk.png) */
   Image *logo_full;                    /* original (350x350) para a abertura e a tela de login */
@@ -372,11 +374,18 @@ void ui_show_login(UI *ui, const char *msg) {
   ui->cur_field = ui->field[0][0] ? 1 : 0;
   ui->kr = 1; ui->kc = 0;
   ui->busy = 0;
+  ui->plan[0] = 0;
   ui->dirty = 1;
 }
 
 void ui_set_user(UI *ui, const char *name) {
   snprintf(ui->username, sizeof(ui->username), "%s", name ? name : "");
+  ui->dirty = 1;
+}
+
+void ui_set_plan(UI *ui, const char *text, int level) {
+  snprintf(ui->plan, sizeof(ui->plan), "%s", text ? text : "");
+  ui->plan_level = level;
   ui->dirty = 1;
 }
 
@@ -733,6 +742,12 @@ static void draw_topbar(UI *ui) {
   int w = TW(ui, 1, 20, st, 3);
   T(ui, 1, 20, W - MARGIN - w, 62, st, C_MUTED, 255, 3);
   gfx_circle(s, W - MARGIN - w - 22, 55, 7, ui->mode == MODE_CATALOG ? C_ACCENT : C_FOCUS, 255);
+
+  if (ui->mode == MODE_CATALOG && ui->plan[0]) {          /* plano e vencimento, logo abaixo do "ONLINE" */
+    uint32_t pc = ui->plan_level == 2 ? C_ERR : ui->plan_level == 1 ? C_FOCUS : C_ACCENT;
+    int pw = TW(ui, 1, 18, ui->plan, 2);
+    T(ui, 1, 18, W - MARGIN - pw, 92, ui->plan, pc, 255, 2);
+  }
 }
 
 static void draw_heading(UI *ui) {
