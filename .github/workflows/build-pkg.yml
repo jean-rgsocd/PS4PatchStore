@@ -61,6 +61,7 @@ jobs:
           cat diag.log
       - uses: actions/upload-artifact@v4
         if: always()
+        continue-on-error: true
         with:
           name: ps4-patch-store-pkg
           path: |
@@ -69,8 +70,8 @@ jobs:
             native0/eboot.bin
             build.log
             diag.log
+          retention-days: 1
 
-  # Conversao dos videos (MP4 -> .jkv). Roda em paralelo, sem atrasar o PKG. O resultado sai no artifact "videos-jkv".
   videos:
     runs-on: ubuntu-22.04
     timeout-minutes: 40
@@ -82,6 +83,8 @@ jobs:
         run: python3 -u tools/convert_videos.py image0/index.html out/videos
       - uses: actions/upload-artifact@v4
         if: always()
+        continue-on-error: true
         with:
           name: videos-jkv
           path: out/videos/*.jkv
+          retention-days: 1
