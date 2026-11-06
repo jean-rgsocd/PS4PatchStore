@@ -96,7 +96,8 @@ class Parser(HTMLParser):
             if ended:
                 text = clean(text)
                 if field == "label":
-                    text = clean(re.sub(r"[↓⬇▼]+\s*$", "", text))   # a seta e desenhada pelo app
+                    text = re.sub("[\U0001F000-\U0001FFFF\uFE0F\u200D]", "", text)   # emoji: a fonte do app nao tem
+                    text = clean(re.sub(r"[↓⬇▼]+\s*$", "", clean(text)))   # a seta e desenhada pelo app
                     self.btn["label"] = text
                     self.game["btns"].append(self.btn)
                     self.btn = None
