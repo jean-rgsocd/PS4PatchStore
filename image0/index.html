@@ -1,562 +1,89 @@
-<!DOCTYPE html>
-<html lang="pt-BR">
-<head>
-  <meta charset="UTF-8">
-  <meta name="viewport" content="width=device-width, initial-scale=1">
-  <meta name="theme-color" content="#080d18">
-  <meta name="description" content="PS4 Patch Store - catalogo de patches e colecoes de futebol para PS4.">
-
-  <title>PS4 Patch Store</title>
-
-  <link rel="stylesheet" href="style.css">
-  <script src="app.js" defer></script>
-</head>
-
-<body>
-
-  <header class="topbar">
-    <a class="brand" href="#inicio" aria-label="PS4 Patch Store">
-      <span class="brand-icon">PS4</span>
-      <span>PATCH <strong>STORE</strong></span>
-    </a>
-
-    <span class="status">
-      <span class="status-dot"></span>
-      CATÁLOGO LOCAL
-    </span>
-  </header>
-
-  <main id="inicio">
-
-    <!-- HERO -->
-    <section class="hero">
-      <div class="hero-content">
-
-        <p class="eyebrow">A SUA CENTRAL DE PATCHES</p>
-
-        <h1>
-          SEU PS4.<br>
-          <span>SUA PAIXÃO.</span>
-        </h1>
-
-        <p class="hero-description">
-          Explore coleções e patches de futebol para PS4 em um só lugar.
-        </p>
-
-        <a class="primary-button" href="#catalogo">
-          EXPLORAR CATÁLOGO <span>↓</span>
-        </a>
-
-      </div>
-
-      <div class="hero-label">
-        <span>FOOTBALL</span>
-        <span>MODS &amp; PATCHES</span>
-        <span>PS4 COLLECTION</span>
-      </div>
-    </section>
-
-    <!-- CATÁLOGO -->
-    <section class="catalog section" id="catalogo">
-
-      <div class="section-heading">
-
-        <div>
-          <p class="eyebrow">ENCONTRE SEU JOGO</p>
-          <h2>Nosso catálogo</h2>
-        </div>
-
-        <span id="result-count" class="result-count">
-          7 colecoes
-        </span>
-
-      </div>
-
-      <!-- FILTROS -->
-      <div class="filters">
-
-        <label class="search-box">
-          <span aria-hidden="true">⌕</span>
-
-          <input
-            id="search"
-            type="search"
-            placeholder="Buscar jogo ou coleção..."
-            autocomplete="off"
-          >
-        </label>
-
-        <select id="category" aria-label="Filtrar catálogo">
-
-          <option value="all">Todas as coleções</option>
-          <option value="patch">Patches</option>
-          <option value="collection">Coleções</option>
-          <option value="worldcup">Copa do Mundo</option>
-
-        </select>
-
-      </div>
-
-      <!-- JOGOS -->
-      <div class="game-grid" id="game-grid">
-
-        <!-- FC 27 -->
-        <article
-          class="game-card"
-          data-name="EA Sports FC 27"
-          data-category="patch"
-          data-video="https://pub-c6518eb1477949a58d959f5a769703d1.r2.dev/MP4/FC%2027.mp4"
-        >
-
-          <div class="cover-wrap">
-
-            <img
-              class="cover"
-              src="https://pub-c6518eb1477949a58d959f5a769703d1.r2.dev/COVERS/capa_fc27_v2.png"
-              alt="Capa FC 27"
-            >
-
-            <span class="card-tag">PATCH</span>
-
-          </div>
-
-          <div class="card-content">
-
-            <p class="card-kicker">FUTEBOL • PS4 • CUSA57220</p>
-
-            <h3>EA Sports FC27</h3>
-
-            <p class="card-description">
-              Requer firmware 12.00 ou superior.
-            </p>
-
-            <div class="card-actions">
-
-              <!-- BASE FC 27 (firmware 12.00+) -->
-              <a
-                class="download-button"
-                href="#"
-                data-pkg="https://pub-c6518eb1477949a58d959f5a769703d1.r2.dev/FC27%20Base.pkg"
-                data-name="EA Sports FC 27"
-              >
-                BAIXAR EA Sports FC 27 ↓
-              </a>
-
-              <!-- UPDATE 1.07 -->
-              <a
-                class="download-button"
-                href="#"
-                data-pkg="https://pub-c6518eb1477949a58d959f5a769703d1.r2.dev/FC27%20V1.07.pkg"
-                data-name="EA Sports FC 27 - Update 1.07"
-              >
-                BAIXAR UPDATE 1.07 ↓
-              </a>
-
-              <!-- DLC OFFLINE -->
-              <a
-                class="download-button"
-                href="#"
-                data-pkg="https://pub-c6518eb1477949a58d959f5a769703d1.r2.dev/FC27%20-%20DLL%20Off.pkg"
-                data-name="EA Sports FC 27 - DLC Offline"
-              >
-                BAIXAR DLC OFFLINE ↓
-              </a>
-
-            </div>
-          </div>
-        </article>
-
-        <!-- MEGA PATCH INFINITY -->
-        <article
-          class="game-card"
-          data-name="mega patch infinity pes 2021 futebol"
-          data-category="patch"
-          data-video="https://pub-c6518eb1477949a58d959f5a769703d1.r2.dev/MP4/Mega%20Patch%20Infinity.mp4"
-        >
-
-          <div class="cover-wrap">
-
-            <img
-              class="cover"
-              src="https://pub-c6518eb1477949a58d959f5a769703d1.r2.dev/COVERS/capa_infinity_v2.png"
-              alt="Capa Mega Patch Infinity"
-            >
-
-            <span class="card-tag">PATCH</span>
-
-          </div>
-
-          <div class="card-content">
-
-            <p class="card-kicker">PES 2021 • PS4 • CUSA18676</p>
-
-            <h3>Mega Patch Infinity</h3>
-
-            <p class="card-description">
-              Mega Patch Infinity 2026 com atualização 10.0. Mesmo CUSA do Brasfootball e do Demisan: só um instalado por vez.
-            </p>
-
-            <div class="card-actions">
-
-              <!-- JOGO BASE -->
-              <a
-                class="download-button base-download-button"
-                href="#"
-                data-pkg="https://pub-c6518eb1477949a58d959f5a769703d1.r2.dev/BASE%20MEGA%20PATCH%20INFINITY%202026.pkg"
-                data-name="Mega Patch Infinity 2026 - Jogo Base"
-              >
-                BAIXAR JOGO BASE ↓
-              </a>
-
-              <!-- UPDATE -->
-              <a
-                class="download-button"
-                href="#"
-                data-pkg="https://pub-c6518eb1477949a58d959f5a769703d1.r2.dev/MEGA%20PATCH%20INFINITY%2010.00%202027.pkg"
-                data-name="Mega Patch Infinity - Update 10.0 2026"
-              >
-                BAIXAR UPDATE 10.0 ↓
-              </a>
-
-            </div>
-          </div>
-        </article>
-
-        <!-- BRASFOOTBALL V11 -->
-        <article
-          class="game-card"
-          data-name="brasfootball v11 patch futebol"
-          data-category="patch"
-          data-video="https://pub-c6518eb1477949a58d959f5a769703d1.r2.dev/MP4/Brasfootball%20Patch%20V11.mp4"
-        >
-
-          <div class="cover-wrap">
-
-            <img
-              class="cover"
-              src="https://pub-c6518eb1477949a58d959f5a769703d1.r2.dev/COVERS/capa_brasfootball_embreve.png"
-              alt="Capa Brasfootball V11"
-            >
-
-            <span class="card-tag">PATCH</span>
-
-          </div>
-
-          <div class="card-content">
-
-            <p class="card-kicker">FUTEBOL • PS4 • CUSA18676</p>
-
-            <h3>Brasfootball V11</h3>
-
-            <p class="card-description">
-              Brasfootball Patch V11 para PS4. Mesmo CUSA do Infinity e do Demisan: só um instalado por vez.
-            </p>
-
-            <div class="card-actions">
-
-              <!-- JOGO BASE -->
-              <a
-                class="download-button base-download-button"
-                href="#"
-                data-pkg="https://pub-c6518eb1477949a58d959f5a769703d1.r2.dev/BRASFOOTBALL%20BASE.pkg"
-                data-name="Brasfootball - BASE"
-              >
-                BAIXAR JOGO BASE ↓
-              </a>
-
-              <!-- PATCH V11 (TROCAR PELO NOME REAL DO ARQUIVO NO R2) -->
-              <a
-                class="download-button"
-                href="#"
-                data-pkg="https://pub-c6518eb1477949a58d959f5a769703d1.r2.dev/Brasfootball%20V11%20Patch.pkg"
-                data-name="Brasfootball - Patch V11"
-              >
-                BAIXAR PATCH V11 ↓
-              </a>
-
-            </div>
-          </div>
-        </article>
-
-        <!-- THE LEGENDS COLLECTION -->
-        <article
-          class="game-card"
-          data-name="the legends collection legends pes 2021"
-          data-category="collection"
-          data-video="https://pub-c6518eb1477949a58d959f5a769703d1.r2.dev/MP4/The%20Legends%20Collection.mp4"
-        >
-
-          <div class="cover-wrap">
-
-            <img
-              class="cover"
-              src="https://pub-c6518eb1477949a58d959f5a769703d1.r2.dev/COVERS/capa_legends_v2.png"
-              alt="Capa The Legends Collection"
-            >
-
-            <span class="card-tag">COLEÇÃO</span>
-
-          </div>
-
-          <div class="card-content">
-
-            <p class="card-kicker">PES 2021 • PS4 • CUSA11154</p>
-
-            <h3>The Legends Collection</h3>
-
-            <p class="card-description">
-              PES 2021 Legends com atualização Mega Patch V3.5.
-            </p>
-
-            <div class="card-actions">
-
-              <!-- JOGO BASE -->
-              <a
-                class="download-button base-download-button"
-                href="#"
-                data-pkg="https://pub-c6518eb1477949a58d959f5a769703d1.r2.dev/PES%202021%20LEGENDS%20CUSA11154.pkg"
-                data-name="PES 2021 Legends - Jogo Base"
-              >
-                BAIXAR JOGO BASE ↓
-              </a>
-
-              <!-- UPDATE -->
-              <a
-                class="download-button"
-                href="#"
-                data-pkg="https://pub-c6518eb1477949a58d959f5a769703d1.r2.dev/MEGA%20PATCH%20LEGENDS%20V3.5.pkg"
-                data-name="Mega Patch Legends V3.5"
-              >
-                BAIXAR UPDATE V3.5 ↓
-              </a>
-
-            </div>
-          </div>
-        </article>
-
-        <!-- WORLD CUP 2026 -->
-        <article
-          class="game-card"
-          data-name="world cup 2026 copa do mundo"
-          data-category="worldcup"
-          data-video="https://pub-c6518eb1477949a58d959f5a769703d1.r2.dev/MP4/World%20Cup%202026.mp4"
-        >
-
-          <div class="cover-wrap">
-
-            <img
-              class="cover"
-              src="https://pub-c6518eb1477949a58d959f5a769703d1.r2.dev/COVERS/capa_worldcup_v2.png"
-              alt="Capa World Cup 2026"
-            >
-
-            <span class="card-tag">COPA 2026</span>
-
-          </div>
-
-          <div class="card-content">
-
-            <p class="card-kicker">FUTEBOL • PS4 • CUSA10007</p>
-
-            <h3>World Cup 2026</h3>
-
-            <p class="card-description">
-              PES 2021 World Cup 2026 com Mega Patch V1.6.
-            </p>
-
-            <div class="card-actions">
-
-              <!-- JOGO BASE -->
-              <a
-                class="download-button base-download-button"
-                href="#"
-                data-pkg="https://pub-c6518eb1477949a58d959f5a769703d1.r2.dev/PES%202021%20CUSA10007%20-%20WORLD%20CUP26.pkg"
-                data-name="PES 2021 World Cup 2026 - Jogo Base"
-              >
-                BAIXAR JOGO BASE ↓
-              </a>
-
-              <!-- UPDATE -->
-              <a
-                class="download-button"
-                href="#"
-                data-pkg="https://pub-c6518eb1477949a58d959f5a769703d1.r2.dev/MEGA%20PATCH%20WORLD%20CUP%20V1.6%202026.pkg"
-                data-name="Mega Patch World Cup V1.6 2026"
-              >
-                BAIXAR UPDATE V1.6 ↓
-              </a>
-
-            </div>
-          </div>
-        </article>
-
-        <!-- PATCH BY EDSON -->
-        <article
-          class="game-card"
-          data-name="patch by edson futebol"
-          data-category="patch"
-          data-video="https://pub-c6518eb1477949a58d959f5a769703d1.r2.dev/MP4/Patch%20by%20Edson.mp4"
-        >
-
-          <div class="cover-wrap">
-
-            <img
-              class="cover"
-              src="https://pub-c6518eb1477949a58d959f5a769703d1.r2.dev/COVERS/capa_edson_v2.png"
-              alt="Capa Patch by Edson"
-            >
-
-            <span class="card-tag">PATCH</span>
-
-          </div>
-
-          <div class="card-content">
-
-            <p class="card-kicker">FUTEBOL • PS4 • CUSA18740</p>
-
-            <h3>Patch by Edson</h3>
-
-            <p class="card-description">
-              Patch by Edson para PS4.
-            </p>
-
-            <div class="card-actions">
-
-              <a
-                class="download-button"
-                href="#"
-                data-pkg="https://pub-c6518eb1477949a58d959f5a769703d1.r2.dev/Base%20Patch%20By%20Edson.pkg"
-                data-name="Patch by Edson - BASE"
-              >
-                BAIXAR JOGO BASE ↓
-              </a>
-
-              <a
-                class="download-button"
-                href="#"
-                data-pkg="https://pub-c6518eb1477949a58d959f5a769703d1.r2.dev/Patch%20By%20Edson%20Update.pkg"
-                data-name="Patch by Edson - Patch"
-              >
-                BAIXAR UPDATE V2.1 ↓
-              </a>
-
-            </div>
-          </div>
-        </article>
-
-        <!-- DEMISAN PATCH -->
-        <article
-          class="game-card"
-          data-name="demisan patch futebol"
-          data-category="patch"
-          data-video="https://pub-c6518eb1477949a58d959f5a769703d1.r2.dev/MP4/Demisan%20Patch.mp4"
-        >
-
-          <div class="cover-wrap">
-
-            <img
-              class="cover"
-              src="https://pub-c6518eb1477949a58d959f5a769703d1.r2.dev/COVERS/capa_demisan_v2.png"
-              alt="Capa Demisan Patch"
-            >
-
-            <span class="card-tag">PATCH</span>
-
-          </div>
-
-          <div class="card-content">
-
-            <p class="card-kicker">FUTEBOL • PS4 • CUSA18676</p>
-
-            <h3>Demisan Patch</h3>
-
-            <p class="card-description">
-              Demisan Patch 2.6 para PS4. Mesmo CUSA do Infinity e do Brasfootball: só um instalado por vez.
-            </p>
-
-            <div class="card-actions">
-
-              <a
-                class="download-button"
-                href="#"
-                data-pkg="https://pub-c6518eb1477949a58d959f5a769703d1.r2.dev/DEMISAN%202.5%20BASE.pkg"
-                data-name="Demisan Patch - BASE"
-              >
-                BAIXAR JOGO BASE ↓
-              </a>
-
-              <a
-                class="download-button"
-                href="#"
-                data-pkg="https://pub-c6518eb1477949a58d959f5a769703d1.r2.dev/Demisan%202.6%20Patch.pkg"
-                data-name="Demisan Patch - Patch"
-              >
-                BAIXAR UPDATE 2.6 ↓
-              </a>
-
-            </div>
-          </div>
-        </article>
-
-      </div>
-
-      <!-- ESTADO VAZIO -->
-      <div id="empty-state" class="empty-state" hidden>
-        Nenhuma coleção encontrada. Tente outro termo.
-      </div>
-
-    </section>
-
-    <!-- AVISO -->
-    <section class="notice">
-
-      <div class="notice-icon">i</div>
-
-      <div>
-        <h3>Antes de instalar</h3>
-
-        <p>
-          Confira a compatibilidade e a versão de cada arquivo.
-          O jogo base precisa estar instalado no console antes
-          da instalação dos respectivos updates.
-          A instalação é solicitada pelo aplicativo nativo do PS4.
-          Os pacotes precisam ser compatíveis com seu console
-          e com a versão instalada do jogo.
-          Jogos com o mesmo CUSA (código no topo de cada card) não
-          podem ficar instalados ao mesmo tempo.
-        </p>
-      </div>
-
-    </section>
-
-  </main>
-
-  <!-- RODAPÉ -->
-  <footer class="footer">
-
-    <a class="brand footer-brand" href="#inicio">
-      <span class="brand-icon">PS4</span>
-      <span>PATCH <strong>STORE</strong></span>
-    </a>
-
-    <p>
-      PS4 Patch Store © <span id="year"></span>
-    </p>
-
-    <a href="#catalogo">
-      Voltar ao catálogo ↑
-    </a>
-
-  </footer>
-
-  <!-- NOTIFICAÇÕES -->
-  <div
-    id="toast"
-    class="toast"
-    role="status"
-    aria-live="polite"
-    hidden
-  ></div>
-
-</body>
-</html>
+name: build-pkg
+on: [workflow_dispatch, push]
+jobs:
+  pkg:
+    runs-on: ubuntu-22.04
+    steps:
+      - uses: actions/checkout@v4
+      - name: Dependencias
+        run: sudo apt-get update && sudo apt-get install -y clang lld jq python3 unzip libicu-dev
+      - name: Baixar OpenOrbis Toolchain
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -e
+          curl -fsSL -H "Authorization: Bearer $GH_TOKEN" https://api.github.com/repos/OpenOrbis/OpenOrbis-PS4-Toolchain/releases/latest -o rel.json
+          echo "Arquivos da release:"; jq -r '.assets[].name' rel.json
+          KIND=tar
+          URL=$(jq -r '[.assets[] | select(.name | test("\\.(tar\\.gz|tgz)$"))][0].browser_download_url // empty' rel.json)
+          if [ -z "$URL" ]; then
+            KIND=zip
+            URL=$(jq -r '[.assets[] | select(.name | test("\\.zip$"))][0].browser_download_url // empty' rel.json)
+          fi
+          if [ -z "$URL" ]; then echo "ERRO: nenhum .tar.gz ou .zip na release"; exit 1; fi
+          echo "Baixando $URL"
+          curl -fL "$URL" -o toolchain.bin
+          mkdir -p oo
+          if [ "$KIND" = tar ]; then tar xzf toolchain.bin -C oo; else unzip -q toolchain.bin -d oo; fi
+          LX=$(find oo -name link.x | head -1)
+          if [ -z "$LX" ]; then echo "ERRO: link.x nao encontrado"; find oo -maxdepth 3; exit 1; fi
+          TC=$(dirname "$LX")
+          echo "OO_PS4_TOOLCHAIN=$GITHUB_WORKSPACE/$TC" >> "$GITHUB_ENV"
+          chmod -R +x "$TC/bin/linux" || true
+      - name: Compilar e empacotar
+        env:
+          DOTNET_ROLL_FORWARD: Major
+        run: |
+          set +e
+          bash build.sh > build.log 2>&1
+          CODE=$?
+          cat build.log
+          if [ $CODE -ne 0 ]; then
+            MSG=$(tail -n 25 build.log | sed 's/%/%25/g' | awk '{printf "%s%%0A", $0}')
+            echo "::error title=Falha no build::$MSG"
+            exit $CODE
+          fi
+      - name: Diagnostico
+        if: always()
+        continue-on-error: true
+        env:
+          DOTNET_ROLL_FORWARD: Major
+          DOTNET_SYSTEM_GLOBALIZATION_INVARIANT: "1"
+        run: |
+          DLL=$(find "$OO_PS4_TOOLCHAIN/bin" -name 'PkgTool.Core.dll' | head -1)
+          {
+            echo "== SFO do app =="; dotnet "$DLL" sfo_listentries native0/sce_sys/param.sfo
+            echo "== libs do app =="; readelf -d build/native/eboot.elf | grep -E 'NEEDED|SONAME'
+            echo "== libs de rede do toolchain =="; ls "$OO_PS4_TOOLCHAIN/lib" | grep -i -E "http|ssl|net|sysmodule"
+            echo "== conteudo do app =="; ls -laR native0 | head -80
+            echo "== gp4 =="; cat out/project-native.gp4
+          } > diag.log 2>&1 || true
+          cat diag.log
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: ps4-patch-store-pkg
+          path: |
+            out/native/*.pkg
+            out/catalogo_para_servidor.dat
+            native0/eboot.bin
+            build.log
+            diag.log
+          retention-days: 3   # apaga o artifact sozinho em 3 dias (evita estourar a cota de armazenamento do GitHub)
+
+  # Conversao dos videos (MP4 -> .jkv). Roda em paralelo, sem atrasar o PKG. O resultado sai no artifact "videos-jkv".
+  videos:
+    runs-on: ubuntu-22.04
+    timeout-minutes: 40
+    steps:
+      - uses: actions/checkout@v4
+      - name: ffmpeg
+        run: sudo apt-get update && sudo apt-get install -y ffmpeg
+      - name: Converter videos
+        run: python3 -u tools/convert_videos.py image0/index.html out/videos
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: videos-jkv
+          path: out/videos/*.jkv
+          retention-days: 2
