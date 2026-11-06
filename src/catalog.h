@@ -15,6 +15,7 @@ typedef struct {
   char content_id[48];
   unsigned long long size;
   char type[8];            /* PS4GD, PS4GP, PS4AC... (vazio = padrao) */
+  char action[12];         /* pkg (padrao), download, video ou image */
   int base;                /* 1 = botao de jogo base (estilo diferente) */
 } CatButton;
 

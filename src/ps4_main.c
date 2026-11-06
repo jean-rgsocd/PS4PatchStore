@@ -11,6 +11,8 @@
 #include <stdint.h>
 #include <unistd.h>
 #include <pthread.h>
+#include <sys/stat.h>
+#include <ctype.h>
 
 #include <orbis/libkernel.h>
 #include <orbis/VideoOut.h>
@@ -212,13 +214,49 @@ static void *install_thread(void *arg) {
   Job *j = (Job *)arg;
   char err[200] = "";
   int rc;
-  if (!strncmp(j->btn.content_id, OWN_ID_PREFIX, strlen(OWN_ID_PREFIX))) {      /* atualizacao do proprio app */
+  const char *action = j->btn.action[0] ? j->btn.action : "pkg";
+  if (!strcmp(action, "download")) {
+    const char *dir = "/data/PS4PatchStore/downloads";
+    char path[512], filename[180];
+    const char *base = strrchr(j->btn.url, '/');
+    base = base ? base + 1 : j->btn.url;
+    size_t k = 0;
+    while (*base && *base != '?' && k + 1 < sizeof(filename)) {
+      unsigned char ch = (unsigned char)*base++;
+      if (ch == '%' && base[0] && base[1]) {
+        char hex[3] = { base[0], base[1], 0 };
+        char *end = NULL; long v = strtol(hex, &end, 16);
+        if (end && *end == 0) { ch = (unsigned char)v; base += 2; }
+      }
+      filename[k++] = (isalnum(ch) || ch == '.' || ch == '_' || ch == '-') ? (char)ch : '_';
+    }
+    filename[k] = 0;
+    if (!filename[0] || !strcmp(filename, ".") || !strcmp(filename, "..")) snprintf(filename, sizeof(filename), "arquivo_download.bin");
+    mkdir("/data/PS4PatchStore", 0777);
+    mkdir(dir, 0777);
+    snprintf(path, sizeof(path), "%s/%s", dir, filename);
+    volatile int pct = 0, cancel = 0;
+    install_log("Iniciando download de arquivo pelo app.");
+    rc = auth_download(j->btn.url, path, &pct, &cancel, err, sizeof(err));
+    if (rc == 0) {
+      snprintf(err, sizeof(err), "Download concluído: %s", filename);
+      install_log(path);
+      rc = 1; /* sucesso de download (diferente de pedido de instalacao) */
+    } else {
+      unlink(path);
+      if (!err[0]) snprintf(err, sizeof(err), "Falha ao baixar o arquivo.");
+    }
+  } else if (!strcmp(action, "video") || !strcmp(action, "image")) {
+    snprintf(err, sizeof(err), "Este tipo de botão não deveria iniciar uma tarefa em segundo plano.");
+    rc = -1;
+  } else if (!strncmp(j->btn.content_id, OWN_ID_PREFIX, strlen(OWN_ID_PREFIX))) {      /* atualizacao do proprio app */
     install_log("update: atualizacao manual (apagar o app e instalar o PKG novo).");
     snprintf(err, sizeof(err), "Nova versão disponível. Apague o JK Patchs (Opções > Excluir) e instale a versão nova.");
     rc = -1;
     goto done;
+  } else {
+    rc = install_pkg(j->btn.url, j->btn.name, j->btn.content_id, j->btn.type, j->btn.size, err, sizeof(err));
   }
-  rc = install_pkg(j->btn.url, j->btn.name, j->btn.content_id, j->btn.type, j->btn.size, err, sizeof(err));
 done:
   pthread_mutex_lock(&res_mutex);
   res_code = rc;

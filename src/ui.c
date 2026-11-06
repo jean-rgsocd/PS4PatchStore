@@ -148,6 +148,9 @@ static void type_label(const char *type, char *out, int cap) {
 }
 
 static void info_text(const CatButton *b, char *out, int cap) {
+  if (!strcmp(b->action, "download")) { snprintf(out, cap, "ARQUIVO"); return; }
+  if (!strcmp(b->action, "video")) { snprintf(out, cap, "VÍDEO"); return; }
+  if (!strcmp(b->action, "image")) { snprintf(out, cap, "IMAGEM"); return; }
   char t[16] = "";
   type_label(b->type, t, sizeof(t));
   char sz[32] = "";
@@ -535,7 +538,9 @@ static void trigger_update(UI *ui) {
 
 void ui_install_done(UI *ui, int code, const char *err) {
   ui_set_busy(ui, 0);
-  if (code == 0 && ui->updating)
+  if (code == 1)
+    ui_toast(ui, (err && err[0]) ? err : "Download concluído!", UI_TOAST_OK);
+  else if (code == 0 && ui->updating)
     ui_toast(ui, "Atualização enviada! Quando terminar nas Notificações, feche e abra o app.", UI_TOAST_OK);
   else if (code == 0)
     ui_toast(ui, "Pedido aceito! Acompanhe nas Notificações do PS4.", UI_TOAST_OK);
@@ -546,6 +551,7 @@ void ui_install_done(UI *ui, int code, const char *err) {
 
 static int is_jkv(const char *u);
 static void vid_open(UI *ui, const CatGame *g);
+static void vid_open_url(UI *ui, const char *title, const char *url);
 
 static void trigger_install(UI *ui) {
   const CatGame *g = cur_game(ui);
@@ -559,13 +565,27 @@ static void trigger_install(UI *ui) {
     return;
   }
   const CatButton *b = &g->btn[ui->focus];
-  if (ui->busy) { ui_toast(ui, "Já existe um pedido em andamento. Aguarde.", UI_TOAST_INFO); return; }
-  if (!b->url[0]) { ui_toast(ui, "URL do pacote não configurada neste botão.", UI_TOAST_ERR); return; }
-  if (!b->content_id[0]) {
-    ui_toast(ui, "Este botão está sem ID do PKG (data-content-id).", UI_TOAST_ERR);
+  const char *action = b->action[0] ? b->action : "pkg"; /* catalogos antigos continuam compativeis */
+  if (!b->url[0]) { ui_toast(ui, "URL não configurada neste botão.", UI_TOAST_ERR); return; }
+  if (!strcmp(action, "video")) {
+    if (is_jkv(b->url)) vid_open_url(ui, b->name[0] ? b->name : g->title, b->url);
+    else if (ui->open_fn) { ui_toast(ui, "Abrindo o vídeo no navegador do PS4...", UI_TOAST_INFO); ui->open_fn(b->url, ui->open_ud); }
     return;
   }
-  ui_toast(ui, "Enviando pedido ao instalador nativo...", UI_TOAST_INFO);
+  if (!strcmp(action, "image")) {
+    if (ui->open_fn) { ui_toast(ui, "Abrindo o guia no navegador do PS4...", UI_TOAST_INFO); ui->open_fn(b->url, ui->open_ud); }
+    return;
+  }
+  if (ui->busy) { ui_toast(ui, "Já existe um pedido em andamento. Aguarde.", UI_TOAST_INFO); return; }
+  if (!strcmp(action, "pkg") && !b->content_id[0]) {
+    ui_toast(ui, "Este PKG está sem ID (data-content-id).", UI_TOAST_ERR);
+    return;
+  }
+  if (strcmp(action, "pkg") && strcmp(action, "download")) {
+    ui_toast(ui, "Tipo de ação não reconhecido neste botão.", UI_TOAST_ERR);
+    return;
+  }
+  ui_toast(ui, !strcmp(action, "download") ? "Baixando arquivo para o armazenamento do PS4..." : "Enviando pedido ao instalador nativo...", UI_TOAST_INFO);
   ui->busy = 1;
   ui->updating = 0;
   if (ui->fn) ui->fn(b, ui->user);
@@ -586,17 +606,21 @@ static int is_jkv(const char *u) {
   return n > 4 && strcmp(u + n - 4, ".jkv") == 0;
 }
 
-static void vid_open(UI *ui, const CatGame *g) {
+static void vid_open_url(UI *ui, const char *title, const char *url) {
   if (vp_busy()) { ui_toast(ui, "Aguarde o vídeo anterior terminar de fechar e tente de novo.", UI_TOAST_INFO); return; }
-  snprintf(ui->vtitle, sizeof(ui->vtitle), "%s", g->title);
-  snprintf(ui->vurl, sizeof(ui->vurl), "%s", g->video);
-  if (vp_load(g->video) != 0) { ui_toast(ui, "Não foi possível iniciar o vídeo.", UI_TOAST_ERR); return; }
+  snprintf(ui->vtitle, sizeof(ui->vtitle), "%s", title ? title : "Vídeo");
+  snprintf(ui->vurl, sizeof(ui->vurl), "%s", url);
+  if (vp_load(url) != 0) { ui_toast(ui, "Não foi possível iniciar o vídeo.", UI_TOAST_ERR); return; }
   ui->vid_mode = 1;
   ui->vlast_state = -1;
   ui->vlast_pct = -1;
   ui->vlast_sec = -1;
   ui->base_stale = 1;
   ui->dirty = 1;
+}
+
+static void vid_open(UI *ui, const CatGame *g) {
+  if (g) vid_open_url(ui, g->title, g->video);
 }
 
 static void vid_key(UI *ui, int key) {

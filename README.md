@@ -23,6 +23,7 @@ Setas ou analogico esquerdo movem, X instala, O volta ao inicio, L1/R1 trocam de
    e preenche `data-content-id`, `data-size` e `data-type`. Depois `tools/make_catalog.py` gera o
    catalogo do app a partir do mesmo `index.html`. Nao precisa digitar ID nem tamanho.
 3. Pacotes `PS4GD` (jogo) e `PS4GP` (patch) convivem no mesmo catalogo; o tipo e repassado ao payload.
+4. Outros botoes podem usar `data-video-url="https://.../tutorial.jkv"` para abrir vídeo `.jkv` no player interno, `href="https://.../guia.png"` para abrir imagem no navegador do PS4, ou `href="https://.../arquivo.cpk"` para baixar um arquivo sem tentar instalar. Também é possível indicar `data-action="download"`, `data-action="image"` ou `data-action="video"`. Downloads comuns são salvos em `/data/PS4PatchStore/downloads/`.
    Tipo vazio ou invalido vira `PS4GD` e gera um aviso em `/data/ps4store.log`.
 4. Botao sem `data-pkg` e ignorado. Link fora do ar ou que nao seja PKG: o build avisa e o botao fica como esta.
 

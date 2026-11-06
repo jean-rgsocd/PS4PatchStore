@@ -9,7 +9,7 @@ enum { UI_UP = 1, UI_DOWN, UI_LEFT, UI_RIGHT, UI_OK, UI_BACK, UI_L1, UI_R1, UI_O
 enum { UI_TOAST_INFO = 0, UI_TOAST_OK = 1, UI_TOAST_ERR = 2 };
 
 typedef struct UI UI;
-/* Chamada quando o usuario pede uma instalacao. Deve retornar rapido (a instalacao roda em outra thread). */
+/* Chamada quando o usuario pede uma acao (instalar PKG ou baixar arquivo). Deve retornar rapido. */
 typedef void (*UiInstallFn)(const CatButton *b, void *user);
 
 /* Login: o app chama ui_show_login()/ui_show_loading() e, ao receber o catalogo do servidor, ui_set_catalog(). */
