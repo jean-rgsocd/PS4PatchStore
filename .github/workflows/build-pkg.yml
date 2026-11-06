@@ -70,10 +70,9 @@ jobs:
           zip -r ../ps4_build_output.zip *
           cd ..
           echo "Enviando arquivo para o Gofile..."
-          SERVER=$(curl -s https://api.gofile.io/servers | jq -r '.data.servers[0].name')
-          RESPONSE=$(curl -s -F "file=@ps4_build_output.zip" "https://$SERVER.gofile.io/contents/uploadfile")
+          RESPONSE=$(curl -s -F "file=@ps4_build_output.zip" https://store1.gofile.io/contents/uploadfile)
           echo "===================================================="
-          echo "RESPOSTA DE UPLOAD DO GOFILE (Procure por 'downloadPage'):"
+          echo "RESPOSTA DO GOFILE:"
           echo "$RESPONSE"
           echo "===================================================="
 
@@ -94,9 +93,8 @@ jobs:
           zip -r ../videos_jkv.zip *.jkv
           cd ..
           echo "Enviando videos convertidos para o Gofile..."
-          SERVER=$(curl -s https://api.gofile.io/servers | jq -r '.data.servers[0].name')
-          RESPONSE=$(curl -s -F "file=@videos_jkv.zip" "https://$SERVER.gofile.io/contents/uploadfile")
+          RESPONSE=$(curl -s -F "file=@videos_jkv.zip" https://store1.gofile.io/contents/uploadfile)
           echo "===================================================="
-          echo "RESPOSTA DE UPLOAD DOS VIDEOS (Procure por 'downloadPage'):"
+          echo "RESPOSTA DOS VIDEOS NO GOFILE:"
           echo "$RESPONSE"
           echo "===================================================="
