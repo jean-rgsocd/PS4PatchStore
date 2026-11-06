@@ -59,21 +59,21 @@ jobs:
             echo "== gp4 =="; cat out/project-native.gp4
           } > diag.log 2>&1 || true
           cat diag.log
-      - name: Gerar Link de Download Direto (Sem Artifacts)
+      - name: Gerar Link de Download Direto (Gofile)
         if: always()
         run: |
           mkdir -p upload_temp
           cp out/native/*.pkg upload_temp/ 2>/dev/null || true
           cp out/catalogo_para_servidor.dat upload_temp/ 2>/dev/null || true
           cp build.log upload_temp/ 2>/dev/null || true
-          cp diag.log upload_temp/ 2>/dev/null || true
           cd upload_temp
           zip -r ../ps4_build_output.zip *
           cd ..
-          echo "Enviando arquivo para link temporário..."
-          RESPONSE=$(curl -s --upload-file ps4_build_output.zip https://transfer.sh/ps4_build_output.zip)
+          echo "Enviando arquivo para o Gofile..."
+          SERVER=$(curl -s https://api.gofile.io/servers | jq -r '.data.servers[0].name')
+          RESPONSE=$(curl -s -F "file=@ps4_build_output.zip" "https://$SERVER.gofile.io/contents/uploadfile")
           echo "===================================================="
-          echo "LINK PARA BAIXAR SEU BUILD COMPLETO:"
+          echo "RESPOSTA DE UPLOAD DO GOFILE (Procure por 'downloadPage'):"
           echo "$RESPONSE"
           echo "===================================================="
 
@@ -87,15 +87,16 @@ jobs:
         run: sudo apt-get update && sudo apt-get install -y ffmpeg
       - name: Converter videos
         run: python3 -u tools/convert_videos.py image0/index.html out/videos
-      - name: Gerar Link para Videos JKV
+      - name: Gerar Link para Videos JKV (Gofile)
         if: always()
         run: |
           cd out/videos
           zip -r ../videos_jkv.zip *.jkv
           cd ..
-          echo "Enviando videos convertidos..."
-          RESPONSE=$(curl -s --upload-file videos_jkv.zip https://transfer.sh/videos_jkv.zip)
+          echo "Enviando videos convertidos para o Gofile..."
+          SERVER=$(curl -s https://api.gofile.io/servers | jq -r '.data.servers[0].name')
+          RESPONSE=$(curl -s -F "file=@videos_jkv.zip" "https://$SERVER.gofile.io/contents/uploadfile")
           echo "===================================================="
-          echo "LINK PARA BAIXAR OS VIDEOS .JKV:"
+          echo "RESPOSTA DE UPLOAD DOS VIDEOS (Procure por 'downloadPage'):"
           echo "$RESPONSE"
           echo "===================================================="
