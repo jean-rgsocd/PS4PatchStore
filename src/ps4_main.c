@@ -206,6 +206,10 @@ static void poll_input(UI *ui) {
 /* ------------------------------------------------------------------ instalacao (thread) */
 typedef struct { CatButton btn; } Job;
 
+/* progresso do download de arquivo (a thread escreve, o laco principal mostra na tela) */
+static volatile int dl_active = 0, dl_pct = 0;
+static char dl_name[120];
+
 static pthread_mutex_t res_mutex = PTHREAD_MUTEX_INITIALIZER;
 static int res_ready = 0, res_code = 0;
 static char res_err[200];
@@ -235,9 +239,19 @@ static void *install_thread(void *arg) {
     mkdir("/data/PS4PatchStore", 0777);
     mkdir(dir, 0777);
     snprintf(path, sizeof(path), "%s/%s", dir, filename);
-    volatile int pct = 0, cancel = 0;
-    install_log("Iniciando download de arquivo pelo app.");
-    rc = auth_download(j->btn.url, path, &pct, &cancel, err, sizeof(err));
+    volatile int cancel = 0;
+    char lm[700];
+    snprintf(lm, sizeof(lm), "Iniciando download de arquivo pelo app: %s", j->btn.url);
+    install_log(lm);
+    snprintf(dl_name, sizeof(dl_name), "%s", filename);
+    dl_pct = 0;
+    dl_active = 1;
+    rc = auth_download(j->btn.url, path, &dl_pct, &cancel, err, sizeof(err));
+    dl_active = 0;
+    if (rc != 0) {
+      snprintf(lm, sizeof(lm), "Download falhou: %s", err[0] ? err : "(sem mensagem)");
+      install_log(lm);
+    }
     if (rc == 0) {
       snprintf(err, sizeof(err), "Download concluído: %s", filename);
       install_log(path);
@@ -289,6 +303,17 @@ static void on_install(const CatButton *b, void *user) {
     free(j);
   }
   pthread_attr_destroy(&at);
+}
+
+static void check_download_progress(UI *ui) {
+  static int last = -1;
+  if (!dl_active) { last = -1; return; }
+  int p = dl_pct;
+  if (p == last) return;
+  last = p;
+  char m[220];
+  snprintf(m, sizeof(m), "Baixando %s...  %d%%", dl_name, p);
+  ui_toast(ui, m, UI_TOAST_INFO);
 }
 
 static void check_install_result(UI *ui) {
@@ -450,6 +475,7 @@ int main(void) {
   for (;;) {
     poll_input(ui);
     check_install_result(ui);
+    check_download_progress(ui);
     check_auth(ui);
     ui_tick(ui);
     if (ui_take_dirty(ui)) {

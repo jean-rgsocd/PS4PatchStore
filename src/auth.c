@@ -220,7 +220,7 @@ out:
 
 /* Baixa uma URL https qualquer (video) direto para um arquivo, com porcentagem. Verificacao de certificado ligada. */
 int auth_download(const char *url, const char *dest, volatile int *pct, volatile int *cancel, char *err, int cap) {
-  if (strncmp(url, "https://", 8) != 0) { snprintf(err, (size_t)cap, "Link de vídeo inválido (precisa ser https)."); return -1; }
+  if (strncmp(url, "https://", 8) != 0) { snprintf(err, (size_t)cap, "Link inválido (precisa ser https)."); return -1; }
   if (net_init() != 0) { snprintf(err, (size_t)cap, "Não foi possível iniciar a rede do app."); return -1; }
   int tpl = -1, conn = -1, req = -1, rc = 0, status = 0;
   FILE *f = NULL;
@@ -241,26 +241,28 @@ int auth_download(const char *url, const char *dest, volatile int *pct, volatile
   rc = sceHttpGetStatusCode(req, &status);
   if (rc < 0) goto out;
   if (status != 200) {
-    snprintf(err, (size_t)cap, status == 404 ? "Vídeo não encontrado no servidor (404)." : "O servidor recusou o vídeo (HTTP %d).", status);
-    { char w[96]; snprintf(w, sizeof(w), "video: HTTP %d", status); install_log(w); }
+    snprintf(err, (size_t)cap, status == 404 ? "Arquivo não encontrado no servidor (404)." : "O servidor recusou o arquivo (HTTP %d).", status);
+    { char w[96]; snprintf(w, sizeof(w), "download: HTTP %d", status); install_log(w); }
     rc = 0; status = -1; goto out;
   }
   int cl_res = 0;
   size_t total = 0;
   if (sceHttpGetResponseContentLength(req, &cl_res, &total) < 0 || cl_res != 0) total = 0;
+  { char w[96]; snprintf(w, sizeof(w), "download: HTTP 200, tamanho %llu bytes", (unsigned long long)total); install_log(w); }
   f = fopen(dest, "wb");
-  if (!f) { snprintf(err, (size_t)cap, "Não foi possível gravar o vídeo no console."); rc = 0; status = -1; goto out; }
+  if (!f) { snprintf(err, (size_t)cap, "Não foi possível gravar o arquivo no console."); install_log("download: fopen falhou (sem permissao/espaco?)"); rc = 0; status = -1; goto out; }
   size_t got = 0;
   for (;;) {
     if (*cancel) { rc = 0; status = -2; break; }
     int n = sceHttpReadData(req, buf, 16384);
     if (n < 0) { rc = n; logrc("video: ReadData", rc); break; }
     if (n == 0) break;
-    if (fwrite(buf, 1, (size_t)n, f) != (size_t)n) { snprintf(err, (size_t)cap, "Sem espaço para gravar o vídeo."); rc = 0; status = -1; break; }
+    if (fwrite(buf, 1, (size_t)n, f) != (size_t)n) { snprintf(err, (size_t)cap, "Sem espaço para gravar o arquivo."); install_log("download: fwrite falhou (disco cheio?)"); rc = 0; status = -1; break; }
     got += (size_t)n;
     if (total > 0) *pct = (int)((got * 100) / total);
   }
   if (rc == 0 && status == 200) *pct = 100;
+  { char w[96]; snprintf(w, sizeof(w), "download: gravou %llu bytes (rc=%d)", (unsigned long long)got, rc); install_log(w); }
 out:
   if (f) fclose(f);
   if (req >= 0) sceHttpDeleteRequest(req);
