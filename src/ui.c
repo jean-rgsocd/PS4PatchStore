@@ -100,6 +100,12 @@ struct UI {
   int vid_mode, vdirty, base_stale, vlast_state, vlast_pct, vlast_sec;
   char vtitle[96], vurl[240];
   Image *vframe, *base;
+
+  /* guia (imagem) dentro do app: 0 = fechado, 1 = baixando, 2 = mostrando */
+  int gmode, gserial, gscroll;
+  volatile int gstate;                 /* resultado do download: 0 em andamento, 1 ok, -1 falhou */
+  Image *gimg;                         /* imagem ja ajustada ao tamanho da tela */
+  char gtitle[96], gpath[320];
 };
 
 /* ------------------------------------------------------------------ utilidades */
@@ -550,6 +556,7 @@ void ui_install_done(UI *ui, int code, const char *err) {
 }
 
 static int is_jkv(const char *u);
+static void guide_open(UI *ui, const char *title, const char *url);
 static void vid_open(UI *ui, const CatGame *g);
 static void vid_open_url(UI *ui, const char *title, const char *url);
 
@@ -573,7 +580,7 @@ static void trigger_install(UI *ui) {
     return;
   }
   if (!strcmp(action, "image")) {
-    if (ui->open_fn) { ui_toast(ui, "Abrindo o guia no navegador do PS4...", UI_TOAST_INFO); ui->open_fn(b->url, ui->open_ud); }
+    guide_open(ui, b->name[0] ? b->name : g->title, b->url);       /* visualizador dentro do app */
     return;
   }
   if (ui->busy) { ui_toast(ui, "Já existe um pedido em andamento. Aguarde.", UI_TOAST_INFO); return; }
@@ -651,6 +658,124 @@ static void vid_tick(UI *ui) {
   }
 }
 
+/* ------------------------------------------------------------------ guia (imagem) dentro do app
+ * O botao de acao "image" baixa a imagem (fica guardada no console, como as capas) e a mostra em tela cheia.
+ * Imagem alta (tutorial): largura fixa e rolagem com as setas. Imagem larga: cabe inteira. O volta fecha.
+ * Para trocar a imagem: suba a nova no R2 com outro nome (ou ...png?v=2) e troque o link no catalogo. */
+#define G_TOP    112
+#define G_VIEW_H (H - G_TOP - 24)
+typedef struct { UI *ui; int serial; char url[300], dest[320]; } GuideJob;
+
+static void *guide_worker(void *arg) {
+  GuideJob *J = (GuideJob *)arg;
+  UI *ui = J->ui;
+  char tmp[340];
+  snprintf(tmp, sizeof(tmp), "%s.tmp", J->dest);
+  int ok = ui->cover_fetch && ui->cover_fetch(J->url, tmp, ui->cover_ud) == 0 && rename(tmp, J->dest) == 0;
+  if (!ok) remove(tmp);
+  pthread_mutex_lock(&cover_mu);
+  if (ui->gserial == J->serial) ui->gstate = ok ? 1 : -1;      /* se o usuario ja fechou, o resultado e ignorado */
+  pthread_mutex_unlock(&cover_mu);
+  free(J);
+  return NULL;
+}
+
+static int guide_load(UI *ui) {
+  Image *raw = img_load(ui->gpath);
+  if (!raw) return -1;
+  int tw, th;
+  if ((long long)raw->h * 4 > (long long)raw->w * 5) {            /* alta: largura fixa, rola para baixo */
+    tw = 1500;
+    th = (int)((long long)raw->h * tw / raw->w);
+    if (th > 9000) { th = 9000; tw = (int)((long long)raw->w * th / raw->h); }
+  } else if ((long long)raw->w * G_VIEW_H > (long long)raw->h * 1840) {   /* larga: cabe inteira */
+    tw = 1840; th = (int)((long long)raw->h * tw / raw->w);
+  } else {
+    th = G_VIEW_H; tw = (int)((long long)raw->w * th / raw->h);
+  }
+  if (tw < 1) tw = 1;
+  if (th < 1) th = 1;
+  Image *g = raw;
+  if (tw != raw->w || th != raw->h) { g = img_scale(raw, tw, th); img_free(raw); }
+  if (!g) return -1;
+  if (ui->gimg) img_free(ui->gimg);
+  ui->gimg = g;
+  ui->gscroll = 0;
+  return 0;
+}
+
+static void guide_close(UI *ui) {
+  if (!ui->gmode) return;
+  pthread_mutex_lock(&cover_mu);
+  ui->gserial++;                                                  /* download em andamento deixa de valer */
+  pthread_mutex_unlock(&cover_mu);
+  ui->gmode = 0;
+  if (ui->gimg) { img_free(ui->gimg); ui->gimg = NULL; }
+  ui->dirty = 1;
+}
+
+static void guide_open(UI *ui, const char *title, const char *url) {
+  if (!ui->cover_fetch || !ui->cover_dir[0]) {                    /* sem como baixar aqui: cai no navegador */
+    if (ui->open_fn) { ui_toast(ui, "Abrindo o guia no navegador do PS4...", UI_TOAST_INFO); ui->open_fn(url, ui->open_ud); }
+    return;
+  }
+  vid_close(ui);
+  snprintf(ui->gtitle, sizeof(ui->gtitle), "%s", title ? title : "Guia");
+  cover_cache_path(ui, url, ui->gpath, sizeof(ui->gpath));
+  pthread_mutex_lock(&cover_mu);
+  int serial = ++ui->gserial;
+  ui->gstate = 0;
+  pthread_mutex_unlock(&cover_mu);
+  ui->dirty = 1;
+  if (guide_load(ui) == 0) { ui->gmode = 2; return; }              /* ja estava guardada */
+  remove(ui->gpath);
+  GuideJob *J = (GuideJob *)calloc(1, sizeof(GuideJob));
+  if (!J) { ui_toast(ui, "Sem memória para abrir o guia.", UI_TOAST_ERR); return; }
+  J->ui = ui; J->serial = serial;
+  snprintf(J->url, sizeof(J->url), "%s", url);
+  snprintf(J->dest, sizeof(J->dest), "%s", ui->gpath);
+  pthread_t t;
+  pthread_attr_t at;
+  pthread_attr_init(&at);
+  pthread_attr_setstacksize(&at, 512 * 1024);
+  pthread_attr_setdetachstate(&at, PTHREAD_CREATE_DETACHED);
+  int r = pthread_create(&t, &at, guide_worker, J);
+  pthread_attr_destroy(&at);
+  if (r != 0) { free(J); ui_toast(ui, "Não foi possível iniciar o download do guia.", UI_TOAST_ERR); return; }
+  ui->gmode = 1;
+}
+
+static void guide_key(UI *ui, int key) {
+  if (key == UI_BACK || key == UI_TRIANGLE) { guide_close(ui); return; }
+  if (ui->gmode != 2 || !ui->gimg) return;
+  int maxs = ui->gimg->h - G_VIEW_H;
+  if (maxs < 0) maxs = 0;
+  int d = 0;
+  if (key == UI_DOWN) d = 110;
+  else if (key == UI_UP) d = -110;
+  else if (key == UI_R1) d = G_VIEW_H - 80;
+  else if (key == UI_L1) d = -(G_VIEW_H - 80);
+  if (!d) return;
+  int n = ui->gscroll + d;
+  if (n < 0) n = 0;
+  if (n > maxs) n = maxs;
+  if (n != ui->gscroll) { ui->gscroll = n; ui->dirty = 1; }
+}
+
+static void guide_tick(UI *ui) {
+  if (!ui->gmode) return;
+  if (ui->mode != MODE_CATALOG) { guide_close(ui); return; }      /* saiu da conta / catalogo recarregou */
+  if (ui->gmode != 1) return;
+  pthread_mutex_lock(&cover_mu);
+  int st = ui->gstate;
+  pthread_mutex_unlock(&cover_mu);
+  if (st == 0) { if (ui->frame % 6 == 0) ui->dirty = 1; return; }  /* gira o indicador */
+  if (st == 1 && guide_load(ui) == 0) { ui->gmode = 2; ui->dirty = 1; return; }
+  remove(ui->gpath);
+  ui->gmode = 0;
+  ui_toast(ui, st < 0 ? "Não foi possível baixar o guia. Verifique a internet e tente de novo." : "A imagem do guia está inválida.", UI_TOAST_ERR);
+}
+
 void ui_key(UI *ui, int key) {
   if (ui->splash < SPLASH_END) {                                  /* durante a abertura as teclas so pulam */
     if (ui->splash >= SPLASH_SKIP_FROM && ui->splash < SPLASH_FADE) ui->splash = SPLASH_FADE;
@@ -662,6 +787,7 @@ void ui_key(UI *ui, int key) {
     return;
   }
   if (ui->mode != MODE_CATALOG) return;
+  if (ui->gmode) { guide_key(ui, key); return; }                  /* guia aberto: so rolar ou voltar */
   if (ui->pix_open) {                                             /* tela de apoio (Pix): qualquer botao de voltar fecha */
     if (key == UI_BACK || key == UI_OK || key == UI_OPTIONS || key == UI_TRIANGLE) { ui->pix_open = 0; ui->dirty = 1; }
     return;
@@ -724,6 +850,7 @@ void ui_tick(UI *ui) {
     }
   }
   cover_poll(ui);
+  guide_tick(ui);
   if (ui->vid_mode) vid_tick(ui);
   if ((ui->busy || ui->mode == MODE_LOADING) && ui->frame % 6 == 0) ui->dirty = 1;   /* spinner */
   if (ui->mode == MODE_LOGIN && ui->frame % 30 == 0) ui->dirty = 1;                  /* cursor piscando */
@@ -1181,6 +1308,49 @@ static void draw_pix(UI *ui) {
   text_draw_in(s, ui->f, 24, cx, cw, qy + ui->pix->h + 58, "Abra o app do seu banco  \xE2\x80\xBA  Pix  \xE2\x80\xBA  Ler QR Code", C_MUTED, 255, 0, 1);
 }
 
+static void draw_guide(UI *ui) {
+  Image *s = ui->s;
+  gfx_fill(s, 0, 0, W, H, C_BG, 255);
+  gfx_fill(s, 0, 0, W, 96, C_PANEL, 255);
+  gfx_fill(s, 0, 96, W, 1, C_WHITE, 26);
+  char t[120];
+  text_fit(ui->fb, 34, ui->gtitle, 1100, t, sizeof(t));
+  text_draw(s, ui->fb, 34, MARGIN, 62, t, C_TEXT, 255, 0);
+  if (ui->gmode == 1) {
+    int w = 760, h = 260, x = (W - w) / 2, y = 400;
+    gfx_rrect(s, x, y, w, h, 28, C_PANEL, 245, 0);
+    gfx_rrect(s, x, y, w, h, 28, C_WHITE, 26, 2);
+    draw_spinner(ui, W / 2, y + 86);
+    text_draw_in(s, ui->fb, 32, x, w, y + 178, "Carregando guia...", C_TEXT, 255, 0, 1);
+    text_draw_in(s, ui->f, 24, W - MARGIN - 700, 700, 60, "O  Cancelar", C_MUTED, 255, 0, 2);
+    return;
+  }
+  if (!ui->gimg) return;
+  int vh = G_VIEW_H;
+  int scrolls = ui->gimg->h > vh;
+  text_draw_in(s, ui->f, 24, W - MARGIN - 760, 760, 60,
+               scrolls ? "\xE2\x96\xB2 \xE2\x96\xBC  Rolar      L1  R1  P\xC3\xA1gina      O  Voltar" : "O  Voltar",
+               C_MUTED, 255, 0, 2);
+  int maxs = scrolls ? ui->gimg->h - vh : 0;
+  if (ui->gscroll > maxs) ui->gscroll = maxs;
+  Image v;                                                         /* janela vertical: as linhas sao contiguas */
+  v.w = ui->gimg->w;
+  v.px = ui->gimg->px + (size_t)ui->gscroll * (size_t)ui->gimg->w;
+  v.h = ui->gimg->h - ui->gscroll;
+  if (v.h > vh) v.h = vh;
+  int x = (W - v.w) / 2;
+  int y = G_TOP + (scrolls ? 0 : (vh - v.h) / 2);
+  gfx_blit(s, &v, x, y, 0, 255);
+  if (scrolls) {
+    int tx = W - 36;
+    gfx_rrect(s, tx, G_TOP, 10, vh, 5, C_PANEL2, 255, 0);
+    int bh = vh * vh / ui->gimg->h;
+    if (bh < 60) bh = 60;
+    int by = G_TOP + (vh - bh) * ui->gscroll / maxs;
+    gfx_rrect(s, tx, by, 10, bh, 5, C_ACCENT, 255, 0);
+  }
+}
+
 static void draw_loading(UI *ui) {
   Image *s = ui->s;
   int w = 760, h = 260, x = (W - w) / 2, y = 400;
@@ -1310,6 +1480,7 @@ static void draw_splash(UI *ui) {
 void ui_skip_splash(UI *ui) { ui->splash = SPLASH_END - 1; ui_tick(ui); ui->dirty = 1; }
 
 static void draw_scene(UI *ui) {
+  if (ui->gmode && ui->mode == MODE_CATALOG) { draw_guide(ui); return; }      /* guia em tela cheia */
   if (ui->bg) gfx_blit_surface(ui->s, ui->bg);
   else gfx_fill(ui->s, 0, 0, W, H, C_BG, 255);
   draw_topbar(ui);
