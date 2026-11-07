@@ -263,11 +263,9 @@ static void *install_thread(void *arg) {
   } else if (!strcmp(action, "video") || !strcmp(action, "image")) {
     snprintf(err, sizeof(err), "Este tipo de botão não deveria iniciar uma tarefa em segundo plano.");
     rc = -1;
-  } else if (!strncmp(j->btn.content_id, OWN_ID_PREFIX, strlen(OWN_ID_PREFIX))) {      /* atualizacao do proprio app */
-    install_log("update: atualizacao manual (apagar o app e instalar o PKG novo).");
-    snprintf(err, sizeof(err), "Nova versão disponível. Apague o JK Patchs (Opções > Excluir) e instale a versão nova.");
-    rc = -1;
-    goto done;
+  } else if (!strncmp(j->btn.content_id, OWN_ID_PREFIX, strlen(OWN_ID_PREFIX))) {      /* atualizacao do proprio app: instala por cima */
+    install_log("update: enviando o PKG novo do app ao instalador (por cima, sem apagar).");
+    rc = install_pkg(j->btn.url, j->btn.name, j->btn.content_id, j->btn.type, j->btn.size, err, sizeof(err));
   } else {
     rc = install_pkg(j->btn.url, j->btn.name, j->btn.content_id, j->btn.type, j->btn.size, err, sizeof(err));
   }
