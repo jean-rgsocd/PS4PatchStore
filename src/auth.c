@@ -261,6 +261,11 @@ int auth_download(const char *url, const char *dest, volatile int *pct, volatile
     got += (size_t)n;
     if (total > 0) *pct = (int)((got * 100) / total);
   }
+  if (rc == 0 && status == 200 && total > 0 && got != total) {          /* conexao caiu no meio: o servidor prometeu mais bytes */
+    snprintf(err, (size_t)cap, "Download incompleto. Tente de novo.");
+    { char w[120]; snprintf(w, sizeof(w), "download: INCOMPLETO (recebeu %llu de %llu bytes)", (unsigned long long)got, (unsigned long long)total); install_log(w); }
+    status = -1;
+  }
   if (rc == 0 && status == 200) *pct = 100;
   { char w[96]; snprintf(w, sizeof(w), "download: gravou %llu bytes (rc=%d)", (unsigned long long)got, rc); install_log(w); }
 out:

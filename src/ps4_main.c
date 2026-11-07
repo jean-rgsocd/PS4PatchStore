@@ -226,7 +226,9 @@ static void *install_thread(void *arg) {
     snprintf(path, sizeof(path), "/data/pkg/%s", filename);
     snprintf(part, sizeof(part), "%s.part", path);        /* so vira .pkg quando completo (o Package Installer nao ve arquivo pela metade) */
     struct stat st;
-    if (stat(path, &st) == 0 && j->btn.size > 0 && (unsigned long long)st.st_size == j->btn.size) {
+    static unsigned long long app_dl_size = 0;               /* tamanho do ultimo PKG baixado nesta abertura */
+    if (stat(path, &st) == 0 && st.st_size > 0 &&
+        ((j->btn.size > 0 && (unsigned long long)st.st_size == j->btn.size) || (app_dl_size && (unsigned long long)st.st_size == app_dl_size))) {
       snprintf(lm, sizeof(lm), "update do app: %s ja esta baixado (%llu bytes)", path, (unsigned long long)st.st_size);
       install_log(lm);
       rc = 2;
@@ -239,13 +241,19 @@ static void *install_thread(void *arg) {
       dl_active = 1;
       rc = auth_download(j->btn.url, part, &dl_pct, &cancel, err, sizeof(err));
       dl_active = 0;
-      if (rc == 0 && stat(part, &st) == 0 && (j->btn.size == 0 || (unsigned long long)st.st_size == j->btn.size)) {
+      if (rc == 0 && stat(part, &st) == 0 && st.st_size > 0) {
+        if (j->btn.size > 0 && (unsigned long long)st.st_size != j->btn.size) {
+          snprintf(lm, sizeof(lm), "AVISO: tamanho do catalogo (%llu) difere do PKG no R2 (%llu). O catalogo e o PKG sao do mesmo build?",
+                   j->btn.size, (unsigned long long)st.st_size);
+          install_log(lm);
+        }
+        app_dl_size = (unsigned long long)st.st_size;
         unlink(path);
         if (rename(part, path) == 0) { install_log("update do app: PKG baixado."); rc = 2; }
         else { unlink(part); snprintf(err, sizeof(err), "Não foi possível salvar o arquivo em /data/pkg."); install_log("update do app: rename falhou"); rc = -1; }
       } else {
         unlink(part);
-        if (rc == 0) { snprintf(err, sizeof(err), "Download da atualização incompleto. Tente de novo."); install_log("update do app: tamanho nao confere"); }
+        if (rc == 0) { snprintf(err, sizeof(err), "Download da atualização vazio. Tente de novo."); install_log("update do app: arquivo vazio"); }
         else if (!err[0]) snprintf(err, sizeof(err), "Falha ao baixar a atualização do app.");
         rc = -1;
       }
