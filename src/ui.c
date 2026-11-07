@@ -404,7 +404,7 @@ void ui_set_plan(UI *ui, const char *text, int level) {
 }
 
 void ui_set_catalog(UI *ui, const Catalog *cat) {
-  ui->auto_upd = 1;
+  ui->auto_upd = 0;   /* auto-atualizacao desligada: o PS4 recusa instalar o app por cima (erro -2137456560); religar quando houver metodo que funcione */
   ui->cat = cat;
   ui->pix_open = 0;
   load_thumbs(ui);
