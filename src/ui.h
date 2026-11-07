@@ -2,6 +2,7 @@
 #ifndef UI_H
 #define UI_H
 
+#include <stddef.h>
 #include "gfx.h"
 #include "catalog.h"
 
@@ -40,7 +41,9 @@ int  ui_take_dirty(UI *ui);           /* 1 se precisa redesenhar (e zera a flag)
 void ui_draw(UI *ui);
 void ui_set_busy(UI *ui, int busy);
 /* Resultado da instalacao pedida (code 0 = pedido aceito). Mostra a mensagem certa (inclusive para a atualizacao do app). */
-void ui_install_done(UI *ui, int code, const char *err);
+void ui_install_done(UI *ui, int code, const char *err);   /* code 2 = PKG da atualizacao do app baixado em /data/pkg */
+/* Nome do arquivo do PKG do app (a partir do link do catalogo), o mesmo usado ao salvar em /data/pkg. */
+void ui_app_pkg_name(const char *url, char *out, size_t n);
 /* Video dentro do app: chamar uma vez com os ganchos de plataforma ja registrados em vp_init(). */
 void ui_toast(UI *ui, const char *msg, int kind);
 

@@ -199,8 +199,8 @@ static void poll_input(UI *ui) {
 }
 
 /* ------------------------------------------------------------------ atualizacao do proprio app
- * O DPI recusa reinstalar o app por cima e o app nao consegue se desinstalar sozinho (o sistema nao libera o
- * instalador para apps). Por isso a atualizacao do app e manual: o botao so avisa como fazer. */
+ * O PS4 nao instala um app por cima de outro. O app baixa o PKG novo em /data/pkg (acao "appupdate") e a tela
+ * mostra o passo a passo: apagar o app e instalar pelo Package Installer do GoldHEN. O login fica em /data. */
 #define OWN_ID_PREFIX "IV0000-PSTR00002"
 
 /* ------------------------------------------------------------------ instalacao (thread) */
@@ -219,7 +219,38 @@ static void *install_thread(void *arg) {
   char err[200] = "";
   int rc;
   const char *action = j->btn.action[0] ? j->btn.action : "pkg";
-  if (!strcmp(action, "download")) {
+  if (!strcmp(action, "appupdate")) {                       /* atualizacao do app: baixa o PKG novo em /data/pkg (o GoldHEN lista la) */
+    char path[512], part[520], filename[96], lm[700];
+    ui_app_pkg_name(j->btn.url, filename, sizeof(filename));
+    mkdir("/data/pkg", 0777);
+    snprintf(path, sizeof(path), "/data/pkg/%s", filename);
+    snprintf(part, sizeof(part), "%s.part", path);        /* so vira .pkg quando completo (o Package Installer nao ve arquivo pela metade) */
+    struct stat st;
+    if (stat(path, &st) == 0 && j->btn.size > 0 && (unsigned long long)st.st_size == j->btn.size) {
+      snprintf(lm, sizeof(lm), "update do app: %s ja esta baixado (%llu bytes)", path, (unsigned long long)st.st_size);
+      install_log(lm);
+      rc = 2;
+    } else {
+      volatile int cancel = 0;
+      snprintf(lm, sizeof(lm), "update do app: baixando %s -> %s", j->btn.url, path);
+      install_log(lm);
+      snprintf(dl_name, sizeof(dl_name), "%s", filename);
+      dl_pct = 0;
+      dl_active = 1;
+      rc = auth_download(j->btn.url, part, &dl_pct, &cancel, err, sizeof(err));
+      dl_active = 0;
+      if (rc == 0 && stat(part, &st) == 0 && (j->btn.size == 0 || (unsigned long long)st.st_size == j->btn.size)) {
+        unlink(path);
+        if (rename(part, path) == 0) { install_log("update do app: PKG baixado."); rc = 2; }
+        else { unlink(part); snprintf(err, sizeof(err), "Não foi possível salvar o arquivo em /data/pkg."); install_log("update do app: rename falhou"); rc = -1; }
+      } else {
+        unlink(part);
+        if (rc == 0) { snprintf(err, sizeof(err), "Download da atualização incompleto. Tente de novo."); install_log("update do app: tamanho nao confere"); }
+        else if (!err[0]) snprintf(err, sizeof(err), "Falha ao baixar a atualização do app.");
+        rc = -1;
+      }
+    }
+  } else if (!strcmp(action, "download")) {
     const char *dir = "/data/PS4PatchStore/downloads";
     char path[512], filename[180];
     const char *base = strrchr(j->btn.url, '/');
@@ -415,6 +446,12 @@ static void check_auth(UI *ui) {
         }
         ui_set_catalog(ui, &cat);
         install_log("Catalogo recebido do servidor.");
+        if (cat.app.url[0] && catalog_version_num(cat.app.version) <= catalog_version_num(APP_VERSION)) {
+          char fn[96], pp[160];                    /* app ja esta na versao do catalogo: apaga o PKG da atualizacao (libera espaco) */
+          ui_app_pkg_name(cat.app.url, fn, sizeof(fn));
+          snprintf(pp, sizeof(pp), "/data/pkg/%s", fn);
+          unlink(pp);
+        }
         {
           char m[200];
           snprintf(m, sizeof(m), "Versao do app: instalada=%s | servidor=%s (link do PKG: %s, id: %s)", APP_VERSION,

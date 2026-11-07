@@ -70,12 +70,13 @@ mantenha o aviso de licenca, indique a origem e disponibilize o codigo-fonte cor
 - Aviso: os links dos PKGs no catalogo ainda apontam para o R2 publico; a protecao final e tornar o bucket
   privado e servir links temporarios (proxima etapa).
 
-## Atualizacao automatica do app
+## Atualizacao do app (o app baixa o PKG sozinho)
 
-O app avisa quando existe versao nova e se atualiza usando o mesmo instalador dos patches (so quem tem login ve o aviso).
-1. Aumente `APP_VERSION` em `src/version.h` (ex.: "1.00" -> "1.01"). Esse numero tambem vai para o `param.sfo` (aparece no tile).
-2. `app.url` (raiz do projeto) = link publico do PKG do app no R2, ex.: `https://pub-xxxx.r2.dev/JKPatchs.pkg`.
-3. Faca o build e baixe o artifact. Suba o PKG de `out/native/` no R2 **com o nome que esta no `app.url`** (renomeie ao subir).
-4. So depois de subir o PKG, cole o `catalogo_para_servidor.dat` (agora com a linha `APP`) no `/admin`.
-5. Quem abrir o app com versao menor ve "Atualizacao disponivel" e aperta quadrado; depois fecha e abre o app.
-A primeira versao com esse recurso precisa ser instalada manualmente (as antigas nao sabem se atualizar).
+O PS4 nao instala um app por cima de outro. Por isso o app so BAIXA o PKG novo (em `/data/pkg/`) e mostra o passo a passo na tela:
+a pessoa apaga o app e instala o PKG pelo Package Installer do GoldHEN (Debug Settings > Game > Package Installer). O login fica em `/data` e continua valendo.
+1. Aumente `APP_VERSION` em `src/version.h` (ex.: "1.02" -> "1.03"). Esse numero tambem vai para o `param.sfo`.
+2. `app.url` (raiz do projeto) = link publico do PKG do app no R2 (ex.: `https://pub-xxxx.r2.dev/APP-PS4/JKPATCHS.pkg`).
+3. Faca o build e pegue o PKG de `out/native/`. Suba no R2 **com o nome que esta no `app.url`**, substituindo o antigo.
+4. So depois de subir o PKG, cole o `catalogo_para_servidor.dat` (com a linha `APP`) no `/admin`.
+5. Quem abrir o app com versao menor: o app baixa o PKG sozinho (barra de aviso em baixo) e □ mostra o passo a passo.
+Depois que a pessoa instala a versao nova, o app apaga o PKG baixado de `/data/pkg/`. So suba o catalogo com versao maior depois que o PKG estiver no R2.

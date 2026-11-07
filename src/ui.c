@@ -7,6 +7,7 @@
 #include <sys/stat.h>
 #include <stdlib.h>
 #include <string.h>
+#include <ctype.h>
 
 /* ------------------------------------------------------------------ tema (igual ao site) */
 #define C_BG         RGB(0x08, 0x0d, 0x18)
@@ -92,6 +93,9 @@ struct UI {
   int busy, dirty;
   int auto_upd;                        /* 1 = ao receber o catalogo, atualiza o app sozinho (uma vez por abertura) */
   int updating;                        /* o pedido em andamento e a atualizacao do proprio app */
+  int upd_ready;                       /* 1 = o PKG novo do app ja esta baixado em /data/pkg */
+  int upd_help;                        /* 1 = tela com o passo a passo da instalacao aberta */
+  char upd_file[96];                   /* nome do PKG baixado (mostrado no passo a passo) */
   unsigned frame;
   char toast[256];
   int toast_left, toast_kind;
@@ -404,7 +408,9 @@ void ui_set_plan(UI *ui, const char *text, int level) {
 }
 
 void ui_set_catalog(UI *ui, const Catalog *cat) {
-  ui->auto_upd = 0;   /* auto-atualizacao desligada: o PS4 recusa instalar o app por cima (erro -2137456560); religar quando houver metodo que funcione */
+  ui->auto_upd = 1;
+  ui->upd_ready = 0;
+  ui->upd_help = 0;
   ui->cat = cat;
   ui->pix_open = 0;
   load_thumbs(ui);
@@ -526,8 +532,28 @@ static int update_available(const UI *ui) {
   return catalog_version_num(ui->cat->app.version) > catalog_version_num(APP_VERSION);
 }
 
+void ui_app_pkg_name(const char *url, char *out, size_t n) {
+  const char *base = strrchr(url, '/');
+  base = base ? base + 1 : url;
+  size_t k = 0;
+  while (*base && *base != '?' && k + 1 < n) {
+    unsigned char ch = (unsigned char)*base++;
+    if (ch == '%' && base[0] && base[1]) {
+      char hex[3] = { base[0], base[1], 0 };
+      char *end = NULL; long v = strtol(hex, &end, 16);
+      if (end && *end == 0) { ch = (unsigned char)v; base += 2; }
+    }
+    out[k++] = (isalnum(ch) || ch == '.' || ch == '_' || ch == '-') ? (char)ch : '_';
+  }
+  out[k] = 0;
+  if (!out[0] || !strcmp(out, ".") || !strcmp(out, "..")) snprintf(out, n, "JKPATCHS_NOVO.pkg");
+}
+
+/* Atualizacao do app: o PS4 nao instala um app por cima de outro, entao o app so BAIXA o PKG novo em /data/pkg
+ * e mostra o passo a passo (apagar o app e instalar pelo Package Installer do GoldHEN). O login continua salvo. */
 static void trigger_update(UI *ui) {
   if (!update_available(ui)) { ui_toast(ui, "Seu app já está na versão mais recente.", UI_TOAST_INFO); return; }
+  if (ui->upd_ready) { ui->upd_help = 1; ui->dirty = 1; return; }       /* ja baixado: mostra como instalar */
   if (ui->busy) { ui_toast(ui, "Já existe um pedido em andamento. Aguarde.", UI_TOAST_INFO); return; }
   const CatApp *a = &ui->cat->app;
   static CatButton b;                                   /* a copia fica viva ate o app terminar de usar */
@@ -538,7 +564,9 @@ static void trigger_update(UI *ui) {
   snprintf(b.content_id, sizeof(b.content_id), "%s", a->content_id);
   snprintf(b.type, sizeof(b.type), "%s", a->type[0] ? a->type : "PS4GD");
   b.size = a->size;
-  ui_toast(ui, "Enviando a atualização do app...", UI_TOAST_INFO);
+  snprintf(b.action, sizeof(b.action), "appupdate");
+  ui_app_pkg_name(a->url, ui->upd_file, sizeof(ui->upd_file));
+  ui_toast(ui, "Baixando a atualização do app...", UI_TOAST_INFO);
   ui->busy = 1;
   ui->updating = 1;
   if (ui->fn) ui->fn(&b, ui->user);
@@ -546,6 +574,17 @@ static void trigger_update(UI *ui) {
 
 void ui_install_done(UI *ui, int code, const char *err) {
   ui_set_busy(ui, 0);
+  if (ui->updating) {                                         /* terminou o download da atualizacao do app */
+    ui->updating = 0;
+    if (code == 2) {
+      ui->upd_ready = 1;
+      ui_toast(ui, "Nova versão do app baixada! Aperte  \xE2\x96\xA1  para ver como instalar.", UI_TOAST_OK);
+    } else {
+      ui_toast(ui, (err && err[0]) ? err : "Não foi possível baixar a atualização do app.", UI_TOAST_ERR);
+    }
+    ui->dirty = 1;
+    return;
+  }
   if (code == 1)
     ui_toast(ui, (err && err[0]) ? err : "Download concluído!", UI_TOAST_OK);
   else if (code == 0 && ui->updating)
@@ -790,6 +829,10 @@ void ui_key(UI *ui, int key) {
   }
   if (ui->mode != MODE_CATALOG) return;
   if (ui->gmode) { guide_key(ui, key); return; }                  /* guia aberto: so rolar ou voltar */
+  if (ui->upd_help) {                                             /* passo a passo da atualizacao: qualquer botao fecha */
+    if (key == UI_BACK || key == UI_OK || key == UI_OPTIONS || key == UI_TRIANGLE || key == UI_SQUARE) { ui->upd_help = 0; ui->dirty = 1; }
+    return;
+  }
   if (ui->pix_open) {                                             /* tela de apoio (Pix): qualquer botao de voltar fecha */
     if (key == UI_BACK || key == UI_OK || key == UI_OPTIONS || key == UI_TRIANGLE) { ui->pix_open = 0; ui->dirty = 1; }
     return;
@@ -1133,8 +1176,11 @@ static void draw_message_line(UI *ui) {
   }
   if (update_available(ui)) {
     char buf[200];
-    snprintf(buf, sizeof(buf), "Atualização disponível: JK Patchs %s (você tem %s).  Aperte  \xE2\x96\xA1  para atualizar.",
-             ui->cat->app.version, APP_VERSION);
+    if (ui->upd_ready)
+      snprintf(buf, sizeof(buf), "Nova versão %s baixada.  Aperte  \xE2\x96\xA1  para ver como instalar.", ui->cat->app.version);
+    else
+      snprintf(buf, sizeof(buf), "Atualização disponível: JK Patchs %s (você tem %s).  Aperte  \xE2\x96\xA1  para baixar.",
+               ui->cat->app.version, APP_VERSION);
     int tw = TW(ui, 1, 26, buf, 0);
     int w = tw + 68, h = 62, x = (W - w) / 2, y = 912;
     gfx_rrect(s, x, y, w, h, h / 2, C_PANEL2, 250, 0);
@@ -1169,7 +1215,7 @@ static void draw_footer(UI *ui) {
     x = hint(ui, x, "OPTIONS", "Entrar");
   } else if (ui->mode == MODE_QR) {
     x = hint(ui, x, "O", "Voltar ao login");
-  } else if (ui->mode == MODE_CATALOG && ui->pix_open) {
+  } else if (ui->mode == MODE_CATALOG && (ui->pix_open || ui->upd_help)) {
     x = hint(ui, x, "O", "Voltar");
   } else if (ui->mode == MODE_CATALOG) {
     x = hint(ui, x, "\xE2\x97\x80 \xE2\x96\xB6", "Coleções");
@@ -1320,6 +1366,25 @@ static void draw_pix(UI *ui) {
   gfx_rrect(s, qx - 10, qy - 10, ui->pix->w + 20, ui->pix->h + 20, 18, RGB(255, 255, 255), 255, 0);
   gfx_blit(s, ui->pix, qx, qy, 0, 255);
   text_draw_in(s, ui->f, 24, cx, cw, qy + ui->pix->h + 58, "Abra o app do seu banco  \xE2\x80\xBA  Pix  \xE2\x80\xBA  Ler QR Code", C_MUTED, 255, 0, 1);
+}
+
+static void draw_upd_help(UI *ui) {
+  Image *s = ui->s;
+  gfx_fill(s, 0, 0, W, H, C_BLACK, 200);
+  int cw = 1280, ch = 700, cx = (W - cw) / 2, cy = 150;
+  gfx_rrect(s, cx, cy, cw, ch, 28, C_PANEL, 250, 0);
+  gfx_rrect(s, cx, cy, cw, ch, 28, C_WHITE, 26, 2);
+  char t[120];
+  snprintf(t, sizeof(t), "Nova versão do app: JK Patchs %s", ui->cat ? ui->cat->app.version : "");
+  text_draw_in(s, ui->fb, 44, cx, cw, cy + 84, t, C_ACCENT, 255, 0, 1);
+  char l[5][200];
+  snprintf(l[0], sizeof(l[0]), "1.  Feche este app (botão PS  \xE2\x80\xBA  Fechar).");
+  snprintf(l[1], sizeof(l[1]), "2.  Na tela inicial, selecione JK Patchs, aperte OPTIONS e escolha Apagar.");
+  snprintf(l[2], sizeof(l[2]), "3.  Abra Configurações  \xE2\x80\xBA  Debug Settings  \xE2\x80\xBA  Game  \xE2\x80\xBA  Package Installer.");
+  snprintf(l[3], sizeof(l[3]), "4.  Escolha %s (já está baixado no console) e instale.", ui->upd_file[0] ? ui->upd_file : "o arquivo do app");
+  snprintf(l[4], sizeof(l[4]), "5.  Abra o JK Patchs de novo. Seu login continua salvo.");
+  for (int i = 0; i < 5; i++) text_draw_in(s, ui->f, 30, cx + 70, cw - 140, cy + 190 + i * 74, l[i], C_TEXT, 255, 0, 0);
+  text_draw_in(s, ui->f, 24, cx, cw, cy + ch - 40, "Aperte  O  para fechar. O aviso volta enquanto você não instalar.", C_MUTED, 255, 0, 1);
 }
 
 static void draw_guide(UI *ui) {
@@ -1505,6 +1570,7 @@ static void draw_scene(UI *ui) {
     draw_panel(ui);
     draw_message_line(ui);
     if (ui->pix_open && ui->pix) draw_pix(ui);
+    if (ui->upd_help) draw_upd_help(ui);
   } else if (ui->mode == MODE_LOGIN) {
     draw_login(ui);
   } else if (ui->mode == MODE_QR) {
