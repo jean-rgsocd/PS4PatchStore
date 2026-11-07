@@ -10,6 +10,7 @@
 #include <string.h>
 #include <stdint.h>
 #include <unistd.h>
+#include <fcntl.h>
 #include <pthread.h>
 #include <sys/stat.h>
 #include <ctype.h>
@@ -203,6 +204,39 @@ static void poll_input(UI *ui) {
  * mostra o passo a passo: apagar o app e instalar pelo Package Installer do GoldHEN. O login fica em /data. */
 #define OWN_ID_PREFIX "IV0000-PSTR00002"
 
+/* Tamanho de arquivo com open/lseek (o mesmo jeito que o resto do app ja usa); -1 se nao abrir. */
+static long long file_size_of(const char *p) {
+  int fd = open(p, O_RDONLY);
+  if (fd < 0) return -1;
+  long long n = (long long)lseek(fd, 0, SEEK_END);
+  close(fd);
+  return n;
+}
+
+/* Copia um arquivo com open/read/write. Retorna 0 se copiou tudo. */
+static int copy_file(const char *src, const char *dst) {
+  int in = open(src, O_RDONLY);
+  if (in < 0) return -1;
+  int out = open(dst, O_WRONLY | O_CREAT | O_TRUNC, 0666);
+  if (out < 0) { close(in); return -1; }
+  char *buf = (char *)malloc(65536);
+  int ok = buf ? 0 : -1;
+  while (ok == 0) {
+    int n = (int)read(in, buf, 65536);
+    if (n < 0) { ok = -1; break; }
+    if (n == 0) break;
+    for (int off = 0; off < n;) {
+      int w = (int)write(out, buf + off, (size_t)(n - off));
+      if (w <= 0) { ok = -1; break; }
+      off += w;
+    }
+  }
+  free(buf);
+  close(in);
+  close(out);
+  return ok;
+}
+
 /* ------------------------------------------------------------------ instalacao (thread) */
 typedef struct { CatButton btn; } Job;
 
@@ -221,15 +255,14 @@ static void *install_thread(void *arg) {
   const char *action = j->btn.action[0] ? j->btn.action : "pkg";
   if (!strcmp(action, "appupdate")) {                       /* atualizacao do app: baixa o PKG novo em /data/pkg (o GoldHEN lista la) */
     char path[512], part[520], filename[96], lm[700];
+    static unsigned long long app_dl_size = 0;               /* tamanho do ultimo PKG baixado nesta abertura */
     ui_app_pkg_name(j->btn.url, filename, sizeof(filename));
     mkdir("/data/pkg", 0777);
     snprintf(path, sizeof(path), "/data/pkg/%s", filename);
-    snprintf(part, sizeof(part), "%s.part", path);        /* so vira .pkg quando completo (o Package Installer nao ve arquivo pela metade) */
-    struct stat st;
-    static unsigned long long app_dl_size = 0;               /* tamanho do ultimo PKG baixado nesta abertura */
-    if (stat(path, &st) == 0 && st.st_size > 0 &&
-        ((j->btn.size > 0 && (unsigned long long)st.st_size == j->btn.size) || (app_dl_size && (unsigned long long)st.st_size == app_dl_size))) {
-      snprintf(lm, sizeof(lm), "update do app: %s ja esta baixado (%llu bytes)", path, (unsigned long long)st.st_size);
+    snprintf(part, sizeof(part), "%s.part", path);        /* baixa para .part e so depois copia para .pkg (o Package Installer nao ve arquivo pela metade) */
+    long long have = file_size_of(path);
+    if (have > 0 && ((j->btn.size > 0 && (unsigned long long)have == j->btn.size) || (app_dl_size && (unsigned long long)have == app_dl_size))) {
+      snprintf(lm, sizeof(lm), "update do app: %s ja esta baixado (%lld bytes)", path, have);
       install_log(lm);
       rc = 2;
     } else {
@@ -239,18 +272,26 @@ static void *install_thread(void *arg) {
       snprintf(dl_name, sizeof(dl_name), "%s", filename);
       dl_pct = 0;
       dl_active = 1;
-      rc = auth_download(j->btn.url, part, &dl_pct, &cancel, err, sizeof(err));
+      rc = auth_download(j->btn.url, part, &dl_pct, &cancel, err, sizeof(err));   /* ja confere com o tamanho que o servidor informou */
       dl_active = 0;
-      if (rc == 0 && stat(part, &st) == 0 && st.st_size > 0) {
-        if (j->btn.size > 0 && (unsigned long long)st.st_size != j->btn.size) {
-          snprintf(lm, sizeof(lm), "AVISO: tamanho do catalogo (%llu) difere do PKG no R2 (%llu). O catalogo e o PKG sao do mesmo build?",
-                   j->btn.size, (unsigned long long)st.st_size);
-          install_log(lm);
-        }
-        app_dl_size = (unsigned long long)st.st_size;
+      long long got = (rc == 0) ? file_size_of(part) : -1;
+      snprintf(lm, sizeof(lm), "update do app: download rc=%d, arquivo=%lld bytes, catalogo=%llu bytes", rc, got, j->btn.size);
+      install_log(lm);
+      if (rc == 0 && got > 0) {
+        if (j->btn.size > 0 && (unsigned long long)got != j->btn.size)
+          install_log("AVISO: tamanho do catalogo difere do PKG no R2 (o catalogo e o PKG sao do mesmo build?)");
         unlink(path);
-        if (rename(part, path) == 0) { install_log("update do app: PKG baixado."); rc = 2; }
-        else { unlink(part); snprintf(err, sizeof(err), "Não foi possível salvar o arquivo em /data/pkg."); install_log("update do app: rename falhou"); rc = -1; }
+        if (copy_file(part, path) == 0) {
+          app_dl_size = (unsigned long long)got;
+          install_log("update do app: PKG salvo em /data/pkg.");
+          rc = 2;
+        } else {
+          unlink(path);
+          snprintf(err, sizeof(err), "Não foi possível salvar o arquivo em /data/pkg.");
+          install_log("update do app: copia para /data/pkg falhou (espaco/permissao?)");
+          rc = -1;
+        }
+        unlink(part);
       } else {
         unlink(part);
         if (rc == 0) { snprintf(err, sizeof(err), "Download da atualização vazio. Tente de novo."); install_log("update do app: arquivo vazio"); }
