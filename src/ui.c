@@ -549,7 +549,7 @@ void ui_install_done(UI *ui, int code, const char *err) {
   if (code == 1)
     ui_toast(ui, (err && err[0]) ? err : "Download concluído!", UI_TOAST_OK);
   else if (code == 0 && ui->updating)
-    ui_toast(ui, "Atualização enviada! Quando terminar nas Notificações, feche e abra o app.", UI_TOAST_OK);
+    ui_toast(ui, "Atualização enviada! Feche o app (botão PS > Fechar), espere terminar nas Notificações e abra de novo.", UI_TOAST_OK);
   else if (code == 0)
     ui_toast(ui, "Pedido aceito! Acompanhe nas Notificações do PS4.", UI_TOAST_OK);
   else
