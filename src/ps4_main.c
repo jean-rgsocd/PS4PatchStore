@@ -301,6 +301,8 @@ static void *install_thread(void *arg) {
     }
   } else if (!strcmp(action, "download")) {
     const char *dir = "/data/PS4PatchStore/downloads";
+    const char *d = j->btn.dest;
+    if (!strncmp(d, "/data/", 6) && !strstr(d, "..") && strlen(d) < 120) dir = d;      /* destino escolhido no catalogo */
     char path[512], filename[180];
     const char *base = strrchr(j->btn.url, '/');
     base = base ? base + 1 : j->btn.url;
@@ -317,7 +319,13 @@ static void *install_thread(void *arg) {
     filename[k] = 0;
     if (!filename[0] || !strcmp(filename, ".") || !strcmp(filename, "..")) snprintf(filename, sizeof(filename), "arquivo_download.bin");
     mkdir("/data/PS4PatchStore", 0777);
-    mkdir(dir, 0777);
+    {                                                  /* cria a pasta e as intermediarias (mkdir -p) */
+      char tmp[160];
+      snprintf(tmp, sizeof(tmp), "%s", dir);
+      for (char *p = tmp + 1; *p; p++)
+        if (*p == '/') { *p = 0; mkdir(tmp, 0777); *p = '/'; }
+      mkdir(tmp, 0777);
+    }
     snprintf(path, sizeof(path), "%s/%s", dir, filename);
     volatile int cancel = 0;
     char lm[700];

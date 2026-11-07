@@ -88,6 +88,7 @@ int catalog_parse(Catalog *c, char *text) {
       copy(b->type, sizeof(b->type), f[6]);
       b->base = atoi(f[7]);
       copy(b->action, sizeof(b->action), (n >= 9 && f[8][0]) ? f[8] : "pkg");
+      if (n >= 10) copy(b->dest, sizeof(b->dest), f[9]);
     }
   }
   return c->ngame > 0 ? 0 : -2;

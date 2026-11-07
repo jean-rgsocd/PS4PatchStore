@@ -73,7 +73,7 @@ class Parser(HTMLParser):
                     action = "image" if ext.endswith((".png", ".jpg", ".jpeg", ".webp")) else "download"
             self.btn = {"url": url, "name": a.get("data-name", ""),
                         "id": a.get("data-content-id", ""), "size": a.get("data-size", "0"),
-                        "type": a.get("data-type", ""), "action": action,
+                        "type": a.get("data-type", ""), "action": action, "dest": (a.get("data-dest") or "").strip(),
                         "base": "base-download-button" in cls, "label": ""}
             self.cap = ["label", ""]
 
@@ -152,9 +152,13 @@ def main():
             if action == "pkg" and not b["id"]:
                 print("AVISO: PKG '%s' sem data-content-id; sera mantido no catalogo, mas nao instalara" % b["label"])
             size = re.sub(r"\D", "", b["size"]) or "0"
-            lines.append("BTN\t%s\t%s\t%s\t%s\t%s\t%s\t%d\t%s" % (
+            dest = b.get("dest", "")
+            if dest and (not dest.startswith("/data/") or ".." in dest):
+                print("AVISO: data-dest '%s' invalido (precisa comecar com /data/); usando a pasta padrao" % dest)
+                dest = ""
+            lines.append("BTN\t%s\t%s\t%s\t%s\t%s\t%s\t%d\t%s\t%s" % (
                 b["label"], clean(b["name"]) or g["title"], b["url"], b["id"], size,
-                b["type"], 1 if b["base"] else 0, action))
+                b["type"], 1 if b["base"] else 0, action, dest))
             total_btn += 1
 
     with open(out, "w", encoding="utf-8", newline="\n") as fh:
