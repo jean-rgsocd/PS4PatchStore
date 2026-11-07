@@ -4,7 +4,7 @@
 
 #define CAT_MAX_CATS  16
 #define CAT_MAX_GAMES 64
-#define CAT_MAX_BTNS  8
+#define CAT_MAX_BTNS  20
 
 typedef struct { char id[32]; char label[64]; } CatCategory;
 
