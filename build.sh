@@ -132,9 +132,23 @@ cp project.gp4 out/project-native.gp4
 mkdir -p out/native
 run_pkgtool pkg_build project.gp4 out/native
 
-# Linha APP do catalogo: avisa os usuarios que existe versao nova do app (usa app.url + src/version.h)
+# ---------------------------------------------------------------------------
+# PATCH (gp) do app: o PS4 nao deixa instalar um app (gd) por cima de outro igual ("ja instalado"),
+# mas aceita normalmente um PATCH (gp) com versao maior sobre o app base. E este patch que o proprio
+# app baixa e instala quando o catalogo anuncia versao nova (linha APP). Sai em out/patch/.
+# ---------------------------------------------------------------------------
+echo "=== Patch (gp) do app ==="
+cp out/project-native.gp4 out/project-native-base.gp4
+PATCH=1 APP=native python3 tools/make_sfo.py
+PATCH=1 MODE=native python3 tools/make_gp4.py
+cp project.gp4 out/project-patch.gp4
+mkdir -p out/patch
+run_pkgtool pkg_build project.gp4 out/patch
+
+# Linha APP do catalogo: avisa os usuarios que existe versao nova do app (usa app.url + src/version.h).
+# Usa o PATCH (out/patch), nao o PKG base.
 echo "=== Linha de atualizacao do app ==="
-APKG=$(ls out/native/*.pkg 2>/dev/null | head -1 || true)
+APKG=$(ls out/patch/*.pkg 2>/dev/null | head -1 || true)
 if [ -n "$APKG" ]; then
   python3 tools/make_app_line.py "$APKG" app.url out/catalogo_para_servidor.dat \
     || echo "AVISO: nao foi possivel gerar a linha APP"
