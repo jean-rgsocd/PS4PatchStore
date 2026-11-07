@@ -303,21 +303,6 @@ static void *install_thread(void *arg) {
     const char *dir = "/data/PS4PatchStore/downloads";
     const char *d = j->btn.dest;
     if (!strncmp(d, "/data/", 6) && !strstr(d, "..") && strlen(d) < 120) dir = d;      /* destino escolhido no catalogo */
-    char path[512], filename[180];
-    const char *base = strrchr(j->btn.url, '/');
-    base = base ? base + 1 : j->btn.url;
-    size_t k = 0;
-    while (*base && *base != '?' && k + 1 < sizeof(filename)) {
-      unsigned char ch = (unsigned char)*base++;
-      if (ch == '%' && base[0] && base[1]) {
-        char hex[3] = { base[0], base[1], 0 };
-        char *end = NULL; long v = strtol(hex, &end, 16);
-        if (end && *end == 0) { ch = (unsigned char)v; base += 2; }
-      }
-      filename[k++] = (isalnum(ch) || ch == '.' || ch == '_' || ch == '-') ? (char)ch : '_';
-    }
-    filename[k] = 0;
-    if (!filename[0] || !strcmp(filename, ".") || !strcmp(filename, "..")) snprintf(filename, sizeof(filename), "arquivo_download.bin");
     mkdir("/data/PS4PatchStore", 0777);
     {                                                  /* cria a pasta e as intermediarias (mkdir -p) */
       char tmp[160];
@@ -326,27 +311,52 @@ static void *install_thread(void *arg) {
         if (*p == '/') { *p = 0; mkdir(tmp, 0777); *p = '/'; }
       mkdir(tmp, 0777);
     }
-    snprintf(path, sizeof(path), "%s/%s", dir, filename);
-    volatile int cancel = 0;
-    char lm[700];
-    snprintf(lm, sizeof(lm), "Iniciando download de arquivo pelo app: %s", j->btn.url);
-    install_log(lm);
-    snprintf(dl_name, sizeof(dl_name), "%s", filename);
-    dl_pct = 0;
-    dl_active = 1;
-    rc = auth_download(j->btn.url, path, &dl_pct, &cancel, err, sizeof(err));
-    dl_active = 0;
-    if (rc != 0) {
-      snprintf(lm, sizeof(lm), "Download falhou: %s", err[0] ? err : "(sem mensagem)");
+    /* baixa o arquivo principal e, se houver, o segundo arquivo do botao (ex.: plugin = .cpk + DpFileList.bin) */
+    const char *urls[2] = { j->btn.url, j->btn.extra[0] ? j->btn.extra : NULL };
+    char lastname[180] = "";
+    rc = 0;
+    for (int u = 0; u < 2 && urls[u] && rc == 0; u++) {
+      char path[512], filename[180];
+      const char *base = strrchr(urls[u], '/');
+      base = base ? base + 1 : urls[u];
+      size_t k = 0;
+      while (*base && *base != '?' && k + 1 < sizeof(filename)) {
+        unsigned char ch = (unsigned char)*base++;
+        if (ch == '%' && base[0] && base[1]) {
+          char hex[3] = { base[0], base[1], 0 };
+          char *end = NULL; long v = strtol(hex, &end, 16);
+          if (end && *end == 0) { ch = (unsigned char)v; base += 2; }
+        }
+        /* mantem o nome ORIGINAL (com espacos e acentos); so troca o que o sistema de arquivos nao aceita */
+        int bad = (ch < 32 || ch == '/' || ch == '\\' || ch == ':' || ch == '*' || ch == '?' || ch == '"' || ch == '<' || ch == '>' || ch == '|');
+        filename[k++] = bad ? '_' : (char)ch;
+      }
+      filename[k] = 0;
+      if (!filename[0] || !strcmp(filename, ".") || !strcmp(filename, "..")) snprintf(filename, sizeof(filename), "arquivo_download.bin");
+      snprintf(path, sizeof(path), "%s/%s", dir, filename);
+      volatile int cancel = 0;
+      char lm[700];
+      snprintf(lm, sizeof(lm), "Iniciando download de arquivo pelo app: %s", urls[u]);
       install_log(lm);
+      snprintf(dl_name, sizeof(dl_name), "%s", filename);
+      dl_pct = 0;
+      dl_active = 1;
+      rc = auth_download(urls[u], path, &dl_pct, &cancel, err, sizeof(err));
+      dl_active = 0;
+      if (rc != 0) {
+        snprintf(lm, sizeof(lm), "Download falhou: %s", err[0] ? err : "(sem mensagem)");
+        install_log(lm);
+        unlink(path);
+        if (!err[0]) snprintf(err, sizeof(err), "Falha ao baixar o arquivo.");
+      } else {
+        install_log(path);
+        snprintf(lastname, sizeof(lastname), "%s", filename);
+      }
     }
     if (rc == 0) {
-      snprintf(err, sizeof(err), "Download concluído: %s", filename);
-      install_log(path);
+      if (urls[1]) snprintf(err, sizeof(err), "Download concluído: %s + 1 arquivo", lastname);
+      else snprintf(err, sizeof(err), "Download concluído: %s", lastname);
       rc = 1; /* sucesso de download (diferente de pedido de instalacao) */
-    } else {
-      unlink(path);
-      if (!err[0]) snprintf(err, sizeof(err), "Falha ao baixar o arquivo.");
     }
   } else if (!strcmp(action, "video") || !strcmp(action, "image")) {
     snprintf(err, sizeof(err), "Este tipo de botão não deveria iniciar uma tarefa em segundo plano.");
