@@ -90,6 +90,7 @@ struct UI {
   int cat_idx, sel, scroll, focus;
 
   int busy, dirty;
+  int auto_upd;                        /* 1 = ao receber o catalogo, atualiza o app sozinho (uma vez por abertura) */
   int updating;                        /* o pedido em andamento e a atualizacao do proprio app */
   unsigned frame;
   char toast[256];
@@ -403,6 +404,7 @@ void ui_set_plan(UI *ui, const char *text, int level) {
 }
 
 void ui_set_catalog(UI *ui, const Catalog *cat) {
+  ui->auto_upd = 1;
   ui->cat = cat;
   ui->pix_open = 0;
   load_thumbs(ui);
@@ -849,6 +851,10 @@ void ui_tick(UI *ui) {
       if (ui->splash_logo) { img_free(ui->splash_logo); ui->splash_logo = NULL; }
     }
   }
+  if (ui->auto_upd && ui->mode == MODE_CATALOG && ui->splash >= SPLASH_END && !ui->busy) {
+    ui->auto_upd = 0;
+    if (update_available(ui)) trigger_update(ui);       /* atualizacao automatica: sem precisar apertar nada */
+  }
   cover_poll(ui);
   guide_tick(ui);
   if (ui->vid_mode) vid_tick(ui);
@@ -1013,9 +1019,17 @@ static void draw_cards(UI *ui) {
       "\xE2\x96\xB6", C_ACCENT, 255, 0);
 }
 
+static void draw_video_button(UI *ui, const char *label, const char *word, int x, int y, int w, int focused);
+
 static void draw_button(UI *ui, const CatButton *b, int x, int y, int w, int focused) {
   Image *s = ui->s;
   int r = 20;
+  if (!strcmp(b->action, "video") || !strcmp(b->action, "image")) {
+    char lb[128];
+    text_fit(ui->fb, 27, b->label, w - 40 - 56 - 130, lb, sizeof(lb));
+    draw_video_button(ui, lb, !strcmp(b->action, "video") ? "Assistir" : "Ver", x, y, w, focused);
+    return;
+  }
   if (b->base) {
     gfx_rrect(s, x, y, w, g_bh, r, C_BASE, 255, 0);
     gfx_rrect(s, x, y, w, g_bh, r, C_BASE_EDGE, 255, 2);
@@ -1037,13 +1051,13 @@ static void draw_button(UI *ui, const CatButton *b, int x, int y, int w, int foc
   else gfx_rrect(s, x - 8, y - 8, w + 16, g_bh + 16, r + 8, C_FOCUS, 255, 4);
 }
 
-static void draw_video_button(UI *ui, int x, int y, int w, int focused) {
+static void draw_video_button(UI *ui, const char *label, const char *word, int x, int y, int w, int focused) {
   Image *s = ui->s;
   int r = 20;
   gfx_rrect(s, x, y, w, g_bh, r, C_PANEL2, 255, 0);
   gfx_rrect(s, x, y, w, g_bh, r, C_WHITE, 40, 2);
-  T(ui, 1, 27, x + 32, y + g_bh / 2 + 10, "VER VÍDEO DO PATCH", C_TEXT, 255, 0);
-  T(ui, 0, 20, x + w - 56 - 12 - TW(ui, 0, 20, "Assistir", 0), y + g_bh / 2 + 7, "Assistir", C_MUTED, 255, 0);
+  T(ui, 1, 27, x + 32, y + g_bh / 2 + 10, label, C_TEXT, 255, 0);
+  T(ui, 0, 20, x + w - 56 - 12 - TW(ui, 0, 20, word, 0), y + g_bh / 2 + 7, word, C_MUTED, 255, 0);
   text_draw_in(s, ui->fb, 30, x + w - 60, 56, y + g_bh / 2 + 11, "\xE2\x96\xB6", C_ACCENT, 255, 0, 1);
   if (focused) gfx_rrect(s, x - 8, y - 8, w + 16, g_bh + 16, r + 8, C_FOCUS, 255, 4);
 }
@@ -1085,7 +1099,7 @@ static void draw_panel(UI *ui) {
     int bi = first + i;
     int y = btn_top + i * (g_bh + gap);
     if (bi < g->nbtn) draw_button(ui, &g->btn[bi], px, y, iw, bi == ui->focus);
-    else draw_video_button(ui, px, y, iw, bi == ui->focus);
+    else draw_video_button(ui, "VER VÍDEO DO PATCH", "Assistir", px, y, iw, bi == ui->focus);
   }
   if (first > 0) T(ui, 1, 22, PANEL_X + PANEL_W - 44, btn_top - 10, "\xE2\x96\xB2", C_MUTED, 255, 0);
   if (first + nb < items) T(ui, 1, 22, PANEL_X + PANEL_W - 44, bottom + 32, "\xE2\x96\xBC", C_MUTED, 255, 0);
