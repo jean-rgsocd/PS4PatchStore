@@ -59,24 +59,19 @@ jobs:
             echo "== gp4 =="; cat out/project-native.gp4
           } > diag.log 2>&1 || true
           cat diag.log
-      - name: Gerar Link de Download Direto (Gofile)
+      - uses: actions/upload-artifact@v4
         if: always()
-        run: |
-          mkdir -p upload_temp
-          cp out/native/*.pkg upload_temp/ 2>/dev/null || true
-          cp out/catalogo_para_servidor.dat upload_temp/ 2>/dev/null || true
-          cp build.log upload_temp/ 2>/dev/null || true
-          cd upload_temp
-          zip -r ../ps4_build_output.zip *
-          cd ..
-          echo "Enviando arquivo para o Gofile..."
-          RESPONSE=$(curl -s -F "file=@ps4_build_output.zip" https://store1.gofile.io/contents/uploadfile)
-          echo "===================================================="
-          echo "RESPOSTA DO GOFILE:"
-          echo "$RESPONSE"
-          echo "===================================================="
+        with:
+          name: ps4-patch-store-pkg
+          path: |
+            out/native/*.pkg
+            out/patch/*.pkg
+            out/catalogo_para_servidor.dat
+            native0/eboot.bin
+            build.log
+            diag.log
 
-  # Conversao dos videos (MP4 -> .jkv). Roda em paralelo.
+  # Conversao dos videos (MP4 -> .jkv). Roda em paralelo, sem atrasar o PKG. O resultado sai no artifact "videos-jkv".
   videos:
     runs-on: ubuntu-22.04
     timeout-minutes: 40
@@ -86,15 +81,8 @@ jobs:
         run: sudo apt-get update && sudo apt-get install -y ffmpeg
       - name: Converter videos
         run: python3 -u tools/convert_videos.py image0/index.html out/videos
-      - name: Gerar Link para Videos JKV (Gofile)
+      - uses: actions/upload-artifact@v4
         if: always()
-        run: |
-          cd out/videos
-          zip -r ../videos_jkv.zip *.jkv
-          cd ..
-          echo "Enviando videos convertidos para o Gofile..."
-          RESPONSE=$(curl -s -F "file=@videos_jkv.zip" https://store1.gofile.io/contents/uploadfile)
-          echo "===================================================="
-          echo "RESPOSTA DOS VIDEOS NO GOFILE:"
-          echo "$RESPONSE"
-          echo "===================================================="
+        with:
+          name: videos-jkv
+          path: out/videos/*.jkv
