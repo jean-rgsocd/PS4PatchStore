@@ -4,11 +4,14 @@ name: build-pkg
 on: [workflow_dispatch, push]
 
 permissions:
-  contents: read
+  contents: write
 
 jobs:
   pkg:
     runs-on: ubuntu-22.04
+
+    outputs:
+      release_tag: ${{ steps.release_info.outputs.tag }}
 
     steps:
       - uses: actions/checkout@v4
@@ -22,7 +25,10 @@ jobs:
         run: |
           set -e
 
-          curl -fsSL -H "Authorization: Bearer $GH_TOKEN" https://api.github.com/repos/OpenOrbis/OpenOrbis-PS4-Toolchain/releases/latest -o rel.json
+          curl -fsSL \
+            -H "Authorization: Bearer $GH_TOKEN" \
+            https://api.github.com/repos/OpenOrbis/OpenOrbis-PS4-Toolchain/releases/latest \
+            -o rel.json
 
           echo "Arquivos da release:"
           jq -r '.assets[].name' rel.json
@@ -114,32 +120,72 @@ jobs:
 
           cat diag.log
 
-      # PKG, catalogo e logs ficam disponiveis para download no GitHub.
-      - name: Publicar PKG e arquivos do aplicativo
-        if: always()
-        uses: actions/upload-artifact@v4
-        with:
-          name: PS4-PATCH-STORE-PKG
-          path: |
-            out/native/*.pkg
-            out/catalogo_para_servidor.dat
-            build.log
-            diag.log
-          retention-days: 30
-          if-no-files-found: warn
-
-      - name: Informar link de download
-        if: always()
+      - name: Preparar arquivos para download
         run: |
-          echo "## PS4 PATCH STORE" >> "$GITHUB_STEP_SUMMARY"
+          set -e
+
+          mkdir -p upload_temp
+
+          if ! compgen -G "out/native/*.pkg" > /dev/null; then
+            echo "ERRO: nenhum PKG foi gerado."
+            exit 1
+          fi
+
+          cp out/native/*.pkg upload_temp/
+
+          if [ -f out/catalogo_para_servidor.dat ]; then
+            cp out/catalogo_para_servidor.dat upload_temp/
+          fi
+
+          if [ -f build.log ]; then
+            cp build.log upload_temp/
+          fi
+
+          if [ -f diag.log ]; then
+            cp diag.log upload_temp/
+          fi
+
+          echo "Arquivos preparados:"
+          ls -lh upload_temp/
+
+      - name: Criar Release e publicar PKG
+        id: release_info
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -e
+
+          TAG="ps4-build-${GITHUB_RUN_NUMBER}-${GITHUB_RUN_ATTEMPT}"
+
+          echo "tag=$TAG" >> "$GITHUB_OUTPUT"
+
+          echo "Criando GitHub Release: $TAG"
+
+          gh release create "$TAG" upload_temp/* \
+            --repo "$GITHUB_REPOSITORY" \
+            --title "PS4 Patch Store - Build ${GITHUB_RUN_NUMBER}" \
+            --notes "Build automatico do PS4 Patch Store.
+
+          Commit: ${GITHUB_SHA}
+          Execucao: ${GITHUB_RUN_ID}
+
+          Arquivos gerados pelo OpenOrbis Toolchain."
+
+          RELEASE_URL="https://github.com/${GITHUB_REPOSITORY}/releases/tag/${TAG}"
+
+          echo "RELEASE_URL=$RELEASE_URL" >> "$GITHUB_ENV"
+
+          echo "## PS4 PATCH STORE - DOWNLOAD" >> "$GITHUB_STEP_SUMMARY"
           echo "" >> "$GITHUB_STEP_SUMMARY"
-          echo "Download do aplicativo e arquivos gerados:" >> "$GITHUB_STEP_SUMMARY"
-          echo "" >> "$GITHUB_STEP_SUMMARY"
-          echo "[CLIQUE AQUI PARA ACESSAR OS DOWNLOADS]($GITHUB_SERVER_URL/$GITHUB_REPOSITORY/actions/runs/$GITHUB_RUN_ID#artifacts)" >> "$GITHUB_STEP_SUMMARY"
+          echo "[CLIQUE AQUI PARA BAIXAR O PKG E OS ARQUIVOS]($RELEASE_URL)" >> "$GITHUB_STEP_SUMMARY"
+
+          echo "Release publicada:"
+          echo "$RELEASE_URL"
 
   # Conversao dos videos MP4 para JKV.
-  # Pula videos que ja existem no R2.
+  # Executa depois da criacao da Release do aplicativo.
   videos:
+    needs: pkg
     runs-on: ubuntu-22.04
     timeout-minutes: 40
 
@@ -150,22 +196,34 @@ jobs:
         run: sudo apt-get update && sudo apt-get install -y ffmpeg
 
       - name: Converter videos
-        run: python3 -u tools/convert_videos.py image0/index.html out/videos
-
-      - name: Publicar videos JKV
-        if: always()
-        uses: actions/upload-artifact@v4
-        with:
-          name: PS4-PATCH-STORE-VIDEOS-JKV
-          path: out/videos/*.jkv
-          retention-days: 30
-          if-no-files-found: warn
-
-      - name: Informar link dos videos
-        if: always()
         run: |
+          python3 -u tools/convert_videos.py image0/index.html out/videos
+
+      - name: Publicar videos JKV na mesma Release
+        env:
+          GH_TOKEN: ${{ github.token }}
+          RELEASE_TAG: ${{ needs.pkg.outputs.release_tag }}
+        run: |
+          set -e
+
+          if ! compgen -G "out/videos/*.jkv" > /dev/null; then
+            echo "Nenhum video novo para publicar."
+            echo "Todos os videos ja existem no R2 ou nao houve conversao."
+            exit 0
+          fi
+
+          echo "Videos encontrados:"
+          ls -lh out/videos/*.jkv
+
+          gh release upload "$RELEASE_TAG" out/videos/*.jkv \
+            --repo "$GITHUB_REPOSITORY" \
+            --clobber
+
+          RELEASE_URL="https://github.com/${GITHUB_REPOSITORY}/releases/tag/${RELEASE_TAG}"
+
           echo "## VIDEOS JKV" >> "$GITHUB_STEP_SUMMARY"
           echo "" >> "$GITHUB_STEP_SUMMARY"
-          echo "Download dos videos convertidos:" >> "$GITHUB_STEP_SUMMARY"
-          echo "" >> "$GITHUB_STEP_SUMMARY"
-          echo "[CLIQUE AQUI PARA ACESSAR OS DOWNLOADS]($GITHUB_SERVER_URL/$GITHUB_REPOSITORY/actions/runs/$GITHUB_RUN_ID#artifacts)" >> "$GITHUB_STEP_SUMMARY"
+          echo "[CLIQUE AQUI PARA BAIXAR OS VIDEOS]($RELEASE_URL)" >> "$GITHUB_STEP_SUMMARY"
+
+          echo "Videos publicados na Release:"
+          echo "$RELEASE_URL"
