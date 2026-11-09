@@ -1,48 +1,90 @@
+
 name: build-pkg
+
 on: [workflow_dispatch, push]
+
+permissions:
+  contents: read
+
 jobs:
   pkg:
     runs-on: ubuntu-22.04
+
     steps:
       - uses: actions/checkout@v4
+
       - name: Dependencias
         run: sudo apt-get update && sudo apt-get install -y clang lld jq python3 unzip libicu-dev
+
       - name: Baixar OpenOrbis Toolchain
         env:
           GH_TOKEN: ${{ github.token }}
         run: |
           set -e
+
           curl -fsSL -H "Authorization: Bearer $GH_TOKEN" https://api.github.com/repos/OpenOrbis/OpenOrbis-PS4-Toolchain/releases/latest -o rel.json
-          echo "Arquivos da release:"; jq -r '.assets[].name' rel.json
+
+          echo "Arquivos da release:"
+          jq -r '.assets[].name' rel.json
+
           KIND=tar
+
           URL=$(jq -r '[.assets[] | select(.name | test("\\.(tar\\.gz|tgz)$"))][0].browser_download_url // empty' rel.json)
+
           if [ -z "$URL" ]; then
             KIND=zip
             URL=$(jq -r '[.assets[] | select(.name | test("\\.zip$"))][0].browser_download_url // empty' rel.json)
           fi
-          if [ -z "$URL" ]; then echo "ERRO: nenhum .tar.gz ou .zip na release"; exit 1; fi
+
+          if [ -z "$URL" ]; then
+            echo "ERRO: nenhum .tar.gz ou .zip na release"
+            exit 1
+          fi
+
           echo "Baixando $URL"
+
           curl -fL "$URL" -o toolchain.bin
+
           mkdir -p oo
-          if [ "$KIND" = tar ]; then tar xzf toolchain.bin -C oo; else unzip -q toolchain.bin -d oo; fi
+
+          if [ "$KIND" = tar ]; then
+            tar xzf toolchain.bin -C oo
+          else
+            unzip -q toolchain.bin -d oo
+          fi
+
           LX=$(find oo -name link.x | head -1)
-          if [ -z "$LX" ]; then echo "ERRO: link.x nao encontrado"; find oo -maxdepth 3; exit 1; fi
+
+          if [ -z "$LX" ]; then
+            echo "ERRO: link.x nao encontrado"
+            find oo -maxdepth 3
+            exit 1
+          fi
+
           TC=$(dirname "$LX")
+
           echo "OO_PS4_TOOLCHAIN=$GITHUB_WORKSPACE/$TC" >> "$GITHUB_ENV"
+
           chmod -R +x "$TC/bin/linux" || true
+
       - name: Compilar e empacotar
         env:
           DOTNET_ROLL_FORWARD: Major
         run: |
           set +e
+
           bash build.sh > build.log 2>&1
+
           CODE=$?
+
           cat build.log
+
           if [ $CODE -ne 0 ]; then
             MSG=$(tail -n 25 build.log | sed 's/%/%25/g' | awk '{printf "%s%%0A", $0}')
             echo "::error title=Falha no build::$MSG"
             exit $CODE
           fi
+
       - name: Diagnostico
         if: always()
         continue-on-error: true
@@ -51,56 +93,79 @@ jobs:
           DOTNET_SYSTEM_GLOBALIZATION_INVARIANT: "1"
         run: |
           DLL=$(find "$OO_PS4_TOOLCHAIN/bin" -name 'PkgTool.Core.dll' | head -1)
+
           {
-            echo "== SFO do app =="; dotnet "$DLL" sfo_listentries native0/sce_sys/param.sfo
-            echo "== libs do app =="; readelf -d build/native/eboot.elf | grep -E 'NEEDED|SONAME'
-            echo "== libs de rede do toolchain =="; ls "$OO_PS4_TOOLCHAIN/lib" | grep -i -E "http|ssl|net|sysmodule"
-            echo "== conteudo do app =="; ls -laR native0 | head -80
-            echo "== gp4 =="; cat out/project-native.gp4
+            echo "== SFO do app =="
+            dotnet "$DLL" sfo_listentries native0/sce_sys/param.sfo
+
+            echo "== libs do app =="
+            readelf -d build/native/eboot.elf | grep -E 'NEEDED|SONAME'
+
+            echo "== libs de rede do toolchain =="
+            ls "$OO_PS4_TOOLCHAIN/lib" | grep -i -E "http|ssl|net|sysmodule"
+
+            echo "== conteudo do app =="
+            ls -laR native0 | head -80
+
+            echo "== gp4 =="
+            cat out/project-native.gp4
+
           } > diag.log 2>&1 || true
+
           cat diag.log
-      - name: Gerar Link de Download Direto (Gofile)
+
+      # PKG, catalogo e logs ficam disponiveis para download no GitHub.
+      - name: Publicar PKG e arquivos do aplicativo
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: PS4-PATCH-STORE-PKG
+          path: |
+            out/native/*.pkg
+            out/catalogo_para_servidor.dat
+            build.log
+            diag.log
+          retention-days: 30
+          if-no-files-found: warn
+
+      - name: Informar link de download
         if: always()
         run: |
-          mkdir -p upload_temp
-          cp out/native/*.pkg upload_temp/ 2>/dev/null || true
-          cp out/catalogo_para_servidor.dat upload_temp/ 2>/dev/null || true
-          cp build.log upload_temp/ 2>/dev/null || true
-          cd upload_temp
-          if [ -z "$(ls -A .)" ]; then echo "Nada para enviar (o build nao gerou arquivos)."; exit 0; fi
-          zip -r ../ps4_build_output.zip *
-          cd ..
-          echo "Enviando arquivo para o Gofile..."
-          RESPONSE=$(curl -s -F "file=@ps4_build_output.zip" https://store1.gofile.io/contents/uploadfile)
-          echo "===================================================="
-          echo "RESPOSTA DO GOFILE:"
-          echo "$RESPONSE"
-          echo "===================================================="
+          echo "## PS4 PATCH STORE" >> "$GITHUB_STEP_SUMMARY"
+          echo "" >> "$GITHUB_STEP_SUMMARY"
+          echo "Download do aplicativo e arquivos gerados:" >> "$GITHUB_STEP_SUMMARY"
+          echo "" >> "$GITHUB_STEP_SUMMARY"
+          echo "[CLIQUE AQUI PARA ACESSAR OS DOWNLOADS]($GITHUB_SERVER_URL/$GITHUB_REPOSITORY/actions/runs/$GITHUB_RUN_ID#artifacts)" >> "$GITHUB_STEP_SUMMARY"
 
-  # Conversao dos videos (MP4 -> .jkv). Roda em paralelo. Pula os videos que ja existem no R2.
+  # Conversao dos videos MP4 para JKV.
+  # Pula videos que ja existem no R2.
   videos:
     runs-on: ubuntu-22.04
     timeout-minutes: 40
+
     steps:
       - uses: actions/checkout@v4
+
       - name: ffmpeg
         run: sudo apt-get update && sudo apt-get install -y ffmpeg
+
       - name: Converter videos
         run: python3 -u tools/convert_videos.py image0/index.html out/videos
-      - name: Gerar Link para Videos JKV (Gofile)
+
+      - name: Publicar videos JKV
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: PS4-PATCH-STORE-VIDEOS-JKV
+          path: out/videos/*.jkv
+          retention-days: 30
+          if-no-files-found: warn
+
+      - name: Informar link dos videos
         if: always()
         run: |
-          mkdir -p out/videos
-          cd out/videos
-          if ! ls *.jkv >/dev/null 2>&1; then
-            echo "Nenhum video novo para converter (todos ja existem no R2)."
-            exit 0
-          fi
-          zip -r ../videos_jkv.zip *.jkv
-          cd ..
-          echo "Enviando videos convertidos para o Gofile..."
-          RESPONSE=$(curl -s -F "file=@videos_jkv.zip" https://store1.gofile.io/contents/uploadfile)
-          echo "===================================================="
-          echo "RESPOSTA DOS VIDEOS NO GOFILE:"
-          echo "$RESPONSE"
-          echo "===================================================="
+          echo "## VIDEOS JKV" >> "$GITHUB_STEP_SUMMARY"
+          echo "" >> "$GITHUB_STEP_SUMMARY"
+          echo "Download dos videos convertidos:" >> "$GITHUB_STEP_SUMMARY"
+          echo "" >> "$GITHUB_STEP_SUMMARY"
+          echo "[CLIQUE AQUI PARA ACESSAR OS DOWNLOADS]($GITHUB_SERVER_URL/$GITHUB_REPOSITORY/actions/runs/$GITHUB_RUN_ID#artifacts)" >> "$GITHUB_STEP_SUMMARY"
