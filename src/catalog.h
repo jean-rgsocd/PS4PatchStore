@@ -15,8 +15,6 @@ typedef struct {
   char content_id[48];
   unsigned long long size;
   char type[8];            /* PS4GD, PS4GP, PS4AC... (vazio = padrao) */
-  char extra[1024];        /* 2o arquivo baixado junto (mesma pasta), opcional */
-  char dest[128];          /* pasta de destino do download (vazio = /data/PS4PatchStore/downloads) */
   char action[12];         /* pkg (padrao), download, video ou image */
   int base;                /* 1 = botao de jogo base (estilo diferente) */
 } CatButton;
@@ -27,7 +25,7 @@ typedef struct {
   char tag[32];
   char kicker[96];
   char title[96];
-  char desc[400];
+  char desc[1200];
   char video[200];         /* link https do video (abre no navegador do PS4); vazio = sem video */
   int nbtn;
   CatButton btn[CAT_MAX_BTNS];
