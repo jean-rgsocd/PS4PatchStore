@@ -44,9 +44,13 @@ def payload(key, name, city, valor=None):
     p += "6304"
     return p + crc16(p)
 
+SO_QR = False
+
 def main():
     a = sys.argv[1:]
+    global SO_QR
     out = "image0/qr_pix.png"; valor = None
+    if "--so-qr" in a: SO_QR = True; a.remove("--so-qr")      # imagem so com o QR (sem texto da chave embaixo)
     if "--out" in a: i = a.index("--out"); out = a[i + 1]; del a[i:i + 2]
     if "--valor" in a: i = a.index("--valor"); valor = float(a[i + 1].replace(",", ".")); del a[i:i + 2]
     if "--codigo" in a:                                   # usa o codigo do banco como esta (so confere o CRC)
@@ -71,6 +75,12 @@ def render(code, key, out, valor_txt):
     qr = cv2.resize(qr, None, fx=scale, fy=scale, interpolation=cv2.INTER_NEAREST)
     qimg = Image.fromarray(qr).convert("RGB")
     W = 520; pad = 40
+    if SO_QR:
+        img = Image.new("RGB", (qimg.width + 2 * 24, qimg.height + 2 * 24), (255, 255, 255))
+        img.paste(qimg, (24, 24))
+        img.save(out, optimize=True)
+        print("ok", out, "(%dx%d, so QR)" % img.size)
+        return
     img = Image.new("RGB", (W, qimg.height + 2 * pad + 70), (255, 255, 255))
     img.paste(qimg, ((W - qimg.width) // 2, pad))
     d = ImageDraw.Draw(img)

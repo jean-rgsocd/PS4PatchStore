@@ -131,6 +131,7 @@ int auth_plan_text(const char *plan, long now, char *out, size_t cap) {
   out[0] = 0;
   if (!plan || !plan[0]) return -1;
   if (!strcmp(plan, "ilimitado")) { snprintf(out, cap, "PLANO ILIMITADO"); return 0; }
+  if (!strcmp(plan, "pendente")) { snprintf(out, cap, "AGUARDANDO ATIVA\xC3\x87\xC3\x83O  \xC2\xB7  FALE COM A GENTE"); return 2; }
 
   int Y, M, D, h = 0, mi = 0, sec = 0;
   if (sscanf(plan, "%d-%d-%dT%d:%d:%d", &Y, &M, &D, &h, &mi, &sec) < 3) return -1;

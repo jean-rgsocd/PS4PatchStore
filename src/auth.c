@@ -29,6 +29,8 @@ static int running = 0;                      /* ha uma tarefa de rede em andamen
 static int have_ev = 0;
 static AuthEvent evq;
 
+static long g_support = 0;                   /* prazo do apoio (lido do /me), entregue junto do evento */
+static int g_nag = 0;
 static char server[256];                     /* sem barra final */
 
 static void post_event2(int type, const char *msg, const char *user, char *text, const char *plan, long plan_now) {
@@ -40,6 +42,8 @@ static void post_event2(int type, const char *msg, const char *user, char *text,
   if (user) snprintf(evq.user, sizeof(evq.user), "%s", user);
   if (plan) snprintf(evq.plan, sizeof(evq.plan), "%s", plan);
   evq.plan_now = plan_now;
+  evq.support_until = g_support;
+  evq.nag = g_nag;
   evq.text = text;
   have_ev = 1;
   running = 0;
@@ -281,11 +285,11 @@ out:
 }
 
 /* ------------------------------------------------------------------ tarefas */
-static int fetch_catalog(const char *user, const char *token, int silent_login_needed) {
+static int fetch_catalog(const char *user, const char *token, int silent_login_needed, int preview) {
   char err[200] = "";
   char *resp = NULL;
   int st = 0;
-  if (http_do(0, "/catalog", NULL, token, &st, &resp, err, sizeof(err)) != 0) {
+  if (http_do(0, preview ? "/preview" : "/catalog", NULL, token, &st, &resp, err, sizeof(err)) != 0) {
     post_event(AUTH_EV_CATALOG_FAIL, err, user, NULL);
     return -1;
   }
@@ -306,17 +310,30 @@ static int fetch_catalog(const char *user, const char *token, int silent_login_n
   /* Plano do usuario (para o topo do app). Se falhar, o app so nao mostra o plano. */
   char plan[48] = "";
   long now = 0;
+  g_support = 0; g_nag = 0;
   {
     char e2[200] = "";
     char *r2 = NULL;
     int s2 = 0;
-    if (http_do(0, "/me", NULL, token, &s2, &r2, e2, sizeof(e2)) == 0) {
+    if (!preview && http_do(0, "/me", NULL, token, &s2, &r2, e2, sizeof(e2)) == 0) {
       if (auth_parse_me(s2, r2, plan, sizeof(plan), &now) != 0) { plan[0] = 0; now = 0; }
+      else {                                              /* 6a linha do /me: cadastro (segundos) */
+        const char *q = r2;
+        for (int ln = 0; ln < 5 && q; ln++) { q = strchr(q, '\n'); if (q) q++; }
+        if (q) { g_support = atol(q); const char *n2 = strchr(q, '\n'); if (n2) g_nag = n2[1] == '1'; }
+      }
       free(r2);
     }
   }
   post_event2(AUTH_EV_CATALOG, NULL, user, resp, plan, now);
   return 0;
+}
+
+static void *preview_thread(void *arg) {
+  (void)arg;
+  install_log("Modo visitante: baixando catalogo so para olhar.");
+  fetch_catalog("", NULL, 0, 1);
+  return NULL;
 }
 
 static void *restore_thread(void *arg) {
@@ -327,7 +344,7 @@ static void *restore_thread(void *arg) {
     return NULL;
   }
   install_log("Sessao salva encontrada; baixando catalogo.");
-  fetch_catalog(user, token, 1);
+  fetch_catalog(user, token, 1, 0);
   return NULL;
 }
 
@@ -353,7 +370,7 @@ static void *login_thread(void *arg) {
       for (char *p = user; *p; p++) if (*p >= 'A' && *p <= 'Z') *p += 32;
       session_save(user, token, exp);
       install_log("Login aceito.");
-      fetch_catalog(user, token, 0);
+      fetch_catalog(user, token, 0, 0);
     }
     free(resp);
   }
@@ -429,6 +446,15 @@ void auth_start_login(const char *user, const char *pass) {
     free(j);
     post_event(AUTH_EV_LOGIN_FAIL, "Não foi possível iniciar a rede.", NULL, NULL);
   }
+}
+
+void auth_start_preview(void) {
+  if (auth_server_configured() != 0) {
+    post_event(AUTH_EV_CATALOG_FAIL, "Servidor não configurado (arquivo server.url).", NULL, NULL);
+    return;
+  }
+  if (!begin()) return;
+  if (spawn(preview_thread, NULL) != 0) post_event(AUTH_EV_CATALOG_FAIL, "Não foi possível iniciar a rede.", NULL, NULL);
 }
 
 void auth_start_register(const char *user, const char *pass) {

@@ -16,6 +16,8 @@ typedef struct {
   char msg[200];
   char user[64];
   char plan[48];          /* AUTH_EV_CATALOG: plano do usuario ("ilimitado" ou data ISO); vazio se o servidor nao informou */
+  long support_until;     /* AUTH_EV_CATALOG: ate quando o apoio (30 dias) esta em dia (segundos, hora do servidor); 0 = desconhecido */
+  int nag;                /* 1 = o admin ligou o lembrete fixo: mostra o "Apoie o app" toda vez que abrir */
   long plan_now;          /* hora do servidor (segundos) quando o plano foi lido; 0 = desconhecida */
   char *text;
 } AuthEvent;
@@ -26,6 +28,7 @@ int auth_server_configured(void);
 void auth_start_restore(void);                                  /* tenta a sessao salva e baixa o catalogo */
 void auth_start_login(const char *user, const char *pass);      /* login + catalogo */
 void auth_start_register(const char *user, const char *pass);   /* cadastro (conta nasce pendente) */
+void auth_start_preview(void);                                  /* visitante: baixa o catalogo "so olhar" (sem login) */
 void auth_logout(void);                                         /* apaga a sessao salva */
 int  auth_poll(AuthEvent *ev);                                  /* 1 se havia evento (preenche ev) */
 

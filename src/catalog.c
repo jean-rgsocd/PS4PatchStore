@@ -54,7 +54,9 @@ int catalog_parse(Catalog *c, char *text) {
     char *f[12];
     int n = split(line, f, 12);
 
-    if (!strcmp(f[0], "APP") && n >= 6) {
+    if (!strcmp(f[0], "LOCK")) {
+      c->locked = 1;
+    } else if (!strcmp(f[0], "APP") && n >= 6) {
       copy(c->app.version, sizeof(c->app.version), f[1]);
       copy(c->app.url, sizeof(c->app.url), f[2]);
       copy(c->app.content_id, sizeof(c->app.content_id), f[3]);

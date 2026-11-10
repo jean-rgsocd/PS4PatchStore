@@ -478,6 +478,11 @@ static int on_cover_fetch(const char *url, const char *dest, void *ud) {
   return auth_download(url, dest, &pct, &cancel, err, sizeof(err));
 }
 
+static void on_preview(void *ud) {
+  (void)ud;
+  auth_start_preview();
+}
+
 static void on_register(const char *user, const char *pass, void *ud) {
   (void)ud;
   auth_start_register(user, pass);
@@ -487,6 +492,24 @@ static void on_logout(void *ud) {
   (void)ud;
   auth_logout();
   install_log("Sessao encerrada pelo usuario.");
+}
+
+/* Lembrete de apoio (nao bloqueia nada). Quando o prazo de 30 dias do apoio vence, abre a tela "Apoie o app" ao entrar:
+ * uma vez a cada 30 dias, ou TODA vez que abrir se o admin ligou o "lembrete fixo". Ao confirmar a doacao, o admin soma
+ * +30 dias e desliga o lembrete. O ultimo lembrete fica em /data/jkpatchs_apoio.txt (segundos, hora do servidor). */
+#define REMIND_FILE "/data/jkpatchs_apoio.txt"
+static void support_reminder(UI *ui, const AuthEvent *ev) {
+  if (!ev->user[0] || cat.locked || ev->plan_now < 1700000000L) return;
+  if (ev->nag) { ui_remind_support(ui); install_log("Lembrete de apoio (fixo, ligado pelo admin)."); return; }
+  if (ev->support_until < 1700000000L || ev->plan_now < ev->support_until) return;
+  long last = 0;
+  FILE *f = fopen(REMIND_FILE, "r");
+  if (f) { if (fscanf(f, "%ld", &last) != 1) last = 0; fclose(f); }
+  if (last > 0 && ev->plan_now - last < 30L * 86400L) return;
+  ui_remind_support(ui);
+  f = fopen(REMIND_FILE, "w");
+  if (f) { fprintf(f, "%ld\n", ev->plan_now); fclose(f); }
+  install_log("Lembrete de apoio mostrado (prazo de 30 dias vencido).");
 }
 
 static void check_auth(UI *ui) {
@@ -506,13 +529,18 @@ static void check_auth(UI *ui) {
     case AUTH_EV_CATALOG:
       if (catalog_parse(&cat, ev.text) == 0) {
         ui_set_user(ui, ev.user);
-        {
+        if (!ev.user[0]) {                                    /* visitante (sem login) */
+          ui_set_plan(ui, "MODO VISITANTE  \xC2\xB7  DOWNLOADS BLOQUEADOS", 1);
+        } else if (!strcmp(ev.plan, "pendente")) {
           char pt[96];
           int lv = auth_plan_text(ev.plan, ev.plan_now, pt, sizeof(pt));
           ui_set_plan(ui, lv >= 0 ? pt : "", lv >= 0 ? lv : 0);
+        } else {
+          ui_set_plan(ui, "CONTA ATIVA", 0);                   /* sem vencimento: o app e livre */
         }
         ui_set_catalog(ui, &cat);
         install_log("Catalogo recebido do servidor.");
+        support_reminder(ui, &ev);
         if (cat.app.url[0] && catalog_version_num(cat.app.version) <= catalog_version_num(APP_VERSION)) {
           char fn[96], pp[160];                    /* app ja esta na versao do catalogo: apaga o PKG da atualizacao (libera espaco) */
           ui_app_pkg_name(cat.app.url, fn, sizeof(fn));
@@ -564,6 +592,7 @@ int main(void) {
   if (!ui) { install_log("ERRO: ui_create falhou"); return 1; }
   ui_set_auth_handlers(ui, on_login, on_logout, NULL);
   ui_set_register_handler(ui, on_register);
+  ui_set_preview_handler(ui, on_preview);
   ui_set_open_handler(ui, on_open_url, NULL);
   ui_set_cover_fetcher(ui, on_cover_fetch, "/data/jkcovers", NULL);
   ui_show_loading(ui, "Conectando ao servidor...");
