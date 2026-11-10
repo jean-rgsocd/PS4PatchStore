@@ -7,6 +7,7 @@
 #include <sys/stat.h>
 #include <stdlib.h>
 #include <string.h>
+#include <ctype.h>
 
 /* ------------------------------------------------------------------ tema (igual ao site) */
 #define C_BG         RGB(0x08, 0x0d, 0x18)
@@ -27,19 +28,22 @@
 #define W            1920
 #define H            1080
 #define MARGIN       96
-#define COVER_W      280
-#define COVER_H      470
-#define COVER_GAP    40
-#define VISIBLE      3
-#define CARDS_Y      350
-#define PANEL_X      1090
-#define PANEL_Y      350
-#define PANEL_W      734
-#define PANEL_H      550
-#define BTN_H        84
-#define BTN_GAP      16
-#define BTN_VISIBLE  3
-static int g_bh = BTN_H;                /* altura do botao em uso (menor quando o painel tem 4 itens) */
+#define NTH          4                  /* tamanhos de capa: 0 = em foco, 1..3 = vizinhas cada vez menores */
+static const int TH_W[NTH] = {340, 250, 200, 160};
+static const int TH_H[NTH] = {573, 421, 337, 270};
+#define CAR_Y        335                /* topo da capa em foco na vitrine */
+#define CAR_GAP      30
+#define DT_X         MARGIN             /* tela de detalhe: coluna da esquerda */
+#define DT_W         700
+#define DT_PX        850                /* painel de downloads */
+#define DT_PY        140
+#define DT_PW        974
+#define DT_PH        820
+#define BTN_H        72
+#define BTN_GAP      10
+#define DL_VIS       8                  /* downloads visiveis ao mesmo tempo */
+#define MD_VIS       2                  /* videos/imagens visiveis ao mesmo tempo */
+static int g_bh = BTN_H;                /* altura do botao em uso */
 #define TOAST_TICKS  360
 #define SPLASH_FADE 140            /* ~2,3 s: o conteudo comeca a sumir */
 #define SPLASH_END  158            /* ~2,6 s no total (60 ticks por segundo) */
@@ -52,6 +56,8 @@ struct UI {
   int mode;
   UiLoginFn login_fn;
   UiLoginFn register_fn;
+  UiPreviewFn preview_fn;              /* botao "Ver a loja" (visitante) */
+  int locked, visitor;                 /* catalogo so para olhar: sem downloads (visitante ou plano vencido/pendente) */
   Image *qr;                           /* QR Code do WhatsApp do admin (assets/images/qr_whatsapp.png) */
   Image *pix;                          /* QR Code do Pix de apoio (assets/images/qr_pix.png); sem o arquivo, o botao nao aparece */
   int pix_open;
@@ -84,13 +90,22 @@ struct UI {
   void *user;
   Font *f, *fb;
   Image *bg;
-  Image *thumb[CAT_MAX_GAMES];
+  Image *fbg;                          /* fundo da capa em foco (estadio + capa ampliada e borrada) */
+  Image *th[CAT_MAX_GAMES][NTH];       /* capas em varios tamanhos */
+  Image *qr_small;                     /* QR pequeno da tela de login */
+  int detail;                          /* 0 = vitrine de capas, 1 = detalhe do jogo (downloads + videos) */
+  int zone;                            /* detalhe: 0 = downloads, 1 = videos/imagens */
+  int dfocus, dscroll, mfocus, mscroll;
 
   int filt[CAT_MAX_GAMES], nfilt;
   int cat_idx, sel, scroll, focus;
 
   int busy, dirty;
+  int auto_upd;                        /* 1 = ao receber o catalogo, atualiza o app sozinho (uma vez por abertura) */
   int updating;                        /* o pedido em andamento e a atualizacao do proprio app */
+  int upd_ready;                       /* 1 = o PKG novo do app ja esta baixado em /data/pkg */
+  int upd_help;                        /* 1 = tela com o passo a passo da instalacao aberta */
+  char upd_file[96];                   /* nome do PKG baixado (mostrado no passo a passo) */
   unsigned frame;
   char toast[256];
   int toast_left, toast_kind;
@@ -123,27 +138,26 @@ static const CatGame *cur_game(UI *ui) {
   return &ui->cat->game[ui->filt[ui->sel]];
 }
 
-/* Botao que ja vem focado: o ultimo que nao e "base" (normalmente o update); senao o primeiro. */
-static int default_focus(const CatGame *g) {
-  if (!g) return 0;
-  for (int i = g->nbtn - 1; i >= 0; i--) if (!g->btn[i].base) return i;
-  return 0;
+/* Itens do detalhe: "downloads" = botoes pkg/download; "midias" = botoes video/image e, por ultimo, o video do card
+ * (indice nbtn). dl[] e md[] guardam o indice do botao dentro de g->btn. */
+static int is_media(const CatButton *b) { return !strcmp(b->action, "video") || !strcmp(b->action, "image"); }
+static void lists(const CatGame *g, int *dl, int *nd, int *md, int *nm) {
+  *nd = 0; *nm = 0;
+  if (!g) return;
+  for (int i = 0; i < g->nbtn; i++) {
+    if (is_media(&g->btn[i])) md[(*nm)++] = i;
+    else dl[(*nd)++] = i;
+  }
+  if (g->video[0]) md[(*nm)++] = g->nbtn;
 }
 
-/* Itens focaveis do painel: os botoes de download e, por ultimo, o botao de video (se houver). */
-static int panel_items(const CatGame *g) { return g ? g->nbtn + (g->video[0] ? 1 : 0) : 0; }
-
-static void fix_scroll(UI *ui) {
-  if (ui->sel < ui->scroll) ui->scroll = ui->sel;
-  if (ui->sel >= ui->scroll + VISIBLE) ui->scroll = ui->sel - VISIBLE + 1;
-  if (ui->scroll < 0) ui->scroll = 0;
-}
+static void rebuild_fbg(UI *ui);
 
 static void select_game(UI *ui, int idx) {
   ui->sel = idx;
-  fix_scroll(ui);
-  ui->focus = default_focus(cur_game(ui));
+  ui->detail = 0;
   ui->dirty = 1;
+  rebuild_fbg(ui);
 }
 
 static void type_label(const char *type, char *out, int cap) {
@@ -236,12 +250,45 @@ static void cover_start(UI *ui, CoverJobs *J) {
   (void)ui;
 }
 
-static Image *thumb_from_file(const char *path) {
+static void free_thumbs(UI *ui, int i) {
+  for (int k = 0; k < NTH; k++) { if (ui->th[i][k]) { img_free(ui->th[i][k]); ui->th[i][k] = NULL; } }
+}
+
+/* Carrega a capa do arquivo e gera os 4 tamanhos. Retorna 1 se deu certo. */
+static int thumbs_from_file(UI *ui, int i, const char *path) {
   Image *raw = img_load(path);
-  if (!raw) return NULL;
-  Image *t = img_scale_cover(raw, COVER_W, COVER_H);
+  if (!raw) return 0;
+  Image *t[NTH];
+  int ok = 1;
+  for (int k = 0; k < NTH; k++) { t[k] = img_scale_cover(raw, TH_W[k], TH_H[k]); if (!t[k]) ok = 0; }
   img_free(raw);
-  return t;
+  if (!ok) { for (int k = 0; k < NTH; k++) if (t[k]) img_free(t[k]); return 0; }
+  free_thumbs(ui, i);
+  for (int k = 0; k < NTH; k++) ui->th[i][k] = t[k];
+  return 1;
+}
+
+/* Fundo da vitrine: estadio + a capa em foco ampliada e borrada (miniatura esticada com filtro bilinear). */
+static void rebuild_fbg(UI *ui) {
+  if (!ui->bg) return;
+  if (!ui->fbg) ui->fbg = img_new(W, H);
+  if (!ui->fbg) return;
+  gfx_blit_surface(ui->fbg, ui->bg);
+  const CatGame *g = cur_game(ui);
+  Image *t = g ? ui->th[ui->filt[ui->sel]][0] : NULL;
+  if (t) {
+    Image *tiny = img_scale(t, 64, 108);
+    Image *bl = tiny ? img_new(W, H) : NULL;
+    if (tiny && bl) {
+      Image crop;                                             /* faixa do meio da capa, na proporcao da tela */
+      crop.w = 64; crop.h = 36; crop.px = tiny->px + (size_t)20 * 64;
+      gfx_blit_scaled(bl, &crop, 0, 0, W, H);
+      gfx_blit(ui->fbg, bl, 0, 0, 0, 150);
+    }
+    if (bl) img_free(bl);
+    if (tiny) img_free(tiny);
+  }
+  gfx_vfade(ui->fbg, 0, 0, W, H, C_BG, 60, 215);
 }
 
 static void load_thumbs(UI *ui) {
@@ -252,7 +299,7 @@ static void load_thumbs(UI *ui) {
   ui->cover_pending = 0;
   int gen = ui->cover_gen;
   pthread_mutex_unlock(&cover_mu);
-  for (int i = 0; i < CAT_MAX_GAMES; i++) { if (ui->thumb[i]) { img_free(ui->thumb[i]); ui->thumb[i] = NULL; } }
+  for (int i = 0; i < CAT_MAX_GAMES; i++) free_thumbs(ui, i);
   if (!ui->cat) return;
   CoverJobs *J = NULL;
   for (int i = 0; i < ui->cat->ngame; i++) {
@@ -261,13 +308,13 @@ static void load_thumbs(UI *ui) {
     if (is_remote_cover(cv)) {
       if (!ui->cover_fetch || !ui->cover_dir[0]) continue;
       cover_cache_path(ui, cv, path, sizeof(path));
-      ui->thumb[i] = thumb_from_file(path);                     /* ja baixada antes? */
-      if (!ui->thumb[i]) {
+      thumbs_from_file(ui, i, path);                            /* ja baixada antes? */
+      if (!ui->th[i][0]) {
         const char *base = strrchr(cv, '/'); base = base ? base + 1 : cv;       /* capa de reserva dentro do app, se tiver */
         char nm[96]; snprintf(nm, sizeof(nm), "%s", base);
         char *q = strchr(nm, '?'); if (q) *q = 0;
         char bp[512]; snprintf(bp, sizeof(bp), "%s/images/%s", ui->assets, nm);
-        ui->thumb[i] = thumb_from_file(bp);
+        thumbs_from_file(ui, i, bp);
         if (!J) { J = (CoverJobs *)calloc(1, sizeof(CoverJobs)); if (J) { J->ui = ui; J->gen = gen; } }
         if (J && J->n < CAT_MAX_GAMES) {
           snprintf(J->url[J->n], sizeof(J->url[0]), "%s", cv);
@@ -278,7 +325,7 @@ static void load_thumbs(UI *ui) {
       continue;
     }
     snprintf(path, sizeof(path), "%s/images/%s", ui->assets, cv);
-    ui->thumb[i] = thumb_from_file(path);
+    thumbs_from_file(ui, i, path);
   }
   if (J) { if (J->n > 0) cover_start(ui, J); else free(J); }
 }
@@ -296,8 +343,7 @@ static void cover_poll(UI *ui) {
     if (!ready[i] || i >= ui->cat->ngame) continue;
     char path[320];
     cover_cache_path(ui, ui->cat->game[i].cover, path, sizeof(path));
-    Image *t = thumb_from_file(path);
-    if (t) { if (ui->thumb[i]) img_free(ui->thumb[i]); ui->thumb[i] = t; ui->dirty = 1; }
+    if (thumbs_from_file(ui, i, path)) { ui->dirty = 1; if (ui->nfilt > 0 && ui->filt[ui->sel] == i) rebuild_fbg(ui); }
     else remove(path);                                          /* arquivo ruim: apaga para tentar de novo na proxima abertura */
   }
 }
@@ -323,6 +369,7 @@ UI *ui_create(Image *surface, const Catalog *cat, const char *assets_dir, UiInst
     if (raw) { ui->logo = img_scale(raw, 88, 88); ui->logo_full = raw; }
     snprintf(lp, sizeof(lp), "%s/images/qr_whatsapp.png", assets_dir);
     ui->qr = img_load(lp);
+    if (ui->qr) ui->qr_small = img_scale(ui->qr, 180, 180);
     snprintf(lp, sizeof(lp), "%s/images/qr_pix.png", assets_dir);
     ui->pix = img_load(lp);
   }
@@ -342,6 +389,7 @@ UI *ui_create(Image *surface, const Catalog *cat, const char *assets_dir, UiInst
 
   refilter(ui);
   select_game(ui, 0);
+  rebuild_fbg(ui);
   return ui;
 }
 
@@ -364,6 +412,7 @@ void ui_set_auth_handlers(UI *ui, UiLoginFn login, UiLogoutFn logout, void *ud) 
 
 void ui_set_open_handler(UI *ui, UiOpenUrlFn fn, void *ud) { ui->open_fn = fn; ui->open_ud = ud; }
 void ui_set_register_handler(UI *ui, UiLoginFn fn) { ui->register_fn = fn; }
+void ui_set_preview_handler(UI *ui, UiPreviewFn fn) { ui->preview_fn = fn; }
 
 void ui_show_register_done(UI *ui, const char *user) {
   ui->mode = MODE_QR;
@@ -403,16 +452,23 @@ void ui_set_plan(UI *ui, const char *text, int level) {
 }
 
 void ui_set_catalog(UI *ui, const Catalog *cat) {
+  ui->auto_upd = 1;
+  ui->upd_ready = 0;
+  ui->upd_help = 0;
   ui->cat = cat;
   ui->pix_open = 0;
   load_thumbs(ui);
   ui->cat_idx = 0;
-  ui->scroll = 0;
   refilter(ui);
   select_game(ui, 0);
   ui->mode = MODE_CATALOG;
   ui->busy = 0;
   ui->dirty = 1;
+  ui->locked = cat && cat->locked;
+  ui->visitor = ui->locked && !ui->username[0];
+  if (ui->visitor) ui_toast(ui, "Modo visitante: veja tudo, mas para baixar é preciso ativar o plano.", UI_TOAST_INFO);
+  else if (ui->locked) ui_toast(ui, "Ative seu plano para baixar. Vídeos e tutoriais continuam liberados.", UI_TOAST_INFO);
+  else if (ui->plan_level == 1) ui_toast(ui, "Seu plano está perto de vencer! Fale com a gente no WhatsApp para renovar.", UI_TOAST_INFO);
 }
 
 /* ---- teclado na tela */
@@ -478,9 +534,22 @@ static void register_submit(UI *ui) {
   memset(pp, 0, sizeof(pp));
 }
 
+static void preview_start(UI *ui) {
+  if (!ui->preview_fn) return;
+  ui->username[0] = 0;
+  ui_show_loading(ui, "Abrindo a loja...");
+  ui->preview_fn(ui->auth_ud);
+}
+
 static void login_key(UI *ui, int key) {
+  if (ui->kr < 0) {                                              /* foco no botao "Ver a loja" (lado esquerdo) */
+    if (key == UI_OK) preview_start(ui);
+    else if (key == UI_RIGHT || key == UI_DOWN || key == UI_BACK || key == UI_SQUARE) { ui->kr = key == UI_DOWN ? 1 : 0; ui->kc = 0; ui->dirty = 1; }
+    else if (key == UI_OPTIONS) login_submit(ui);
+    return;
+  }
   switch (key) {
-    case UI_LEFT:  if (ui->kc > 0) { ui->kc--; ui->dirty = 1; } break;
+    case UI_LEFT:  if (ui->kc > 0) { ui->kc--; ui->dirty = 1; } else if (ui->preview_fn) { ui->kr = -1; ui->dirty = 1; } break;
     case UI_RIGHT: {
       int max = ui->kr == 4 ? KB_ACTIONS : KB_COLS;
       if (ui->kc + 1 < max) { ui->kc++; ui->dirty = 1; }
@@ -524,8 +593,28 @@ static int update_available(const UI *ui) {
   return catalog_version_num(ui->cat->app.version) > catalog_version_num(APP_VERSION);
 }
 
+void ui_app_pkg_name(const char *url, char *out, size_t n) {
+  const char *base = strrchr(url, '/');
+  base = base ? base + 1 : url;
+  size_t k = 0;
+  while (*base && *base != '?' && k + 1 < n) {
+    unsigned char ch = (unsigned char)*base++;
+    if (ch == '%' && base[0] && base[1]) {
+      char hex[3] = { base[0], base[1], 0 };
+      char *end = NULL; long v = strtol(hex, &end, 16);
+      if (end && *end == 0) { ch = (unsigned char)v; base += 2; }
+    }
+    out[k++] = (isalnum(ch) || ch == '.' || ch == '_' || ch == '-') ? (char)ch : '_';
+  }
+  out[k] = 0;
+  if (!out[0] || !strcmp(out, ".") || !strcmp(out, "..")) snprintf(out, n, "JKPATCHS_NOVO.pkg");
+}
+
+/* Atualizacao do app: o PS4 nao instala um app por cima de outro, entao o app so BAIXA o PKG novo em /data/pkg
+ * e mostra o passo a passo (apagar o app e instalar pelo Package Installer do GoldHEN). O login continua salvo. */
 static void trigger_update(UI *ui) {
   if (!update_available(ui)) { ui_toast(ui, "Seu app já está na versão mais recente.", UI_TOAST_INFO); return; }
+  if (ui->upd_ready) { ui->upd_help = 1; ui->dirty = 1; return; }       /* ja baixado: mostra como instalar */
   if (ui->busy) { ui_toast(ui, "Já existe um pedido em andamento. Aguarde.", UI_TOAST_INFO); return; }
   const CatApp *a = &ui->cat->app;
   static CatButton b;                                   /* a copia fica viva ate o app terminar de usar */
@@ -536,7 +625,9 @@ static void trigger_update(UI *ui) {
   snprintf(b.content_id, sizeof(b.content_id), "%s", a->content_id);
   snprintf(b.type, sizeof(b.type), "%s", a->type[0] ? a->type : "PS4GD");
   b.size = a->size;
-  ui_toast(ui, "Enviando a atualização do app...", UI_TOAST_INFO);
+  snprintf(b.action, sizeof(b.action), "appupdate");
+  ui_app_pkg_name(a->url, ui->upd_file, sizeof(ui->upd_file));
+  ui_toast(ui, "Baixando a atualização do app...", UI_TOAST_INFO);
   ui->busy = 1;
   ui->updating = 1;
   if (ui->fn) ui->fn(&b, ui->user);
@@ -544,10 +635,21 @@ static void trigger_update(UI *ui) {
 
 void ui_install_done(UI *ui, int code, const char *err) {
   ui_set_busy(ui, 0);
+  if (ui->updating) {                                         /* terminou o download da atualizacao do app */
+    ui->updating = 0;
+    if (code == 2) {
+      ui->upd_ready = 1;
+      ui_toast(ui, "Nova versão do app baixada! Aperte  \xE2\x96\xA1  para ver como instalar.", UI_TOAST_OK);
+    } else {
+      ui_toast(ui, (err && err[0]) ? err : "Não foi possível baixar a atualização do app.", UI_TOAST_ERR);
+    }
+    ui->dirty = 1;
+    return;
+  }
   if (code == 1)
     ui_toast(ui, (err && err[0]) ? err : "Download concluído!", UI_TOAST_OK);
   else if (code == 0 && ui->updating)
-    ui_toast(ui, "Atualização enviada! Quando terminar nas Notificações, feche e abra o app.", UI_TOAST_OK);
+    ui_toast(ui, "Atualização enviada! Feche o app (botão PS > Fechar), espere terminar nas Notificações e abra de novo.", UI_TOAST_OK);
   else if (code == 0)
     ui_toast(ui, "Pedido aceito! Acompanhe nas Notificações do PS4.", UI_TOAST_OK);
   else
@@ -562,7 +664,7 @@ static void vid_open_url(UI *ui, const char *title, const char *url);
 
 static void trigger_install(UI *ui) {
   const CatGame *g = cur_game(ui);
-  if (!g || panel_items(g) == 0) return;
+  if (!g) return;
   if (ui->focus >= g->nbtn) {                                   /* botao de video */
     if (g->video[0] && is_jkv(g->video)) { vid_open(ui, g); return; }          /* player dentro do app */
     if (g->video[0] && ui->open_fn) {
@@ -573,6 +675,10 @@ static void trigger_install(UI *ui) {
   }
   const CatButton *b = &g->btn[ui->focus];
   const char *action = b->action[0] ? b->action : "pkg"; /* catalogos antigos continuam compativeis */
+  if (ui->locked && strcmp(action, "video") && strcmp(action, "image")) {
+    ui_toast(ui, "Ative seu plano para baixar.", UI_TOAST_ERR);
+    return;
+  }
   if (!b->url[0]) { ui_toast(ui, "URL não configurada neste botão.", UI_TOAST_ERR); return; }
   if (!strcmp(action, "video")) {
     if (is_jkv(b->url)) vid_open_url(ui, b->name[0] ? b->name : g->title, b->url);
@@ -788,6 +894,10 @@ void ui_key(UI *ui, int key) {
   }
   if (ui->mode != MODE_CATALOG) return;
   if (ui->gmode) { guide_key(ui, key); return; }                  /* guia aberto: so rolar ou voltar */
+  if (ui->upd_help) {                                             /* passo a passo da atualizacao: qualquer botao fecha */
+    if (key == UI_BACK || key == UI_OK || key == UI_OPTIONS || key == UI_TRIANGLE || key == UI_SQUARE) { ui->upd_help = 0; ui->dirty = 1; }
+    return;
+  }
   if (ui->pix_open) {                                             /* tela de apoio (Pix): qualquer botao de voltar fecha */
     if (key == UI_BACK || key == UI_OK || key == UI_OPTIONS || key == UI_TRIANGLE) { ui->pix_open = 0; ui->dirty = 1; }
     return;
@@ -797,39 +907,78 @@ void ui_key(UI *ui, int key) {
   if (key == UI_TRIANGLE) {                                     /* sair da conta */
     if (ui->busy) { ui_toast(ui, "Aguarde o pedido atual terminar.", UI_TOAST_INFO); return; }
     vid_close(ui);
+    if (ui->visitor) {
+      ui->detail = 0; ui->locked = ui->visitor = 0;
+      ui_show_login(ui, "");
+      return;
+    }
     if (ui->logout_fn) ui->logout_fn(ui->auth_ud);
     ui->field[0][0] = 0;
+    ui->detail = 0;
+    ui->locked = 0;
     ui_show_login(ui, "Você saiu da conta.");
     return;
   }
   const CatGame *g = cur_game(ui);
-  switch (key) {
+  if (ui->detail && g) {                                          /* ---- detalhe: downloads (direita) e videos (esquerda) */
+    int dl[CAT_MAX_BTNS], md[CAT_MAX_BTNS + 1], nd, nm;
+    lists(g, dl, &nd, md, &nm);
+    switch (key) {
+      case UI_UP:    if (ui->zone == 0 && ui->dfocus > 0) { ui->dfocus--; ui->dirty = 1; } break;
+      case UI_DOWN:  if (ui->zone == 0 && ui->dfocus + 1 < nd) { ui->dfocus++; ui->dirty = 1; } break;
+      case UI_LEFT:
+        if (ui->zone == 0) { if (nm > 0) { ui->zone = 1; ui->dirty = 1; } }
+        else if (ui->mfocus > 0) { ui->mfocus--; ui->dirty = 1; }
+        break;
+      case UI_RIGHT:
+        if (ui->zone == 1) {
+          if (ui->mfocus + 1 < nm) ui->mfocus++;
+          else if (nd > 0) ui->zone = 0;
+          ui->dirty = 1;
+        }
+        break;
+      case UI_BACK:  ui->detail = 0; ui->dirty = 1; rebuild_fbg(ui); break;
+      case UI_OK:
+        if (ui->zone == 0 && nd > 0) ui->focus = dl[ui->dfocus];
+        else if (ui->zone == 1 && nm > 0) ui->focus = md[ui->mfocus];
+        else break;
+        trigger_install(ui);
+        break;
+      case UI_SQUARE: trigger_update(ui); break;
+      default: break;
+    }
+    if (ui->dfocus < ui->dscroll) ui->dscroll = ui->dfocus;
+    if (ui->dfocus >= ui->dscroll + DL_VIS) ui->dscroll = ui->dfocus - DL_VIS + 1;
+    if (ui->mfocus < ui->mscroll) ui->mscroll = ui->mfocus;
+    if (ui->mfocus >= ui->mscroll + MD_VIS) ui->mscroll = ui->mfocus - MD_VIS + 1;
+    return;
+  }
+  switch (key) {                                                   /* ---- vitrine */
     case UI_LEFT:
       if (ui->sel > 0) select_game(ui, ui->sel - 1);
       break;
     case UI_RIGHT:
       if (ui->sel + 1 < ui->nfilt) select_game(ui, ui->sel + 1);
       break;
-    case UI_UP:
-      if (g && ui->focus > 0) { ui->focus--; ui->dirty = 1; }
-      break;
-    case UI_DOWN:
-      if (g && ui->focus + 1 < panel_items(g)) { ui->focus++; ui->dirty = 1; }
-      break;
     case UI_L1:
     case UI_R1: {
       int n = ui->cat->ncat;
       ui->cat_idx = (ui->cat_idx + (key == UI_R1 ? 1 : n - 1)) % n;
       refilter(ui);
-      ui->scroll = 0;
       select_game(ui, 0);
       break;
     }
     case UI_BACK:
-      if (ui->sel != 0) { ui->scroll = 0; select_game(ui, 0); }
+      if (ui->sel != 0) select_game(ui, 0);
       break;
     case UI_OK:
-      trigger_install(ui);
+      if (g) {                                                     /* abre o detalhe do jogo */
+        int dl[CAT_MAX_BTNS], md[CAT_MAX_BTNS + 1], nd, nm;
+        lists(g, dl, &nd, md, &nm);
+        ui->detail = 1; ui->zone = nd > 0 ? 0 : 1;
+        ui->dfocus = ui->dscroll = ui->mfocus = ui->mscroll = 0;
+        ui->dirty = 1;
+      }
       break;
     case UI_SQUARE:
       trigger_update(ui);
@@ -848,6 +997,10 @@ void ui_tick(UI *ui) {
       if (ui->splash_base) { img_free(ui->splash_base); ui->splash_base = NULL; }
       if (ui->splash_logo) { img_free(ui->splash_logo); ui->splash_logo = NULL; }
     }
+  }
+  if (ui->auto_upd && ui->mode == MODE_CATALOG && ui->splash >= SPLASH_END && !ui->busy) {
+    ui->auto_upd = 0;
+    if (update_available(ui)) trigger_update(ui);       /* atualizacao automatica: sem precisar apertar nada */
   }
   cover_poll(ui);
   guide_tick(ui);
@@ -892,7 +1045,9 @@ static void draw_topbar(UI *ui) {
   T(ui, 1, 28, x, 66, ui->logo ? "JK PATCHS" : "PATCHS", C_TEXT, 255, 3);
 
   char st[96];
-  if (ui->mode == MODE_CATALOG) {
+  if (ui->mode == MODE_CATALOG && ui->visitor) {
+    snprintf(st, sizeof(st), "VISITANTE");
+  } else if (ui->mode == MODE_CATALOG) {
     snprintf(st, sizeof(st), "ONLINE  \xC2\xB7  ");
     size_t n = strlen(st);
     for (const char *q = ui->username; *q && n + 2 < sizeof(st); q++) st[n++] = (*q >= 'a' && *q <= 'z') ? *q - 32 : *q;
@@ -902,7 +1057,7 @@ static void draw_topbar(UI *ui) {
   }
   int w = TW(ui, 1, 20, st, 3);
   T(ui, 1, 20, W - MARGIN - w, 62, st, C_MUTED, 255, 3);
-  gfx_circle(s, W - MARGIN - w - 22, 55, 7, ui->mode == MODE_CATALOG ? C_ACCENT : C_FOCUS, 255);
+  gfx_circle(s, W - MARGIN - w - 22, 55, 7, (ui->mode == MODE_CATALOG && !ui->locked) ? C_ACCENT : C_FOCUS, 255);
 
   if (ui->mode == MODE_CATALOG && ui->pix) {               /* convite de apoio: abre a tela do Pix com OPTIONS */
     const char *lab = "Apoie o app";
@@ -922,106 +1077,36 @@ static void draw_topbar(UI *ui) {
   }
 }
 
-static void draw_heading(UI *ui) {
-  T(ui, 1, 22, MARGIN, 168, "ENCONTRE SEU JOGO", C_ACCENT, 255, 4);
-  T(ui, 1, 54, MARGIN, 228, "Nosso catálogo", C_TEXT, 255, 0);
-  char cnt[48];
-  if (ui->nfilt > VISIBLE)                       /* varias paginas: mostra a posicao ("2 de 7 coleções") */
-    snprintf(cnt, sizeof(cnt), "%d de %d coleções", ui->sel + 1, ui->nfilt);
-  else
-    snprintf(cnt, sizeof(cnt), "%d %s", ui->nfilt, ui->nfilt == 1 ? "coleção" : "coleções");
-  int w = TW(ui, 0, 26, cnt, 0);
-  T(ui, 0, 26, W - MARGIN - w, 226, cnt, C_MUTED, 255, 0);
+/* "3. BAIXAR PATCH" -> "BAIXAR PATCH" (a numeracao do site nao faz sentido nas listas do app) */
+static const char *strip_num(const char *l) {
+  const char *p = l;
+  while (*p >= '0' && *p <= '9') p++;
+  if (p != l && p[0] == '.' && p[1] == ' ') return p + 2;
+  return l;
 }
 
-static void draw_chips(UI *ui) {
-  Image *s = ui->s;
-  int y = 262, h = 52;
-  int x = MARGIN;
-  /* dica L1 */
-  gfx_rrect(s, x, y + 6, 56, 40, 10, C_PANEL2, 255, 0);
-  text_draw_in(s, ui->fb, 20, x, 56, y + 33, "L1", C_MUTED, 255, 0, 1);
-  x += 56 + 18;
-  for (int i = 0; i < ui->cat->ncat; i++) {
-    const char *lab = ui->cat->cat[i].label;
-    int tw = TW(ui, 1, 22, lab, 0);
-    int w = tw + 52;
-    if (i == ui->cat_idx) {
-      gfx_rrect(s, x, y, w, h, h / 2, C_ACCENT, 255, 0);
-      text_draw_in(s, ui->fb, 22, x, w, y + 34, lab, C_DARKTXT, 255, 0, 1);
-    } else {
-      gfx_rrect(s, x, y, w, h, h / 2, C_PANEL2, 230, 0);
-      gfx_rrect(s, x, y, w, h, h / 2, C_WHITE, 26, 2);
-      text_draw_in(s, ui->fb, 22, x, w, y + 34, lab, C_MUTED, 255, 0, 1);
-    }
-    x += w + 14;
-  }
-  x += 4;
-  gfx_rrect(s, x, y + 6, 56, 40, 10, C_PANEL2, 255, 0);
-  text_draw_in(s, ui->fb, 20, x, 56, y + 33, "R1", C_MUTED, 255, 0, 1);
+static void draw_lock(Image *s, int cx, int cy, uint32_t col) {         /* cadeado ~28x34 centrado em cx,cy */
+  gfx_rrect(s, cx - 10, cy - 17, 20, 22, 9, col, 255, 3);                /* argola */
+  gfx_rrect(s, cx - 14, cy - 3, 28, 22, 5, col, 255, 0);                 /* corpo */
+  gfx_circle(s, cx, cy + 7, 3, C_PANEL2, 255);                           /* furo */
 }
-
-static void draw_cover_placeholder(UI *ui, int x, int y, const char *title) {
-  Image *s = ui->s;
-  gfx_rrect(s, x, y, COVER_W, COVER_H, 18, C_PANEL2, 255, 0);
-  gfx_rrect(s, x, y, COVER_W, COVER_H, 18, C_WHITE, 26, 2);
-  char ini[8] = {0};
-  ini[0] = title[0] ? title[0] : '?';
-  text_draw_in(s, ui->fb, 120, x, COVER_W, y + COVER_H / 2 + 40, ini, C_MUTED, 255, 0, 1);
-}
-
-static void draw_cards(UI *ui) {
-  Image *s = ui->s;
-  if (ui->nfilt == 0) {
-    text_draw_in(s, ui->f, 30, MARGIN, 940, CARDS_Y + 240, "Nenhuma coleção encontrada nesta categoria.",
-                 C_MUTED, 255, 0, 1);
-    return;
-  }
-  for (int v = 0; v < VISIBLE; v++) {
-    int idx = ui->scroll + v;
-    if (idx >= ui->nfilt) break;
-    const CatGame *g = &ui->cat->game[ui->filt[idx]];
-    int x = MARGIN + v * (COVER_W + COVER_GAP), y = CARDS_Y;
-    int selected = (idx == ui->sel);
-
-    if (selected) gfx_rrect(s, x - 16, y - 16, COVER_W + 32, COVER_H + 32, 30, C_ACCENT, 20, 0);   /* brilho */
-    gfx_rrect(s, x + 6, y + 14, COVER_W, COVER_H, 18, C_BLACK, 90, 0);                              /* sombra */
-
-    Image *t = ui->thumb[ui->filt[idx]];
-    if (t) gfx_blit(s, t, x, y, 18, 255);
-    else draw_cover_placeholder(ui, x, y, g->title);
-    if (!selected) gfx_rrect(s, x, y, COVER_W, COVER_H, 18, C_BG, 120, 0);                          /* escurece */
-    if (selected) gfx_rrect(s, x - 8, y - 8, COVER_W + 16, COVER_H + 16, 24, C_ACCENT, 255, 5);
-
-    /* etiqueta (PATCH / COLEÇÃO ...) */
-    if (g->tag[0]) {
-      int tw = TW(ui, 1, 17, g->tag, 2);
-      gfx_rrect(s, x + 14, y + 14, tw + 28, 34, 17, C_BG, 215, 0);
-      text_draw_in(s, ui->fb, 17, x + 14, tw + 28, y + 38, g->tag, C_ACCENT, 255, 2, 1);
-    }
-
-    char buf[128];
-    text_fit(ui->fb, 25, g->title, COVER_W, buf, sizeof(buf));
-    T(ui, 1, 25, x, y + COVER_H + 44, buf, selected ? C_TEXT : C_MUTED, 255, 0);
-    text_fit(ui->f, 19, g->kicker, COVER_W, buf, sizeof(buf));
-    T(ui, 0, 19, x, y + COVER_H + 74, buf, C_MUTED, selected ? 255 : 170, 0);
-  }
-  /* setas quando ha mais cards fora da janela */
-  if (ui->scroll > 0) T(ui, 1, 30, MARGIN - 46, CARDS_Y + COVER_H / 2 + 10, "\xE2\x97\x80", C_ACCENT, 255, 0);
-  if (ui->scroll + VISIBLE < ui->nfilt)
-    T(ui, 1, 30, MARGIN + VISIBLE * COVER_W + (VISIBLE - 1) * COVER_GAP + 16, CARDS_Y + COVER_H / 2 + 10,
-      "\xE2\x96\xB6", C_ACCENT, 255, 0);
-}
-
-static void draw_video_button(UI *ui, const char *label, const char *word, int x, int y, int w, int focused);
 
 static void draw_button(UI *ui, const CatButton *b, int x, int y, int w, int focused) {
   Image *s = ui->s;
   int r = 20;
-  if (!strcmp(b->action, "video") || !strcmp(b->action, "image")) {
-    char lb[128];
-    text_fit(ui->fb, 27, b->label, w - 40 - 56 - 130, lb, sizeof(lb));
-    draw_video_button(ui, lb, !strcmp(b->action, "video") ? "Assistir" : "Ver", x, y, w, focused);
+  if (ui->locked && !is_media(b)) {                                      /* bloqueado: cinza com cadeado */
+    gfx_rrect(s, x, y, w, g_bh, r, C_PANEL2, 255, 0);
+    gfx_rrect(s, x, y, w, g_bh, r, C_WHITE, 30, 2);
+    char info[48];
+    info_text(b, info, sizeof(info));
+    int iw = info[0] ? TW(ui, 0, 20, info, 0) : 0;
+    int avail = w - 40 - 70 - (iw ? iw + 24 : 0);
+    char lab[128];
+    text_fit(ui->fb, 27, strip_num(b->label), avail, lab, sizeof(lab));
+    T(ui, 1, 27, x + 32, y + g_bh / 2 + 10, lab, C_MUTED, 255, 0);
+    if (info[0]) T(ui, 0, 20, x + w - 70 - 12 - iw, y + g_bh / 2 + 7, info, C_MUTED, 170, 0);
+    draw_lock(s, x + w - 38, y + g_bh / 2 - 1, C_MUTED);
+    if (focused) gfx_rrect(s, x - 8, y - 8, w + 16, g_bh + 16, r + 8, C_FOCUS, 255, 4);
     return;
   }
   if (b->base) {
@@ -1037,7 +1122,7 @@ static void draw_button(UI *ui, const CatButton *b, int x, int y, int w, int foc
   int arrow_w = 56;
   int avail = w - 40 - arrow_w - (iw ? iw + 24 : 0);
   char lab[128];
-  text_fit(ui->fb, 27, b->label, avail, lab, sizeof(lab));
+  text_fit(ui->fb, 27, strip_num(b->label), avail, lab, sizeof(lab));
   T(ui, 1, 27, x + 32, y + g_bh / 2 + 10, lab, fg, 255, 0);
   if (info[0]) T(ui, 0, 20, x + w - arrow_w - 12 - iw, y + g_bh / 2 + 7, info, fg, 190, 0);
   text_draw_in(s, ui->fb, 30, x + w - arrow_w - 4, arrow_w, y + g_bh / 2 + 11, "\xE2\x86\x93", fg, 255, 0, 1);
@@ -1045,58 +1130,209 @@ static void draw_button(UI *ui, const CatButton *b, int x, int y, int w, int foc
   else gfx_rrect(s, x - 8, y - 8, w + 16, g_bh + 16, r + 8, C_FOCUS, 255, 4);
 }
 
-static void draw_video_button(UI *ui, const char *label, const char *word, int x, int y, int w, int focused) {
+
+/* ---------------------------------------------------------------- vitrine (capas lado a lado) */
+static void draw_placeholder(UI *ui, int x, int y, int w, int h, const char *title) {
   Image *s = ui->s;
-  int r = 20;
-  gfx_rrect(s, x, y, w, g_bh, r, C_PANEL2, 255, 0);
-  gfx_rrect(s, x, y, w, g_bh, r, C_WHITE, 40, 2);
-  T(ui, 1, 27, x + 32, y + g_bh / 2 + 10, label, C_TEXT, 255, 0);
-  T(ui, 0, 20, x + w - 56 - 12 - TW(ui, 0, 20, word, 0), y + g_bh / 2 + 7, word, C_MUTED, 255, 0);
-  text_draw_in(s, ui->fb, 30, x + w - 60, 56, y + g_bh / 2 + 11, "\xE2\x96\xB6", C_ACCENT, 255, 0, 1);
-  if (focused) gfx_rrect(s, x - 8, y - 8, w + 16, g_bh + 16, r + 8, C_FOCUS, 255, 4);
+  gfx_rrect(s, x, y, w, h, 18, C_PANEL2, 255, 0);
+  gfx_rrect(s, x, y, w, h, 18, C_WHITE, 26, 2);
+  char ini[8] = {0};
+  ini[0] = title[0] ? title[0] : '?';
+  text_draw_in(s, ui->fb, w / 2, x, w, y + h / 2 + w / 6, ini, C_MUTED, 255, 0, 1);
 }
 
-static void draw_panel(UI *ui) {
+static void draw_tile(UI *ui, int idx, int d, int x, int y) {          /* d = distancia da capa em foco (0..3) */
   Image *s = ui->s;
-  gfx_rrect(s, PANEL_X, PANEL_Y, PANEL_W, PANEL_H, 26, C_PANEL, 240, 0);
-  gfx_rrect(s, PANEL_X, PANEL_Y, PANEL_W, PANEL_H, 26, C_WHITE, 26, 2);
+  int gi = ui->filt[idx], w = TH_W[d], h = TH_H[d];
+  const CatGame *g = &ui->cat->game[gi];
+  gfx_rrect(s, x + 6, y + 14, w, h, 18, C_BLACK, 110, 0);                                  /* sombra */
+  if (d == 0) gfx_rrect(s, x - 18, y - 18, w + 36, h + 36, 32, C_ACCENT, 28, 0);           /* brilho */
+  if (ui->th[gi][d]) gfx_blit(s, ui->th[gi][d], x, y, 18, 255);
+  else draw_placeholder(ui, x, y, w, h, g->title);
+  if (d > 0) gfx_rrect(s, x, y, w, h, 18, C_BG, 80 + 40 * d, 0);                           /* escurece */
+  else gfx_rrect(s, x - 7, y - 7, w + 14, h + 14, 24, C_ACCENT, 255, 5);
+  if (d == 0 && g->tag[0]) {
+    int tw = TW(ui, 1, 18, g->tag, 2);
+    gfx_rrect(s, x + 16, y + 16, tw + 30, 36, 18, C_BG, 220, 0);
+    text_draw_in(s, ui->fb, 18, x + 16, tw + 30, y + 41, g->tag, C_ACCENT, 255, 2, 1);
+  }
+}
+
+static void draw_vitrine(UI *ui) {
+  Image *s = ui->s;
   const CatGame *g = cur_game(ui);
-  if (!g) return;
-
-  int px = PANEL_X + 44, iw = PANEL_W - 88;
-  T(ui, 1, 22, px, PANEL_Y + 66, g->kicker, C_ACCENT, 255, 3);
-  int tl = text_wrap(s, ui->fb, 46, px, PANEL_Y + 128, iw, 56, 2, g->title, C_TEXT, 255);
-  if (tl < 1) tl = 1;
-  int desc_y = PANEL_Y + 128 + (tl - 1) * 56 + 54;
-
-  int items = panel_items(g);
-  /* ate 4 itens (ex.: FC 27 = 3 downloads + video) cabem todos, com botoes um pouco mais baixos */
-  int vis = items <= 4 ? 4 : BTN_VISIBLE;
-  int gap = items <= 4 ? 12 : BTN_GAP;
-  g_bh = items <= 4 ? 62 : BTN_H;
-  int nb = items < vis ? items : vis;
-  int bottom = PANEL_Y + PANEL_H - 44;
-  int btn_top = bottom - (nb > 0 ? nb * g_bh + (nb - 1) * gap : 0);
-  int lines = (btn_top - 28 - desc_y) / 36 + 1;
-  if (lines < 1) lines = 1;
-  if (lines > 5) lines = 5;
-  text_wrap(s, ui->f, 25, px, desc_y, iw, 36, lines, g->desc, C_MUTED, 255);
-
-  if (items == 0) {
-    text_draw_in(s, ui->f, 24, px, iw, bottom - 20, "Nenhum download disponível ainda.", C_MUTED, 255, 0, 0);
+  if (!g) {
+    text_draw_in(s, ui->f, 30, 0, W, 560, "Nenhuma coleção encontrada nesta categoria.", C_MUTED, 255, 0, 1);
     return;
   }
-  /* janela de botoes que acompanha o foco */
-  int first = 0;
-  if (ui->focus >= vis) first = ui->focus - vis + 1;
-  for (int i = 0; i < nb; i++) {
-    int bi = first + i;
-    int y = btn_top + i * (g_bh + gap);
-    if (bi < g->nbtn) draw_button(ui, &g->btn[bi], px, y, iw, bi == ui->focus);
-    else draw_video_button(ui, "VER VÍDEO DO PATCH", "Assistir", px, y, iw, bi == ui->focus);
+  char buf[160];
+  text_fit(ui->fb, 62, g->title, W - 2 * MARGIN, buf, sizeof(buf));
+  text_draw_in(s, ui->fb, 62, 0, W, 212, buf, C_TEXT, 255, 0, 1);
+  text_fit(ui->f, 26, g->kicker, W - 2 * MARGIN, buf, sizeof(buf));
+  text_draw_in(s, ui->f, 26, 0, W, 256, buf, C_MUTED, 255, 0, 1);
+  char cnt[120];
+  snprintf(cnt, sizeof(cnt), "%s   ·   %d de %d", ui->cat->cat[ui->cat_idx].label, ui->sel + 1, ui->nfilt);
+  text_draw_in(s, ui->fb, 22, 0, W, 296, cnt, C_ACCENT, 255, 1, 1);
+
+  int y0 = CAR_Y, xc = (W - TH_W[0]) / 2;
+  int xr = xc + TH_W[0] + CAR_GAP, xl = xc - CAR_GAP;                /* proximas posicoes livres (direita / esquerda) */
+  int xs[7], ys[7], ds[7], n = 0;
+  for (int d = 1; d <= 3; d++) {
+    if (ui->sel + d < ui->nfilt) { xs[n] = xr; ys[n] = y0 + (TH_H[0] - TH_H[d]) / 2; ds[n] = d; n++; }
+    xr += TH_W[d] + CAR_GAP;
+    if (ui->sel - d >= 0) { xs[n] = xl - TH_W[d]; ys[n] = y0 + (TH_H[0] - TH_H[d]) / 2; ds[n] = -d; n++; }
+    xl -= TH_W[d] + CAR_GAP;
   }
-  if (first > 0) T(ui, 1, 22, PANEL_X + PANEL_W - 44, btn_top - 10, "\xE2\x96\xB2", C_MUTED, 255, 0);
-  if (first + nb < items) T(ui, 1, 22, PANEL_X + PANEL_W - 44, bottom + 32, "\xE2\x96\xBC", C_MUTED, 255, 0);
+  for (int i = n - 1; i >= 0; i--) {                                  /* de fora para dentro */
+    int d = ds[i] < 0 ? -ds[i] : ds[i];
+    draw_tile(ui, ui->sel + ds[i], d, xs[i], ys[i]);
+  }
+  draw_tile(ui, ui->sel, 0, xc, y0);
+}
+
+/* ---------------------------------------------------------------- detalhe do jogo */
+static void draw_media_card(UI *ui, int x, int y, int w, int h, const char *label, int is_image, int focused) {
+  Image *s = ui->s;
+  int th = h - 56;
+  gfx_rrect(s, x, y, w, h, 16, C_PANEL2, 255, 0);
+  gfx_rrect(s, x, y, w, th, 16, C_BG, 150, 0);
+  gfx_rrect(s, x, y, w, h, 16, C_WHITE, 36, 2);
+  int cx = x + w / 2, cy = y + th / 2;
+  gfx_circle(s, cx, cy, 30, C_ACCENT, focused ? 255 : 150);
+  if (!is_image) text_draw_in(s, ui->fb, 30, cx - 30, 60, cy + 10, "▶", C_DARKTXT, 255, 0, 1);
+  else {
+    gfx_rrect(s, cx - 18, cy - 13, 36, 26, 5, C_DARKTXT, 255, 3);
+    gfx_circle(s, cx + 7, cy - 4, 4, C_DARKTXT, 255);
+  }
+  char lb[128];
+  text_fit(ui->fb, 22, strip_num(label), w - 32, lb, sizeof(lb));
+  T(ui, 1, 22, x + 16, y + h - 22, lb, C_TEXT, 255, 0);
+  if (focused) gfx_rrect(s, x - 7, y - 7, w + 14, h + 14, 22, C_FOCUS, 255, 4);
+}
+
+/* Descricao em topicos: os itens separados por " \xE2\x80\xA2 " (bolinha) viram uma linha cada, com marcador; o primeiro
+ * (a atualizacao) fica em destaque. Sem esse separador, desenha como texto corrido (catalogos antigos). Retorna as linhas usadas. */
+static int draw_desc(UI *ui, int x, int y, int w, int lh, int max_lines, const char *desc) {
+  Image *s = ui->s;
+  static const char SEP[] = " \xE2\x80\xA2 ";
+  if (!strstr(desc, SEP)) return text_wrap(s, ui->f, 23, x, y, w, lh, max_lines, desc, C_MUTED, 255);
+  int used = 0, first = 1;
+  const char *p = desc;
+  while (*p && used < max_lines) {
+    const char *e = strstr(p, SEP);
+    size_t n = e ? (size_t)(e - p) : strlen(p);
+    char item[512];
+    if (n >= sizeof(item)) n = sizeof(item) - 1;
+    memcpy(item, p, n);
+    item[n] = 0;
+    if (item[0]) {
+      int ly = y + used * lh;
+      gfx_circle(s, x + 7, ly - 8, 5, first ? C_ACCENT : C_MUTED, first ? 255 : 170);
+      int ln = text_wrap(s, first ? ui->fb : ui->f, 23, x + 28, ly, w - 28, lh, max_lines - used, item,
+                         first ? C_TEXT : C_MUTED, 255);
+      used += ln > 0 ? ln : 1;
+    }
+    first = 0;
+    if (!e) break;
+    p = e + (sizeof(SEP) - 1);
+  }
+  return used;
+}
+
+static void draw_detail(UI *ui) {
+  Image *s = ui->s;
+  const CatGame *g = cur_game(ui);
+  if (!g) return;
+  int gi = ui->filt[ui->sel];
+  int dl[CAT_MAX_BTNS], md[CAT_MAX_BTNS + 1], nd, nm;
+  lists(g, dl, &nd, md, &nm);
+
+  /* --- coluna da esquerda: capa + titulo, descricao, videos */
+  int cx = DT_X, cy = 140, cw = TH_W[2], chh = TH_H[2];
+  gfx_rrect(s, cx + 5, cy + 12, cw, chh, 18, C_BLACK, 110, 0);
+  if (ui->th[gi][2]) gfx_blit(s, ui->th[gi][2], cx, cy, 18, 255);
+  else draw_placeholder(ui, cx, cy, cw, chh, g->title);
+  gfx_rrect(s, cx - 4, cy - 4, cw + 8, chh + 8, 21, C_ACCENT, 255, 4);
+
+  int tx = cx + cw + 36, tw = DT_X + DT_W - tx;
+  int tl = text_wrap(s, ui->fb, 40, tx, cy + 46, tw, 48, 3, g->title, C_TEXT, 255);
+  if (tl < 1) tl = 1;
+  int ky = cy + 46 + (tl - 1) * 48 + 44;
+  char kb[160];
+  text_fit(ui->f, 21, g->kicker, tw, kb, sizeof(kb));
+  T(ui, 0, 21, tx, ky, kb, C_ACCENT, 255, 1);
+  char info[96];
+  snprintf(info, sizeof(info), "%d download%s  ·  %d vídeo%s/guia%s", nd, nd == 1 ? "" : "s",
+           nm, nm == 1 ? "" : "s", nm == 1 ? "" : "s");
+  T(ui, 0, 20, tx, ky + 40, info, C_MUTED, 255, 0);
+  if (g->tag[0]) {
+    int bw = TW(ui, 1, 18, g->tag, 2) + 30;
+    gfx_rrect(s, tx, ky + 68, bw, 36, 18, C_PANEL2, 255, 0);
+    text_draw_in(s, ui->fb, 18, tx, bw, ky + 93, g->tag, C_ACCENT, 255, 2, 1);
+  }
+
+  int dy = cy + chh + 40;
+  draw_desc(ui, DT_X, dy, DT_W, 31, 7, g->desc);
+
+  /* videos e guias */
+  int my = 742;
+  T(ui, 1, 20, DT_X, my, "VÍDEOS E TUTORIAIS", RGB(0x38, 0xbd, 0xf8), 255, 3);
+  if (nm == 0) {
+    T(ui, 0, 22, DT_X, my + 52, "Nenhum vídeo ou guia para este jogo.", C_MUTED, 200, 0);
+  } else {
+    char pg[32];
+    snprintf(pg, sizeof(pg), "%d / %d", ui->mfocus + 1, nm);
+    int pw = TW(ui, 0, 20, pg, 0);
+    T(ui, 0, 20, DT_X + DT_W - pw, my, pg, C_MUTED, 255, 0);
+    int cw2 = (DT_W - 24) / 2;
+    for (int i = 0; i < MD_VIS; i++) {
+      int mi = ui->mscroll + i;
+      if (mi >= nm) break;
+      int bi = md[mi];
+      const char *label; int is_img = 0;
+      if (bi < g->nbtn) { label = g->btn[bi].label; is_img = !strcmp(g->btn[bi].action, "image"); }
+      else label = "Vídeo do patch";
+      draw_media_card(ui, DT_X + i * (cw2 + 24), my + 24, cw2, 132, label, is_img, ui->zone == 1 && mi == ui->mfocus);
+    }
+    if (ui->mscroll > 0) T(ui, 1, 24, DT_X - 34, my + 90, "◀", C_ACCENT, 255, 0);
+    if (ui->mscroll + MD_VIS < nm) T(ui, 1, 24, DT_X + DT_W + 8, my + 90, "▶", C_ACCENT, 255, 0);
+  }
+
+  /* --- painel da direita: downloads */
+  gfx_rrect(s, DT_PX, DT_PY, DT_PW, DT_PH, 26, C_PANEL, 235, 0);
+  gfx_rrect(s, DT_PX, DT_PY, DT_PW, DT_PH, 26, C_WHITE, 26, 2);
+  T(ui, 1, 26, DT_PX + 44, DT_PY + 58, "DOWNLOADS", C_TEXT, 255, 3);
+  char ct[48];
+  if (nd) snprintf(ct, sizeof(ct), "%d / %d", ui->dfocus + 1, nd); else snprintf(ct, sizeof(ct), "0");
+  int cw3 = TW(ui, 0, 22, ct, 0);
+  T(ui, 0, 22, DT_PX + DT_PW - 44 - cw3, DT_PY + 58, ct, C_MUTED, 255, 0);
+  gfx_fill(s, DT_PX + 30, DT_PY + 82, DT_PW - 60, 1, C_WHITE, 26);
+
+  if (nd == 0) {
+    text_draw_in(s, ui->f, 26, DT_PX, DT_PW, DT_PY + 200, "Nenhum download disponível ainda.", C_MUTED, 255, 0, 1);
+  } else {
+    g_bh = BTN_H;
+    int by = DT_PY + 104, bx = DT_PX + 44, bw = DT_PW - 88 - 18;
+    for (int i = 0; i < DL_VIS; i++) {
+      int di = ui->dscroll + i;
+      if (di >= nd) break;
+      draw_button(ui, &g->btn[dl[di]], bx, by + i * (g_bh + BTN_GAP), bw, ui->zone == 0 && di == ui->dfocus);
+    }
+    if (nd > DL_VIS) {                                              /* barra de rolagem */
+      int tr = DL_VIS * (g_bh + BTN_GAP) - BTN_GAP, sx = DT_PX + DT_PW - 38;
+      gfx_rrect(s, sx, by, 8, tr, 4, C_PANEL2, 255, 0);
+      int bh = tr * DL_VIS / nd; if (bh < 50) bh = 50;
+      int bt = by + (tr - bh) * ui->dscroll / (nd - DL_VIS);
+      gfx_rrect(s, sx, bt, 8, bh, 4, C_ACCENT, 255, 0);
+    }
+  }
+  if (ui->locked) {
+    text_wrap(s, ui->fb, 20, DT_PX + 44, DT_PY + DT_PH - 118, DT_PW - 88, 28, 2,
+              "Downloads bloqueados: ative seu plano para baixar. Vídeos, tutoriais e descrições continuam liberados.", C_FOCUS, 255);
+  } else
+  text_wrap(s, ui->f, 18, DT_PX + 44, DT_PY + DT_PH - 52, DT_PW - 88, 26, 2,
+            "Antes de instalar: confira a versão de cada arquivo. O jogo base precisa estar instalado antes do update. "
+            "A instalação é feita pelo PS4; acompanhe em Notificações.", C_MUTED, 200);
 }
 
 static void draw_spinner(UI *ui, int cx, int cy) {
@@ -1118,7 +1354,7 @@ static void draw_message_line(UI *ui) {
     int tw = TW(ui, 0, 26, buf, 0);
     int pad = 34, extra = ui->busy ? 44 : 0;
     int w = tw + pad * 2 + extra, h = 62;
-    int x = (W - w) / 2, y = 912;
+    int x = (W - w) / 2, y = 916;
     gfx_rrect(s, x, y, w, h, h / 2, C_PANEL2, 250, 0);
     gfx_rrect(s, x, y, w, h, h / 2, edge, 255, 3);
     if (ui->busy) draw_spinner(ui, x + pad + 6, y + h / 2);
@@ -1127,20 +1363,18 @@ static void draw_message_line(UI *ui) {
   }
   if (update_available(ui)) {
     char buf[200];
-    snprintf(buf, sizeof(buf), "Atualização disponível: JK Patchs %s (você tem %s).  Aperte  \xE2\x96\xA1  para atualizar.",
-             ui->cat->app.version, APP_VERSION);
+    if (ui->upd_ready)
+      snprintf(buf, sizeof(buf), "Nova versão %s baixada.  Aperte  \xE2\x96\xA1  para ver como instalar.", ui->cat->app.version);
+    else
+      snprintf(buf, sizeof(buf), "Atualização disponível: JK Patchs %s (você tem %s).  Aperte  \xE2\x96\xA1  para baixar.",
+               ui->cat->app.version, APP_VERSION);
     int tw = TW(ui, 1, 26, buf, 0);
-    int w = tw + 68, h = 62, x = (W - w) / 2, y = 912;
+    int w = tw + 68, h = 62, x = (W - w) / 2, y = 916;
     gfx_rrect(s, x, y, w, h, h / 2, C_PANEL2, 250, 0);
     gfx_rrect(s, x, y, w, h, h / 2, C_FOCUS, 255, 3);
     T(ui, 1, 26, x + 34, y + h / 2 + 9, buf, C_TEXT, 255, 0);
     return;
   }
-  text_wrap(s, ui->f, 20, MARGIN, 940, W - 2 * MARGIN, 30, 2,
-            "Antes de instalar: confira a compatibilidade e a versão de cada arquivo. O jogo base precisa estar "
-            "instalado no console antes do update. A instalação é solicitada pelo aplicativo nativo do PS4; "
-            "acompanhe em Notificações.",
-            C_MUTED, 200);
 }
 
 static int hint(UI *ui, int x, const char *key, const char *label) {
@@ -1161,17 +1395,22 @@ static void draw_footer(UI *ui) {
     x = hint(ui, x, "\xE2\x96\xA1", "Apagar");
     x = hint(ui, x, "\xE2\x96\xB3", "Trocar campo");
     x = hint(ui, x, "OPTIONS", "Entrar");
+    if (ui->preview_fn) x = hint(ui, x, "\xE2\x97\x80", "no teclado: Ver a loja");
   } else if (ui->mode == MODE_QR) {
     x = hint(ui, x, "O", "Voltar ao login");
-  } else if (ui->mode == MODE_CATALOG && ui->pix_open) {
+  } else if (ui->mode == MODE_CATALOG && (ui->pix_open || ui->upd_help)) {
     x = hint(ui, x, "O", "Voltar");
+  } else if (ui->mode == MODE_CATALOG && ui->detail) {
+    x = hint(ui, x, "\xE2\x97\x80 \xE2\x96\xB2 \xE2\x96\xBC \xE2\x96\xB6", "Mover");
+    x = hint(ui, x, "X", ui->zone == 0 ? (ui->locked ? "Bloqueado" : "Baixar") : "Assistir / ver");
+    x = hint(ui, x, "O", "Voltar");
+    if (update_available(ui)) x = hint(ui, x, "\xE2\x96\xA1", "Atualizar app");
   } else if (ui->mode == MODE_CATALOG) {
     x = hint(ui, x, "\xE2\x97\x80 \xE2\x96\xB6", "Coleções");
-    x = hint(ui, x, "\xE2\x96\xB2 \xE2\x96\xBC", "Downloads");
-    x = hint(ui, x, "X", "Instalar");
+    x = hint(ui, x, "X", "Detalhes");
     x = hint(ui, x, "L1  R1", "Categorias");
     x = hint(ui, x, "O", "Início");
-    x = hint(ui, x, "\xE2\x96\xB3", "Sair");
+    x = hint(ui, x, "\xE2\x96\xB3", ui->visitor ? "Voltar ao login" : "Sair");
     if (update_available(ui)) x = hint(ui, x, "\xE2\x96\xA1", "Atualizar app");
   }
   char v[48];
@@ -1181,7 +1420,11 @@ static void draw_footer(UI *ui) {
 }
 
 /* ---- telas de login / carregando */
-#define LG_X   480
+#define QR_X   480
+#define QR_W   960
+#define QR_Y   130
+#define QR_H   810
+#define LG_X   864
 #define LG_W   960
 #define LG_Y   130
 #define LG_H   810
@@ -1235,11 +1478,28 @@ static void draw_login(UI *ui) {
   gfx_rrect(s, LG_X, LG_Y, LG_W, LG_H, 28, C_PANEL, 245, 0);
   gfx_rrect(s, LG_X, LG_Y, LG_W, LG_H, 28, C_WHITE, 26, 2);
   int px = LG_X + 45;
-  if (ui->logo) {
-    Image *lg = ui->logo_full ? img_scale(ui->logo_full, 116, 116) : NULL;
-    if (lg) { gfx_blit(s, lg, LG_X + LG_W - 45 - 116, LG_Y + 26, 0, 255); img_free(lg); }
+  /* lado esquerdo: marca + aviso do cadastro com o QR do WhatsApp */
+  {
+    int bx = MARGIN, bw = LG_X - 70 - MARGIN, bc = bx + bw / 2;
+    if (ui->logo_full) gfx_blit(s, ui->logo_full, bc - ui->logo_full->w / 2, 130, 0, 255);
+    text_draw_in(s, ui->fb, 58, bx, bw, 560, "JK PATCHS", C_TEXT, 255, 5, 1);
+    text_draw_in(s, ui->f, 26, bx, bw, 604, "Os melhores patches de futebol para o seu PS4.", C_MUTED, 255, 0, 1);
+    if (ui->preview_fn) {                                          /* botao piscante: ver a loja antes de cadastrar */
+      int by = 628, bh = 64, on = (ui->frame / 30) % 2 == 0, sel = ui->kr < 0;
+      gfx_rrect(s, bx, by, bw, bh, 32, on ? C_ACCENT : C_BASE, 255, 0);
+      gfx_rrect(s, bx, by, bw, bh, 32, C_BASE_EDGE, 255, 3);
+      text_draw_in(s, ui->fb, 26, bx, bw, by + bh / 2 + 9, "Ver a Loja antes de fazer o Cadastro", on ? C_DARKTXT : C_WHITE, 255, 0, 1);
+      if (sel) gfx_rrect(s, bx - 6, by - 6, bw + 12, bh + 12, 38, C_FOCUS, 255, 4);
+    }
+    int qy = 716;
+    if (ui->qr_small) {
+      gfx_rrect(s, bx, qy, 196, 196, 16, RGB(255, 255, 255), 255, 0);
+      gfx_blit(s, ui->qr_small, bx + 8, qy + 8, 0, 255);
+    }
+    text_wrap(s, ui->fb, 26, bx + 226, qy + 52, bw - 226, 38, 4,
+              "Após efetuar o cadastro, fale com a gente no WhatsApp: escaneie o QR Code.", C_TEXT, 255);
   }
-  T(ui, 1, 22, px, LG_Y + 62, "ACESSO RESTRITO", C_ACCENT, 255, 4);
+  T(ui, 1, 22, px, LG_Y + 62, "ÁREA DE MEMBROS", C_ACCENT, 255, 4);
   T(ui, 1, 46, px, LG_Y + 122, "Entrar", C_TEXT, 255, 0);
 
   draw_field(ui, 0, LG_Y + 160);
@@ -1284,22 +1544,22 @@ static void draw_login(UI *ui) {
 
 static void draw_qr(UI *ui) {
   Image *s = ui->s;
-  gfx_rrect(s, LG_X, LG_Y, LG_W, LG_H, 28, C_PANEL, 245, 0);
-  gfx_rrect(s, LG_X, LG_Y, LG_W, LG_H, 28, C_WHITE, 26, 2);
-  text_draw_in(s, ui->fb, 44, LG_X, LG_W, LG_Y + 72, "Cadastro enviado!", C_ACCENT, 255, 0, 1);
+  gfx_rrect(s, QR_X, QR_Y, QR_W, QR_H, 28, C_PANEL, 245, 0);
+  gfx_rrect(s, QR_X, QR_Y, QR_W, QR_H, 28, C_WHITE, 26, 2);
+  text_draw_in(s, ui->fb, 44, QR_X, QR_W, QR_Y + 72, "Cadastro enviado!", C_ACCENT, 255, 0, 1);
   char l[160];
   snprintf(l, sizeof(l), "Usuário: %s", ui->qr_user);
-  text_draw_in(s, ui->fb, 30, LG_X, LG_W, LG_Y + 122, l, C_TEXT, 255, 0, 1);
-  text_draw_in(s, ui->f, 26, LG_X, LG_W, LG_Y + 168, "Sua conta está aguardando ativação.", C_MUTED, 255, 0, 1);
-  int q = 450, qx = LG_X + (LG_W - q) / 2, qy = LG_Y + 192;     /* o PNG ja tem 450x450 (10 px por modulo): sem redimensionar */
+  text_draw_in(s, ui->fb, 30, QR_X, QR_W, QR_Y + 122, l, C_TEXT, 255, 0, 1);
+  text_draw_in(s, ui->f, 26, QR_X, QR_W, QR_Y + 168, "Sua conta está aguardando ativação.", C_MUTED, 255, 0, 1);
+  int q = 450, qx = QR_X + (QR_W - q) / 2, qy = QR_Y + 192;     /* o PNG ja tem 450x450 (10 px por modulo): sem redimensionar */
   gfx_rrect(s, qx - 8, qy - 8, q + 16, q + 16, 18, RGB(255, 255, 255), 255, 0);
   if (ui->qr) {
     gfx_blit(s, ui->qr, qx, qy, 0, 255);
   } else {
     text_draw_in(s, ui->f, 24, qx, q, qy + q / 2, "(QR Code indisponível)", C_DARKTXT, 255, 0, 1);
   }
-  text_draw_in(s, ui->fb, 28, LG_X, LG_W, qy + q + 58, "Escaneie com o celular e fale com o admin no WhatsApp", C_TEXT, 255, 0, 1);
-  text_draw_in(s, ui->f, 24, LG_X, LG_W, qy + q + 96, "Quando ele ativar sua conta (30 dias), volte e toque em ENTRAR.", C_MUTED, 255, 0, 1);
+  text_draw_in(s, ui->fb, 28, QR_X, QR_W, qy + q + 58, "Escaneie com o celular e fale com o admin no WhatsApp", C_TEXT, 255, 0, 1);
+  text_draw_in(s, ui->f, 24, QR_X, QR_W, qy + q + 96, "Quando ele ativar sua conta (30 dias), volte e toque em ENTRAR.", C_MUTED, 255, 0, 1);
 }
 
 static void draw_pix(UI *ui) {
@@ -1314,6 +1574,25 @@ static void draw_pix(UI *ui) {
   gfx_rrect(s, qx - 10, qy - 10, ui->pix->w + 20, ui->pix->h + 20, 18, RGB(255, 255, 255), 255, 0);
   gfx_blit(s, ui->pix, qx, qy, 0, 255);
   text_draw_in(s, ui->f, 24, cx, cw, qy + ui->pix->h + 58, "Abra o app do seu banco  \xE2\x80\xBA  Pix  \xE2\x80\xBA  Ler QR Code", C_MUTED, 255, 0, 1);
+}
+
+static void draw_upd_help(UI *ui) {
+  Image *s = ui->s;
+  gfx_fill(s, 0, 0, W, H, C_BLACK, 200);
+  int cw = 1280, ch = 700, cx = (W - cw) / 2, cy = 150;
+  gfx_rrect(s, cx, cy, cw, ch, 28, C_PANEL, 250, 0);
+  gfx_rrect(s, cx, cy, cw, ch, 28, C_WHITE, 26, 2);
+  char t[120];
+  snprintf(t, sizeof(t), "Nova versão do app: JK Patchs %s", ui->cat ? ui->cat->app.version : "");
+  text_draw_in(s, ui->fb, 44, cx, cw, cy + 84, t, C_ACCENT, 255, 0, 1);
+  char l[5][200];
+  snprintf(l[0], sizeof(l[0]), "1.  Feche este app (botão PS  \xE2\x80\xBA  Fechar).");
+  snprintf(l[1], sizeof(l[1]), "2.  Na tela inicial, selecione JK Patchs, aperte OPTIONS e escolha Apagar.");
+  snprintf(l[2], sizeof(l[2]), "3.  Abra Configurações  \xE2\x80\xBA  Debug Settings  \xE2\x80\xBA  Game  \xE2\x80\xBA  Package Installer.");
+  snprintf(l[3], sizeof(l[3]), "4.  Escolha %s (já está baixado no console) e instale.", ui->upd_file[0] ? ui->upd_file : "o arquivo do app");
+  snprintf(l[4], sizeof(l[4]), "5.  Abra o JK Patchs de novo. Seu login continua salvo.");
+  for (int i = 0; i < 5; i++) text_draw_in(s, ui->f, 30, cx + 70, cw - 140, cy + 190 + i * 74, l[i], C_TEXT, 255, 0, 0);
+  text_draw_in(s, ui->f, 24, cx, cw, cy + ch - 40, "Aperte  O  para fechar. O aviso volta enquanto você não instalar.", C_MUTED, 255, 0, 1);
 }
 
 static void draw_guide(UI *ui) {
@@ -1489,16 +1768,15 @@ void ui_skip_splash(UI *ui) { ui->splash = SPLASH_END - 1; ui_tick(ui); ui->dirt
 
 static void draw_scene(UI *ui) {
   if (ui->gmode && ui->mode == MODE_CATALOG) { draw_guide(ui); return; }      /* guia em tela cheia */
-  if (ui->bg) gfx_blit_surface(ui->s, ui->bg);
+  Image *back = (ui->mode == MODE_CATALOG && ui->fbg) ? ui->fbg : ui->bg;
+  if (back) gfx_blit_surface(ui->s, back);
   else gfx_fill(ui->s, 0, 0, W, H, C_BG, 255);
   draw_topbar(ui);
   if (ui->mode == MODE_CATALOG) {
-    draw_heading(ui);
-    draw_chips(ui);
-    draw_cards(ui);
-    draw_panel(ui);
+    if (ui->detail) draw_detail(ui); else draw_vitrine(ui);
     draw_message_line(ui);
     if (ui->pix_open && ui->pix) draw_pix(ui);
+    if (ui->upd_help) draw_upd_help(ui);
   } else if (ui->mode == MODE_LOGIN) {
     draw_login(ui);
   } else if (ui->mode == MODE_QR) {
