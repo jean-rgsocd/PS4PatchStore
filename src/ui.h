@@ -35,6 +35,7 @@ void ui_show_loading(UI *ui, const char *msg);
 void ui_show_login(UI *ui, const char *msg);          /* msg: erro/aviso (pode ser NULL); limpa a senha */
 void ui_set_catalog(UI *ui, const Catalog *cat);      /* o Catalog precisa continuar valido enquanto a UI o usa */
 void ui_set_user(UI *ui, const char *name);
+void ui_set_offline(UI *ui, int on);                    /* 1 = catalogo salvo no console (servidor fora do ar): downloads indisponiveis */
 void ui_remind_support(UI *ui);                        /* abre a tela "Apoie o app" (lembrete de 30 dias); nao bloqueia nada */
 void ui_set_plan(UI *ui, const char *text, int level);   /* linha do plano no topo; text vazio/NULL esconde. level: 0 ok, 1 aviso, 2 vencido */
 void ui_key(UI *ui, int key);

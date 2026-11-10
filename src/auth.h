@@ -17,6 +17,7 @@ typedef struct {
   char user[64];
   char plan[48];          /* AUTH_EV_CATALOG: plano do usuario ("ilimitado" ou data ISO); vazio se o servidor nao informou */
   long support_until;     /* AUTH_EV_CATALOG: ate quando o apoio (30 dias) esta em dia (segundos, hora do servidor); 0 = desconhecido */
+  int offline;            /* 1 = servidor fora do ar: este catalogo e a ultima copia salva no console */
   int nag;                /* 1 = o admin ligou o lembrete fixo: mostra o "Apoie o app" toda vez que abrir */
   long plan_now;          /* hora do servidor (segundos) quando o plano foi lido; 0 = desconhecida */
   char *text;

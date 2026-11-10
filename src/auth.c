@@ -21,6 +21,7 @@
 #define SESSION_FILE      "/data/jkpatchs.sess"
 #define USER_AGENT        "Mozilla/5.0 (PLAYSTATION 4; JKPatchs/1.0)"
 #define MAX_RESP          (2 * 1024 * 1024)
+#define CATALOG_CACHE     "/data/jkpatchs_catalog.cache"
 #define NET_POOLSIZE      (64 * 1024)
 
 /* ------------------------------------------------------------------ estado compartilhado */
@@ -29,6 +30,7 @@ static int running = 0;                      /* ha uma tarefa de rede em andamen
 static int have_ev = 0;
 static AuthEvent evq;
 
+static int g_offline = 0;
 static long g_support = 0;                   /* prazo do apoio (lido do /me), entregue junto do evento */
 static int g_nag = 0;
 static char server[256];                     /* sem barra final */
@@ -44,6 +46,7 @@ static void post_event2(int type, const char *msg, const char *user, char *text,
   evq.plan_now = plan_now;
   evq.support_until = g_support;
   evq.nag = g_nag;
+  evq.offline = g_offline;
   evq.text = text;
   have_ev = 1;
   running = 0;
@@ -285,11 +288,47 @@ out:
 }
 
 /* ------------------------------------------------------------------ tarefas */
+/* Copia do ultimo catalogo recebido (1a linha "# user<TAB>nome"): se o servidor cair, a loja continua aparecendo. */
+static void cache_save(const char *user, const char *text) {
+  char tmp[sizeof(CATALOG_CACHE) + 8];
+  snprintf(tmp, sizeof(tmp), "%s.tmp", CATALOG_CACHE);
+  FILE *f = fopen(tmp, "wb");
+  if (!f) return;
+  size_t n = strlen(text);
+  int ok = fprintf(f, "# user\t%s\n", user) > 0 && fwrite(text, 1, n, f) == n;
+  ok = (fclose(f) == 0) && ok;
+  if (ok) rename(tmp, CATALOG_CACHE); else unlink(tmp);
+}
+
+/* Servidor indisponivel: usa a copia salva (so se for do mesmo usuario / visitante). Retorna 1 se mostrou. */
+static int cache_use(const char *user) {
+  FILE *f = fopen(CATALOG_CACHE, "rb");
+  if (!f) return 0;
+  fseek(f, 0, SEEK_END);
+  long n = ftell(f);
+  fseek(f, 0, SEEK_SET);
+  if (n <= 16 || n > MAX_RESP) { fclose(f); return 0; }
+  char *buf = (char *)malloc((size_t)n + 1);
+  if (!buf) { fclose(f); return 0; }
+  size_t got = fread(buf, 1, (size_t)n, f);
+  fclose(f);
+  buf[got] = 0;
+  char want[100];
+  snprintf(want, sizeof(want), "# user\t%s\n", user);
+  if (strncmp(buf, want, strlen(want)) != 0) { free(buf); return 0; }
+  g_support = 0; g_nag = 0; g_offline = 1;
+  install_log("Servidor indisponivel: usando a ultima loja salva no console.");
+  post_event2(AUTH_EV_CATALOG, NULL, user, buf, "", 0);
+  g_offline = 0;
+  return 1;
+}
+
 static int fetch_catalog(const char *user, const char *token, int silent_login_needed, int preview) {
   char err[200] = "";
   char *resp = NULL;
   int st = 0;
   if (http_do(0, preview ? "/preview" : "/catalog", NULL, token, &st, &resp, err, sizeof(err)) != 0) {
+    if (!preview && cache_use(user)) return 0;
     post_event(AUTH_EV_CATALOG_FAIL, err, user, NULL);
     return -1;
   }
@@ -299,6 +338,7 @@ static int fetch_catalog(const char *user, const char *token, int silent_login_n
     post_event(AUTH_EV_NEED_LOGIN, silent_login_needed ? "Sua sessão expirou. Entre novamente." : "Sessão recusada.", NULL, NULL);
     return -1;
   }
+  if ((st >= 500 || st == 429) && !preview && cache_use(user)) { free(resp); return 0; }
   if (st != 200 || !resp[0] || !strncmp(resp, "ERRO", 4)) {
     char m[200];
     if (!strncmp(resp, "ERRO\n", 5)) { snprintf(m, sizeof(m), "%s", resp + 5); char *nl = strchr(m, '\n'); if (nl) *nl = 0; }
@@ -307,6 +347,7 @@ static int fetch_catalog(const char *user, const char *token, int silent_login_n
     post_event(AUTH_EV_CATALOG_FAIL, m, user, NULL);
     return -1;
   }
+  if (!preview) cache_save(user, resp);
   /* Plano do usuario (para o topo do app). Se falhar, o app so nao mostra o plano. */
   char plan[48] = "";
   long now = 0;

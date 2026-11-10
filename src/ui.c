@@ -57,6 +57,7 @@ struct UI {
   UiLoginFn login_fn;
   UiLoginFn register_fn;
   UiPreviewFn preview_fn;              /* botao "Ver a loja" (visitante) */
+  int offline;                         /* 1 = mostrando o catalogo salvo porque o servidor nao respondeu */
   int locked, visitor;                 /* catalogo so para olhar: sem downloads (visitante ou plano vencido/pendente) */
   Image *qr;                           /* QR Code do WhatsApp do admin (assets/images/qr_whatsapp.png) */
   Image *pix;                          /* QR Code do Pix de apoio (assets/images/qr_pix.png); sem o arquivo, o botao nao aparece */
@@ -447,6 +448,8 @@ void ui_set_user(UI *ui, const char *name) {
   ui->dirty = 1;
 }
 
+void ui_set_offline(UI *ui, int on) { ui->offline = on; ui->dirty = 1; }
+
 void ui_remind_support(UI *ui) {
   if (!ui->pix || ui->mode != MODE_CATALOG || ui->locked) return;
   ui->pix_open = 1;
@@ -474,8 +477,9 @@ void ui_set_catalog(UI *ui, const Catalog *cat) {
   ui->dirty = 1;
   ui->locked = cat && cat->locked;
   ui->visitor = ui->locked && !ui->username[0];
-  if (ui->visitor) ui_toast(ui, "Modo visitante: veja tudo, mas para baixar é preciso realizar o cadastro.", UI_TOAST_INFO);
-  else if (ui->locked) ui_toast(ui, "Faça seu cadastro. Vídeos e tutoriais continuam liberados.", UI_TOAST_INFO);
+  if (ui->offline) ui_toast(ui, "Servidor fora do ar: mostrando a última loja salva. Os downloads podem não funcionar agora.", UI_TOAST_INFO);
+  else if (ui->visitor) ui_toast(ui, "Modo visitante: veja tudo, mas para baixar é preciso ativar o plano.", UI_TOAST_INFO);
+  else if (ui->locked) ui_toast(ui, "Ative seu plano para baixar. Vídeos e tutoriais continuam liberados.", UI_TOAST_INFO);
 }
 
 /* ---- teclado na tela */
@@ -683,7 +687,7 @@ static void trigger_install(UI *ui) {
   const CatButton *b = &g->btn[ui->focus];
   const char *action = b->action[0] ? b->action : "pkg"; /* catalogos antigos continuam compativeis */
   if (ui->locked && strcmp(action, "video") && strcmp(action, "image")) {
-    ui_toast(ui, "Ative seu plano para baixar.", UI_TOAST_ERR);
+    ui_toast(ui, ui->offline ? "Sem conexão com o servidor. Downloads indisponíveis agora." : "Ative seu plano para baixar.", UI_TOAST_ERR);
     return;
   }
   if (!b->url[0]) { ui_toast(ui, "URL não configurada neste botão.", UI_TOAST_ERR); return; }
@@ -914,6 +918,7 @@ void ui_key(UI *ui, int key) {
   if (key == UI_TRIANGLE) {                                     /* sair da conta */
     if (ui->busy) { ui_toast(ui, "Aguarde o pedido atual terminar.", UI_TOAST_INFO); return; }
     vid_close(ui);
+    if (ui->offline) { ui_toast(ui, "Sem conexão com o servidor. Feche e abra o app para tentar de novo.", UI_TOAST_INFO); return; }
     if (ui->visitor) {
       ui->detail = 0; ui->locked = ui->visitor = 0;
       ui_show_login(ui, "");
@@ -1005,7 +1010,7 @@ void ui_tick(UI *ui) {
       if (ui->splash_logo) { img_free(ui->splash_logo); ui->splash_logo = NULL; }
     }
   }
-  if (ui->auto_upd && ui->mode == MODE_CATALOG && ui->splash >= SPLASH_END && !ui->busy) {
+  if (ui->auto_upd && ui->mode == MODE_CATALOG && ui->splash >= SPLASH_END && !ui->busy && !ui->offline) {
     ui->auto_upd = 0;
     if (update_available(ui)) trigger_update(ui);       /* atualizacao automatica: sem precisar apertar nada */
   }
@@ -1340,7 +1345,7 @@ static void draw_detail(UI *ui) {
   }
   if (ui->locked) {
     text_wrap(s, ui->fb, 20, DT_PX + 44, DT_PY + DT_PH - 118, DT_PW - 88, 28, 2,
-              "Downloads bloqueados: Faça seu cadastro para baixar. Vídeos, tutoriais e descrições continuam liberados.", C_FOCUS, 255);
+              ui->offline ? "Servidor fora do ar: mostrando a última versão salva. Os downloads voltam quando ele voltar." : "Downloads bloqueados: ative seu plano para baixar. Vídeos, tutoriais e descrições continuam liberados.", C_FOCUS, 255);
   } else
   text_wrap(s, ui->f, 18, DT_PX + 44, DT_PY + DT_PH - 52, DT_PW - 88, 26, 2,
             "Antes de instalar: confira a versão de cada arquivo. O jogo base precisa estar instalado antes do update. "
@@ -1503,13 +1508,23 @@ static void draw_login(UI *ui) {
       text_draw_in(s, ui->fb, 26, bx, bw, by + bh / 2 + 9, "Ver a Loja antes de fazer o Cadastro", on ? C_DARKTXT : C_WHITE, 255, 0, 1);
       if (sel) gfx_rrect(s, bx - 6, by - 6, bw + 12, bh + 12, 38, C_FOCUS, 255, 4);
     }
-    int qy = 716;
-    if (ui->qr_small) {
-      gfx_rrect(s, bx, qy, 196, 196, 16, RGB(255, 255, 255), 255, 0);
-      gfx_blit(s, ui->qr_small, bx + 8, qy + 8, 0, 255);
+    int qy = 722;                                                  /* comunicado: como entrar (o QR do WhatsApp aparece depois do cadastro) */
+    gfx_rrect(s, bx, qy, bw, 196, 18, C_PANEL, 220, 0);
+    gfx_rrect(s, bx, qy, bw, 196, 18, C_WHITE, 26, 2);
+    T(ui, 1, 20, bx + 28, qy + 38, "COMO ENTRAR", C_ACCENT, 255, 3);
+    static const char *step[3] = {
+      "Toque em CADASTRAR e crie seu usuário e senha.",
+      "Aparece um QR Code: fale com a gente no WhatsApp.",
+      "Quando liberarmos sua conta, é só tocar em ENTRAR."};
+    for (int i = 0; i < 3; i++) {
+      int sy = qy + 76 + i * 38;
+      gfx_circle(s, bx + 40, sy - 8, 14, C_BASE, 255);
+      char n[2] = {(char)('1' + i), 0};
+      text_draw_in(s, ui->fb, 18, bx + 26, 28, sy - 1, n, C_WHITE, 255, 0, 1);
+      char buf[160];
+      text_fit(ui->f, 22, step[i], bw - 90, buf, sizeof(buf));
+      T(ui, 0, 22, bx + 68, sy, buf, C_TEXT, 255, 0);
     }
-    text_wrap(s, ui->fb, 26, bx + 226, qy + 52, bw - 226, 38, 4,
-              "Após efetuar o cadastro, fale com a gente no WhatsApp: escaneie o QR Code.", C_TEXT, 255);
   }
   T(ui, 1, 22, px, LG_Y + 62, "ÁREA DE MEMBROS", C_ACCENT, 255, 4);
   T(ui, 1, 46, px, LG_Y + 122, "Entrar", C_TEXT, 255, 0);

@@ -526,10 +526,13 @@ static void check_auth(UI *ui) {
     case AUTH_EV_REGISTER_OK:
       ui_show_register_done(ui, ev.user);
       break;
-    case AUTH_EV_CATALOG:
+    case AUTH_EV_CATALOG: {
       if (catalog_parse(&cat, ev.text) == 0) {
+        ui_set_offline(ui, ev.offline);                       /* a copia salva (auth.c) vem marcada como offline */
         ui_set_user(ui, ev.user);
-        if (!ev.user[0]) {                                    /* visitante (sem login) */
+        if (ev.offline) {                                     /* servidor fora do ar: loja salva */
+          ui_set_plan(ui, "SEM CONEXÃO COM O SERVIDOR  \xC2\xB7  LOJA SALVA", 1);
+        } else if (!ev.user[0]) {                             /* visitante (sem login) */
           ui_set_plan(ui, "MODO VISITANTE  \xC2\xB7  DOWNLOADS BLOQUEADOS", 1);
         } else if (!strcmp(ev.plan, "pendente")) {
           char pt[96];
@@ -540,7 +543,7 @@ static void check_auth(UI *ui) {
         }
         ui_set_catalog(ui, &cat);
         install_log("Catalogo recebido do servidor.");
-        support_reminder(ui, &ev);
+        if (!ev.offline) support_reminder(ui, &ev);
         if (cat.app.url[0] && catalog_version_num(cat.app.version) <= catalog_version_num(APP_VERSION)) {
           char fn[96], pp[160];                    /* app ja esta na versao do catalogo: apaga o PKG da atualizacao (libera espaco) */
           ui_app_pkg_name(cat.app.url, fn, sizeof(fn));
@@ -559,8 +562,9 @@ static void check_auth(UI *ui) {
         install_log("ERRO: catalogo do servidor invalido");
       }
       break;
+    }
     case AUTH_EV_CATALOG_FAIL:
-      /* sessao continua salva; so mostra o motivo e deixa tentar de novo pela tela de login */
+      /* sem copia salva no console (a copia, quando existe, ja foi usada em auth.c): mostra o motivo */
       ui_show_login(ui, ev.msg[0] ? ev.msg : "Não foi possível baixar o catálogo.");
       break;
     default:
