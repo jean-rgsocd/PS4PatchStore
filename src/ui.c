@@ -474,8 +474,8 @@ void ui_set_catalog(UI *ui, const Catalog *cat) {
   ui->dirty = 1;
   ui->locked = cat && cat->locked;
   ui->visitor = ui->locked && !ui->username[0];
-  if (ui->visitor) ui_toast(ui, "Modo visitante: veja tudo, mas para baixar é preciso ativar o plano.", UI_TOAST_INFO);
-  else if (ui->locked) ui_toast(ui, "Ative seu plano para baixar. Vídeos e tutoriais continuam liberados.", UI_TOAST_INFO);
+  if (ui->visitor) ui_toast(ui, "Modo visitante: veja tudo, mas para baixar é preciso realizar o cadastro.", UI_TOAST_INFO);
+  else if (ui->locked) ui_toast(ui, "Faça seu cadastro. Vídeos e tutoriais continuam liberados.", UI_TOAST_INFO);
 }
 
 /* ---- teclado na tela */
