@@ -1340,7 +1340,7 @@ static void draw_detail(UI *ui) {
   }
   if (ui->locked) {
     text_wrap(s, ui->fb, 20, DT_PX + 44, DT_PY + DT_PH - 118, DT_PW - 88, 28, 2,
-              "Downloads bloqueados: ative seu plano para baixar. Vídeos, tutoriais e descrições continuam liberados.", C_FOCUS, 255);
+              "Downloads bloqueados: Faça seu cadastro para baixar. Vídeos, tutoriais e descrições continuam liberados.", C_FOCUS, 255);
   } else
   text_wrap(s, ui->f, 18, DT_PX + 44, DT_PY + DT_PH - 52, DT_PW - 88, 26, 2,
             "Antes de instalar: confira a versão de cada arquivo. O jogo base precisa estar instalado antes do update. "
