@@ -91,7 +91,7 @@ int catalog_parse(Catalog *c, char *text) {
       b->base = atoi(f[7]);
       copy(b->action, sizeof(b->action), (n >= 9 && f[8][0]) ? f[8] : "pkg");
       if (n >= 10) copy(b->dest, sizeof(b->dest), f[9]);
-      if (n >= 11 && !strncmp(f[10], "https://", 8)) copy(b->extra, sizeof(b->extra), f[10]);
+      if (n >= 11 && (!strncmp(f[10], "https://", 8) || !strncmp(f[10], "/data/", 6))) copy(b->extra, sizeof(b->extra), f[10]);
     }
   }
   return c->ngame > 0 ? 0 : -2;
