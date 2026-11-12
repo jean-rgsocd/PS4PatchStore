@@ -56,9 +56,6 @@ struct UI {
   int mode;
   UiLoginFn login_fn;
   UiLoginFn register_fn;
-  UiPreviewFn preview_fn;              /* botao "Ver a loja" (visitante) */
-  int offline;                         /* 1 = mostrando o catalogo salvo porque o servidor nao respondeu */
-  int locked, visitor;                 /* catalogo so para olhar: sem downloads (visitante ou plano vencido/pendente) */
   Image *qr;                           /* QR Code do WhatsApp do admin (assets/images/qr_whatsapp.png) */
   Image *pix;                          /* QR Code do Pix de apoio (assets/images/qr_pix.png); sem o arquivo, o botao nao aparece */
   int pix_open;
@@ -97,7 +94,6 @@ struct UI {
   int detail;                          /* 0 = vitrine de capas, 1 = detalhe do jogo (downloads + videos) */
   int zone;                            /* detalhe: 0 = downloads, 1 = videos/imagens */
   int dfocus, dscroll, mfocus, mscroll;
-  int slide;                           /* vitrine: deslocamento (px) das capas durante a animacao de troca; 0 = parado */
 
   int filt[CAT_MAX_GAMES], nfilt;
   int cat_idx, sel, scroll, focus;
@@ -156,7 +152,6 @@ static void lists(const CatGame *g, int *dl, int *nd, int *md, int *nm) {
 static void rebuild_fbg(UI *ui);
 
 static void select_game(UI *ui, int idx) {
-  ui->slide = 0;
   ui->sel = idx;
   ui->detail = 0;
   ui->dirty = 1;
@@ -415,7 +410,6 @@ void ui_set_auth_handlers(UI *ui, UiLoginFn login, UiLogoutFn logout, void *ud) 
 
 void ui_set_open_handler(UI *ui, UiOpenUrlFn fn, void *ud) { ui->open_fn = fn; ui->open_ud = ud; }
 void ui_set_register_handler(UI *ui, UiLoginFn fn) { ui->register_fn = fn; }
-void ui_set_preview_handler(UI *ui, UiPreviewFn fn) { ui->preview_fn = fn; }
 
 void ui_show_register_done(UI *ui, const char *user) {
   ui->mode = MODE_QR;
@@ -448,14 +442,6 @@ void ui_set_user(UI *ui, const char *name) {
   ui->dirty = 1;
 }
 
-void ui_set_offline(UI *ui, int on) { ui->offline = on; ui->dirty = 1; }
-
-void ui_remind_support(UI *ui) {
-  if (!ui->pix || ui->mode != MODE_CATALOG || ui->locked) return;
-  ui->pix_open = 1;
-  ui->dirty = 1;
-}
-
 void ui_set_plan(UI *ui, const char *text, int level) {
   snprintf(ui->plan, sizeof(ui->plan), "%s", text ? text : "");
   ui->plan_level = level;
@@ -475,11 +461,6 @@ void ui_set_catalog(UI *ui, const Catalog *cat) {
   ui->mode = MODE_CATALOG;
   ui->busy = 0;
   ui->dirty = 1;
-  ui->locked = cat && cat->locked;
-  ui->visitor = ui->locked && !ui->username[0];
-  if (ui->offline) ui_toast(ui, "Servidor fora do ar: mostrando a última loja salva. Os downloads podem não funcionar agora.", UI_TOAST_INFO);
-  else if (ui->visitor) ui_toast(ui, "Modo visitante: veja tudo, mas para baixar é preciso ativar o plano.", UI_TOAST_INFO);
-  else if (ui->locked) ui_toast(ui, "Ative seu plano para baixar. Vídeos e tutoriais continuam liberados.", UI_TOAST_INFO);
 }
 
 /* ---- teclado na tela */
@@ -545,22 +526,9 @@ static void register_submit(UI *ui) {
   memset(pp, 0, sizeof(pp));
 }
 
-static void preview_start(UI *ui) {
-  if (!ui->preview_fn) return;
-  ui->username[0] = 0;
-  ui_show_loading(ui, "Abrindo a loja...");
-  ui->preview_fn(ui->auth_ud);
-}
-
 static void login_key(UI *ui, int key) {
-  if (ui->kr < 0) {                                              /* foco no botao "Ver a loja" (lado esquerdo) */
-    if (key == UI_OK) preview_start(ui);
-    else if (key == UI_RIGHT || key == UI_DOWN || key == UI_BACK || key == UI_SQUARE) { ui->kr = key == UI_DOWN ? 1 : 0; ui->kc = 0; ui->dirty = 1; }
-    else if (key == UI_OPTIONS) login_submit(ui);
-    return;
-  }
   switch (key) {
-    case UI_LEFT:  if (ui->kc > 0) { ui->kc--; ui->dirty = 1; } else if (ui->preview_fn) { ui->kr = -1; ui->dirty = 1; } break;
+    case UI_LEFT:  if (ui->kc > 0) { ui->kc--; ui->dirty = 1; } break;
     case UI_RIGHT: {
       int max = ui->kr == 4 ? KB_ACTIONS : KB_COLS;
       if (ui->kc + 1 < max) { ui->kc++; ui->dirty = 1; }
@@ -686,10 +654,6 @@ static void trigger_install(UI *ui) {
   }
   const CatButton *b = &g->btn[ui->focus];
   const char *action = b->action[0] ? b->action : "pkg"; /* catalogos antigos continuam compativeis */
-  if (ui->locked && strcmp(action, "video") && strcmp(action, "image")) {
-    ui_toast(ui, ui->offline ? "Sem conexão com o servidor. Downloads indisponíveis agora." : "Ative seu plano para baixar.", UI_TOAST_ERR);
-    return;
-  }
   if (!b->url[0]) { ui_toast(ui, "URL não configurada neste botão.", UI_TOAST_ERR); return; }
   if (!strcmp(action, "video")) {
     if (is_jkv(b->url)) vid_open_url(ui, b->name[0] ? b->name : g->title, b->url);
@@ -918,16 +882,9 @@ void ui_key(UI *ui, int key) {
   if (key == UI_TRIANGLE) {                                     /* sair da conta */
     if (ui->busy) { ui_toast(ui, "Aguarde o pedido atual terminar.", UI_TOAST_INFO); return; }
     vid_close(ui);
-    if (ui->offline) { ui_toast(ui, "Sem conexão com o servidor. Feche e abra o app para tentar de novo.", UI_TOAST_INFO); return; }
-    if (ui->visitor) {
-      ui->detail = 0; ui->locked = ui->visitor = 0;
-      ui_show_login(ui, "");
-      return;
-    }
     if (ui->logout_fn) ui->logout_fn(ui->auth_ud);
     ui->field[0][0] = 0;
     ui->detail = 0;
-    ui->locked = 0;
     ui_show_login(ui, "Você saiu da conta.");
     return;
   }
@@ -962,15 +919,16 @@ void ui_key(UI *ui, int key) {
     if (ui->dfocus < ui->dscroll) ui->dscroll = ui->dfocus;
     if (ui->dfocus >= ui->dscroll + DL_VIS) ui->dscroll = ui->dfocus - DL_VIS + 1;
     if (ui->mfocus < ui->mscroll) ui->mscroll = ui->mfocus;
-    if (ui->mfocus >= ui->mscroll + MD_VIS) ui->mscroll = ui->mfocus - MD_VIS + 1;
+    { int vis = !strcmp(g->category, "duvidas") ? 4 : MD_VIS;
+      if (ui->mfocus >= ui->mscroll + vis) ui->mscroll = ui->mfocus - vis + 1; }
     return;
   }
   switch (key) {                                                   /* ---- vitrine */
     case UI_LEFT:
-      if (ui->sel > 0) { select_game(ui, ui->sel - 1); ui->slide = -(TH_W[1] + CAR_GAP); }
+      if (ui->sel > 0) select_game(ui, ui->sel - 1);
       break;
     case UI_RIGHT:
-      if (ui->sel + 1 < ui->nfilt) { select_game(ui, ui->sel + 1); ui->slide = TH_W[1] + CAR_GAP; }
+      if (ui->sel + 1 < ui->nfilt) select_game(ui, ui->sel + 1);
       break;
     case UI_L1:
     case UI_R1: {
@@ -1010,14 +968,9 @@ void ui_tick(UI *ui) {
       if (ui->splash_logo) { img_free(ui->splash_logo); ui->splash_logo = NULL; }
     }
   }
-  if (ui->auto_upd && ui->mode == MODE_CATALOG && ui->splash >= SPLASH_END && !ui->busy && !ui->offline) {
+  if (ui->auto_upd && ui->mode == MODE_CATALOG && ui->splash >= SPLASH_END && !ui->busy) {
     ui->auto_upd = 0;
     if (update_available(ui)) trigger_update(ui);       /* atualizacao automatica: sem precisar apertar nada */
-  }
-  if (ui->slide) {                                    /* animacao de troca de capa: desacelera ate parar */
-    ui->slide = ui->slide * 2 / 3;
-    if (ui->slide > -10 && ui->slide < 10) ui->slide = 0;
-    ui->dirty = 1;
   }
   cover_poll(ui);
   guide_tick(ui);
@@ -1062,9 +1015,7 @@ static void draw_topbar(UI *ui) {
   T(ui, 1, 28, x, 66, ui->logo ? "JK PATCHS" : "PATCHS", C_TEXT, 255, 3);
 
   char st[96];
-  if (ui->mode == MODE_CATALOG && ui->visitor) {
-    snprintf(st, sizeof(st), "VISITANTE");
-  } else if (ui->mode == MODE_CATALOG) {
+  if (ui->mode == MODE_CATALOG) {
     snprintf(st, sizeof(st), "ONLINE  \xC2\xB7  ");
     size_t n = strlen(st);
     for (const char *q = ui->username; *q && n + 2 < sizeof(st); q++) st[n++] = (*q >= 'a' && *q <= 'z') ? *q - 32 : *q;
@@ -1074,7 +1025,7 @@ static void draw_topbar(UI *ui) {
   }
   int w = TW(ui, 1, 20, st, 3);
   T(ui, 1, 20, W - MARGIN - w, 62, st, C_MUTED, 255, 3);
-  gfx_circle(s, W - MARGIN - w - 22, 55, 7, (ui->mode == MODE_CATALOG && !ui->locked) ? C_ACCENT : C_FOCUS, 255);
+  gfx_circle(s, W - MARGIN - w - 22, 55, 7, ui->mode == MODE_CATALOG ? C_ACCENT : C_FOCUS, 255);
 
   if (ui->mode == MODE_CATALOG && ui->pix) {               /* convite de apoio: abre a tela do Pix com OPTIONS */
     const char *lab = "Apoie o app";
@@ -1102,30 +1053,9 @@ static const char *strip_num(const char *l) {
   return l;
 }
 
-static void draw_lock(Image *s, int cx, int cy, uint32_t col) {         /* cadeado ~28x34 centrado em cx,cy */
-  gfx_rrect(s, cx - 10, cy - 17, 20, 22, 9, col, 255, 3);                /* argola */
-  gfx_rrect(s, cx - 14, cy - 3, 28, 22, 5, col, 255, 0);                 /* corpo */
-  gfx_circle(s, cx, cy + 7, 3, C_PANEL2, 255);                           /* furo */
-}
-
 static void draw_button(UI *ui, const CatButton *b, int x, int y, int w, int focused) {
   Image *s = ui->s;
   int r = 20;
-  if (ui->locked && !is_media(b)) {                                      /* bloqueado: cinza com cadeado */
-    gfx_rrect(s, x, y, w, g_bh, r, C_PANEL2, 255, 0);
-    gfx_rrect(s, x, y, w, g_bh, r, C_WHITE, 30, 2);
-    char info[48];
-    info_text(b, info, sizeof(info));
-    int iw = info[0] ? TW(ui, 0, 20, info, 0) : 0;
-    int avail = w - 40 - 70 - (iw ? iw + 24 : 0);
-    char lab[128];
-    text_fit(ui->fb, 27, strip_num(b->label), avail, lab, sizeof(lab));
-    T(ui, 1, 27, x + 32, y + g_bh / 2 + 10, lab, C_MUTED, 255, 0);
-    if (info[0]) T(ui, 0, 20, x + w - 70 - 12 - iw, y + g_bh / 2 + 7, info, C_MUTED, 170, 0);
-    draw_lock(s, x + w - 38, y + g_bh / 2 - 1, C_MUTED);
-    if (focused) gfx_rrect(s, x - 8, y - 8, w + 16, g_bh + 16, r + 8, C_FOCUS, 255, 4);
-    return;
-  }
   if (b->base) {
     gfx_rrect(s, x, y, w, g_bh, r, C_BASE, 255, 0);
     gfx_rrect(s, x, y, w, g_bh, r, C_BASE_EDGE, 255, 2);
@@ -1202,9 +1132,9 @@ static void draw_vitrine(UI *ui) {
   }
   for (int i = n - 1; i >= 0; i--) {                                  /* de fora para dentro */
     int d = ds[i] < 0 ? -ds[i] : ds[i];
-    draw_tile(ui, ui->sel + ds[i], d, xs[i] + ui->slide, ys[i]);
+    draw_tile(ui, ui->sel + ds[i], d, xs[i], ys[i]);
   }
-  draw_tile(ui, ui->sel, 0, xc + ui->slide, y0);
+  draw_tile(ui, ui->sel, 0, xc, y0);
 }
 
 /* ---------------------------------------------------------------- detalhe do jogo */
@@ -1256,10 +1186,116 @@ static int draw_desc(UI *ui, int x, int y, int w, int lh, int max_lines, const c
   return used;
 }
 
+
+/* ---- tela "Duvidas & Respostas": dois paineis lado a lado, lidos da descricao do card.
+ * desc = "<painel 1> ## <painel 2>"; cada painel = "Titulo | Aviso | 1 passo | 2 passo | ... | nota" (separador " \xE2\x80\xA2 ").
+ * Item que comeca com digito = passo; o primeiro item e o titulo, o segundo e a faixa de aviso; os demais sao notas. */
+static Image *faq_logo(UI *ui, const char *needle, Image **cache) {
+  if (*cache) return *cache;
+  for (int i = 0; i < (ui->cat ? ui->cat->ngame : 0); i++) {
+    const CatGame *gg = &ui->cat->game[i];
+    if (strstr(gg->title, needle) && ui->th[i][3]) { *cache = img_scale(ui->th[i][3], 84, 142); break; }
+  }
+  return *cache;
+}
+
+static void faq_panel(UI *ui, int px, int py, int pw, int ph, const char *sec, uint32_t accent, Image *logo) {
+  Image *s = ui->s;
+  static const char SEP[] = " \xE2\x80\xA2 ";
+  char items[10][300]; int n = 0; const char *p = sec;
+  while (*p && n < 10) {
+    const char *e = strstr(p, SEP); size_t l = e ? (size_t)(e - p) : strlen(p);
+    if (l >= sizeof(items[0])) l = sizeof(items[0]) - 1;
+    memcpy(items[n], p, l); items[n][l] = 0; n++;
+    if (!e) break; p = e + (sizeof(SEP) - 1);
+  }
+  gfx_rrect(s, px, py, pw, ph, 26, C_PANEL, 235, 0);
+  gfx_rrect(s, px, py, pw, ph, 26, C_WHITE, 26, 2);
+  gfx_rrect(s, px, py, pw, 10, 5, accent, 255, 0);
+  if (logo) {
+    int lx = px + pw - 44 - logo->w, ly = py + 26;
+    gfx_rrect(s, lx - 3, ly - 3, logo->w + 6, logo->h + 6, 12, accent, 255, 3);
+    gfx_blit(s, logo, lx, ly, 10, 255);
+  }
+  int y = py + 74;
+  if (n > 0) T(ui, 1, 36, px + 44, y, items[0], C_TEXT, 255, 1);
+  if (n > 1) {
+    int bw = TW(ui, 1, 20, items[1], 1) + 36;
+    gfx_rrect(s, px + 44, y + 18, bw, 40, 20, C_PANEL2, 255, 0);
+    text_draw_in(s, ui->fb, 20, px + 44, bw, y + 46, items[1], C_FOCUS, 255, 1, 1);
+  }
+  y += 112;
+  int step = 0;
+  for (int i = 2; i < n; i++) {
+    unsigned char c0 = (unsigned char)items[i][0];
+    if (c0 < '1' || c0 > '9') continue;
+    step++;
+    gfx_circle(s, px + 44 + 21, y - 8, 21, C_BASE, 255);
+    gfx_circle(s, px + 44 + 21, y - 8, 21, C_ACCENT, 120);
+    char num[4]; snprintf(num, sizeof(num), "%d", step);
+    text_draw_in(s, ui->fb, 24, px + 44, 42, y, num, C_TEXT, 255, 0, 1);
+    const char *sp = strchr(items[i], ' ');
+    const char *body = sp ? sp + 1 : items[i];
+    int ln = text_wrap(s, ui->f, 24, px + 44 + 62, y, pw - 44 - 62 - 36, 31, 3, body, C_TEXT, 255);
+    if (ln < 1) ln = 1;
+    y += ln * 31 + 20;
+  }
+  int ny = py + ph - 26;
+  for (int i = n - 1; i >= 2; i--) {
+    unsigned char c0 = (unsigned char)items[i][0];
+    if (c0 >= '1' && c0 <= '9') continue;
+    int bh = 2 * 28 + 30;
+    gfx_rrect(s, px + 30, ny - bh, pw - 60, bh, 16, C_FOCUS, 30, 0);
+    gfx_rrect(s, px + 30, ny - bh, pw - 60, bh, 16, C_FOCUS, 210, 2);
+    text_wrap(s, ui->f, 21, px + 54, ny - bh + 38, pw - 108, 28, 2, items[i], C_TEXT, 255);
+    ny -= bh + 12;
+  }
+}
+
+static void draw_faq(UI *ui, const CatGame *g) {
+  Image *s = ui->s;
+  const char *m = strstr(g->desc, " ## ");
+  char a[600];
+  size_t la = m ? (size_t)(m - g->desc) : strlen(g->desc);
+  if (la >= sizeof(a)) la = sizeof(a) - 1;
+  memcpy(a, g->desc, la); a[la] = 0;
+  int top = 130, hh = 600, gap = 28, pw = (1920 - 2 * 96 - gap) / 2;
+  static Image *lgM, *lgB;
+  faq_panel(ui, 96, top, pw, hh, a, C_ACCENT, faq_logo(ui, "Mega Patch", &lgM));
+  faq_panel(ui, 96 + pw + gap, top, pw, hh, m ? m + 4 : "", C_FOCUS, faq_logo(ui, "Brasfootball", &lgB));
+
+  /* faixa de videos e tutoriais, cobrindo os dois paineis */
+  int dl[CAT_MAX_BTNS], md[CAT_MAX_BTNS + 1], nd, nm;
+  lists(g, dl, &nd, md, &nm);
+  int bx = 96, bw = 1920 - 2 * 96, by = top + hh + 18, bh = 190;
+  gfx_rrect(s, bx, by, bw, bh, 26, C_PANEL, 235, 0);
+  gfx_rrect(s, bx, by, bw, bh, 26, RGB(0x38, 0xbd, 0xf8), 90, 2);
+  T(ui, 1, 20, bx + 40, by + 38, "VÍDEOS E TUTORIAIS", RGB(0x38, 0xbd, 0xf8), 255, 3);
+  { char cap[256];
+    text_fit(ui->f, 22, "Qualquer dúvida sobre instalações manuais ou manuseio dos arquivos, siga os vídeos e tutoriais abaixo.", bw - 370 - 130, cap, sizeof(cap));
+    T(ui, 0, 22, bx + 370, by + 38, cap, C_MUTED, 255, 0); }
+  if (nm > 0) {
+    char pg[32]; snprintf(pg, sizeof(pg), "%d / %d", ui->mfocus + 1, nm);
+    int pw2 = TW(ui, 0, 20, pg, 0);
+    T(ui, 0, 20, bx + bw - 40 - pw2, by + 38, pg, C_MUTED, 255, 0);
+    int vis = 4, cw2 = (bw - 80 - (vis - 1) * 20) / vis;
+    for (int i = 0; i < vis; i++) {
+      int mi = ui->mscroll + i;
+      if (mi >= nm) break;
+      int bi = md[mi];
+      const char *label = g->btn[bi].label; int is_img = !strcmp(g->btn[bi].action, "image");
+      draw_media_card(ui, bx + 40 + i * (cw2 + 20), by + 62, cw2, 112, label, is_img, ui->zone == 1 && mi == ui->mfocus);
+    }
+    if (ui->mscroll > 0) T(ui, 1, 24, bx + 8, by + 120, "◀", C_ACCENT, 255, 0);
+    if (ui->mscroll + vis < nm) T(ui, 1, 24, bx + bw - 30, by + 120, "▶", C_ACCENT, 255, 0);
+  }
+}
+
 static void draw_detail(UI *ui) {
   Image *s = ui->s;
   const CatGame *g = cur_game(ui);
   if (!g) return;
+  if (!strcmp(g->category, "duvidas")) { draw_faq(ui, g); return; }
   int gi = ui->filt[ui->sel];
   int dl[CAT_MAX_BTNS], md[CAT_MAX_BTNS + 1], nd, nm;
   lists(g, dl, &nd, md, &nm);
@@ -1343,10 +1379,6 @@ static void draw_detail(UI *ui) {
       gfx_rrect(s, sx, bt, 8, bh, 4, C_ACCENT, 255, 0);
     }
   }
-  if (ui->locked) {
-    text_wrap(s, ui->fb, 20, DT_PX + 44, DT_PY + DT_PH - 118, DT_PW - 88, 28, 2,
-              ui->offline ? "Servidor fora do ar: mostrando a última versão salva. Os downloads voltam quando ele voltar." : "Downloads bloqueados: ative seu plano para baixar. Vídeos, tutoriais e descrições continuam liberados.", C_FOCUS, 255);
-  } else
   text_wrap(s, ui->f, 18, DT_PX + 44, DT_PY + DT_PH - 52, DT_PW - 88, 26, 2,
             "Antes de instalar: confira a versão de cada arquivo. O jogo base precisa estar instalado antes do update. "
             "A instalação é feita pelo PS4; acompanhe em Notificações.", C_MUTED, 200);
@@ -1412,14 +1444,13 @@ static void draw_footer(UI *ui) {
     x = hint(ui, x, "\xE2\x96\xA1", "Apagar");
     x = hint(ui, x, "\xE2\x96\xB3", "Trocar campo");
     x = hint(ui, x, "OPTIONS", "Entrar");
-    if (ui->preview_fn) x = hint(ui, x, "\xE2\x97\x80", "no teclado: Ver a loja");
   } else if (ui->mode == MODE_QR) {
     x = hint(ui, x, "O", "Voltar ao login");
   } else if (ui->mode == MODE_CATALOG && (ui->pix_open || ui->upd_help)) {
     x = hint(ui, x, "O", "Voltar");
   } else if (ui->mode == MODE_CATALOG && ui->detail) {
     x = hint(ui, x, "\xE2\x97\x80 \xE2\x96\xB2 \xE2\x96\xBC \xE2\x96\xB6", "Mover");
-    x = hint(ui, x, "X", ui->zone == 0 ? (ui->locked ? "Bloqueado" : "Baixar") : "Assistir / ver");
+    x = hint(ui, x, "X", ui->zone == 0 ? "Baixar" : "Assistir / ver");
     x = hint(ui, x, "O", "Voltar");
     if (update_available(ui)) x = hint(ui, x, "\xE2\x96\xA1", "Atualizar app");
   } else if (ui->mode == MODE_CATALOG) {
@@ -1427,7 +1458,7 @@ static void draw_footer(UI *ui) {
     x = hint(ui, x, "X", "Detalhes");
     x = hint(ui, x, "L1  R1", "Categorias");
     x = hint(ui, x, "O", "Início");
-    x = hint(ui, x, "\xE2\x96\xB3", ui->visitor ? "Voltar ao login" : "Sair");
+    x = hint(ui, x, "\xE2\x96\xB3", "Sair");
     if (update_available(ui)) x = hint(ui, x, "\xE2\x96\xA1", "Atualizar app");
   }
   char v[48];
@@ -1500,31 +1531,14 @@ static void draw_login(UI *ui) {
     int bx = MARGIN, bw = LG_X - 70 - MARGIN, bc = bx + bw / 2;
     if (ui->logo_full) gfx_blit(s, ui->logo_full, bc - ui->logo_full->w / 2, 130, 0, 255);
     text_draw_in(s, ui->fb, 58, bx, bw, 560, "JK PATCHS", C_TEXT, 255, 5, 1);
-    text_draw_in(s, ui->f, 26, bx, bw, 604, "Os melhores patches de futebol para o seu PS4.", C_MUTED, 255, 0, 1);
-    if (ui->preview_fn) {                                          /* botao piscante: ver a loja antes de cadastrar */
-      int by = 628, bh = 64, on = (ui->frame / 30) % 2 == 0, sel = ui->kr < 0;
-      gfx_rrect(s, bx, by, bw, bh, 32, on ? C_ACCENT : C_BASE, 255, 0);
-      gfx_rrect(s, bx, by, bw, bh, 32, C_BASE_EDGE, 255, 3);
-      text_draw_in(s, ui->fb, 26, bx, bw, by + bh / 2 + 9, "Ver a Loja antes de fazer o Cadastro", on ? C_DARKTXT : C_WHITE, 255, 0, 1);
-      if (sel) gfx_rrect(s, bx - 6, by - 6, bw + 12, bh + 12, 38, C_FOCUS, 255, 4);
+    text_draw_in(s, ui->f, 26, bx, bw, 606, "Os melhores patches de futebol para o seu PS4.", C_MUTED, 255, 0, 1);
+    int qy = 690;
+    if (ui->qr_small) {
+      gfx_rrect(s, bx, qy, 196, 196, 16, RGB(255, 255, 255), 255, 0);
+      gfx_blit(s, ui->qr_small, bx + 8, qy + 8, 0, 255);
     }
-    int qy = 722;                                                  /* comunicado: como entrar (o QR do WhatsApp aparece depois do cadastro) */
-    gfx_rrect(s, bx, qy, bw, 196, 18, C_PANEL, 220, 0);
-    gfx_rrect(s, bx, qy, bw, 196, 18, C_WHITE, 26, 2);
-    T(ui, 1, 20, bx + 28, qy + 38, "COMO ENTRAR", C_ACCENT, 255, 3);
-    static const char *step[3] = {
-      "Toque em CADASTRAR e crie seu usuário e senha.",
-      "Aparece um QR Code: fale com a gente no WhatsApp.",
-      "Quando liberarmos sua conta, é só tocar em ENTRAR."};
-    for (int i = 0; i < 3; i++) {
-      int sy = qy + 76 + i * 38;
-      gfx_circle(s, bx + 40, sy - 8, 14, C_BASE, 255);
-      char n[2] = {(char)('1' + i), 0};
-      text_draw_in(s, ui->fb, 18, bx + 26, 28, sy - 1, n, C_WHITE, 255, 0, 1);
-      char buf[160];
-      text_fit(ui->f, 22, step[i], bw - 90, buf, sizeof(buf));
-      T(ui, 0, 22, bx + 68, sy, buf, C_TEXT, 255, 0);
-    }
+    text_wrap(s, ui->fb, 26, bx + 226, qy + 52, bw - 226, 38, 4,
+              "Após efetuar o cadastro, fale com a gente no WhatsApp: escaneie o QR Code.", C_TEXT, 255);
   }
   T(ui, 1, 22, px, LG_Y + 62, "ÁREA DE MEMBROS", C_ACCENT, 255, 4);
   T(ui, 1, 46, px, LG_Y + 122, "Entrar", C_TEXT, 255, 0);
@@ -1595,8 +1609,8 @@ static void draw_pix(UI *ui) {
   int cw = 900, ch = 840, cx = (W - cw) / 2, cy = 120;
   gfx_rrect(s, cx, cy, cw, ch, 28, C_PANEL, 250, 0);
   gfx_rrect(s, cx, cy, cw, ch, 28, C_WHITE, 26, 2);
-  text_draw_in(s, ui->fb, 44, cx, cw, cy + 82, "Curtiu o App?", C_ACCENT, 255, 0, 1);
-  text_draw_in(s, ui->f, 28, cx, cw, cy + 136, "Faça sua doação e ajude a gente a manter o App ativo.", C_TEXT, 255, 0, 1);
+  text_draw_in(s, ui->fb, 44, cx, cw, cy + 82, "Gostou do nosso App?", C_ACCENT, 255, 0, 1);
+  text_draw_in(s, ui->f, 28, cx, cw, cy + 136, "Ajude a mantê-lo atualizado. Colabore com R$ 10!", C_TEXT, 255, 0, 1);
   int qx = cx + (cw - ui->pix->w) / 2, qy = cy + 170;
   gfx_rrect(s, qx - 10, qy - 10, ui->pix->w + 20, ui->pix->h + 20, 18, RGB(255, 255, 255), 255, 0);
   gfx_blit(s, ui->pix, qx, qy, 0, 255);
