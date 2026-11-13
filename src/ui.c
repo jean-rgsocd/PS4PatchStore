@@ -97,6 +97,8 @@ struct UI {
   int detail;                          /* 0 = vitrine de capas, 1 = detalhe do jogo (downloads + videos) */
   int zone;                            /* detalhe: 0 = downloads, 1 = videos/imagens */
   int dfocus, dscroll, mfocus, mscroll;
+  Image *fbgc[CAT_MAX_GAMES];          /* fundos prontos (1 por capa): trocar de card so copia a imagem, sem refazer o desfoque */
+  int idle;                            /* quadros desde o ultimo botao (so prepara os fundos quando o usuario para) */
   int fbg_due;                         /* 1 = refazer o fundo borrado assim que a animacao de troca de capa terminar */
   int slide;                           /* vitrine: deslocamento (px) das capas durante a animacao de troca; 0 = parado */
 
@@ -162,7 +164,10 @@ static void select_game(UI *ui, int idx) {
   ui->sel = idx;
   ui->detail = 0;
   ui->dirty = 1;
-  ui->fbg_due = 1;                     /* o fundo e refeito no ui_tick, depois da animacao (evita travar a cada troca) */
+  ui->fbg_due = 0;
+  { const CatGame *cg = cur_game(ui);
+    if (cg && ui->fbgc[ui->filt[ui->sel]] && ui->fbg) gfx_blit_surface(ui->fbg, ui->fbgc[ui->filt[ui->sel]]);   /* fundo ja pronto: so copia */
+    else ui->fbg_due = 1; }                                                   /* senao refaz no ui_tick, depois da animacao */
 }
 
 static void type_label(const char *type, char *out, int cap) {
@@ -257,6 +262,7 @@ static void cover_start(UI *ui, CoverJobs *J) {
 
 static void free_thumbs(UI *ui, int i) {
   for (int k = 0; k < NTH; k++) { if (ui->th[i][k]) { img_free(ui->th[i][k]); ui->th[i][k] = NULL; } }
+  if (ui->fbgc[i]) { img_free(ui->fbgc[i]); ui->fbgc[i] = NULL; }
 }
 
 /* Carrega a capa do arquivo e gera os 4 tamanhos. Retorna 1 se deu certo. */
@@ -274,13 +280,9 @@ static int thumbs_from_file(UI *ui, int i, const char *path) {
 }
 
 /* Fundo da vitrine: estadio + a capa em foco ampliada e borrada (miniatura esticada com filtro bilinear). */
-static void rebuild_fbg(UI *ui) {
-  if (!ui->bg) return;
-  if (!ui->fbg) ui->fbg = img_new(W, H);
-  if (!ui->fbg) return;
-  gfx_blit_surface(ui->fbg, ui->bg);
-  const CatGame *g = cur_game(ui);
-  Image *t = g ? ui->th[ui->filt[ui->sel]][0] : NULL;
+static void compose_fbg(UI *ui, Image *dst, int gi) {
+  gfx_blit_surface(dst, ui->bg);
+  Image *t = gi >= 0 ? ui->th[gi][0] : NULL;
   if (t) {
     Image *tiny = img_scale(t, 64, 108);
     Image *bl = tiny ? img_new(W, H) : NULL;
@@ -288,12 +290,26 @@ static void rebuild_fbg(UI *ui) {
       Image crop;                                             /* faixa do meio da capa, na proporcao da tela */
       crop.w = 64; crop.h = 36; crop.px = tiny->px + (size_t)20 * 64;
       gfx_blit_scaled(bl, &crop, 0, 0, W, H);
-      gfx_blit(ui->fbg, bl, 0, 0, 0, 150);
+      gfx_blit(dst, bl, 0, 0, 0, 150);
     }
     if (bl) img_free(bl);
     if (tiny) img_free(tiny);
   }
-  gfx_vfade(ui->fbg, 0, 0, W, H, C_BG, 60, 215);
+  gfx_vfade(dst, 0, 0, W, H, C_BG, 60, 215);
+}
+
+static void rebuild_fbg(UI *ui) {
+  if (!ui->bg) return;
+  if (!ui->fbg) ui->fbg = img_new(W, H);
+  if (!ui->fbg) return;
+  const CatGame *g = cur_game(ui);
+  int gi = g ? ui->filt[ui->sel] : -1;
+  if (gi >= 0 && ui->fbgc[gi]) { gfx_blit_surface(ui->fbg, ui->fbgc[gi]); return; }
+  compose_fbg(ui, ui->fbg, gi);
+  if (gi >= 0 && ui->th[gi][0]) {                              /* guarda para as proximas trocas */
+    Image *c = img_new(W, H);
+    if (c) { gfx_blit_surface(c, ui->fbg); ui->fbgc[gi] = c; }
+  }
 }
 
 static void load_thumbs(UI *ui) {
@@ -896,6 +912,7 @@ static void guide_tick(UI *ui) {
 }
 
 void ui_key(UI *ui, int key) {
+  ui->idle = 0;
   if (ui->splash < SPLASH_END) {                                  /* durante a abertura as teclas so pulam */
     if (ui->splash >= SPLASH_SKIP_FROM && ui->splash < SPLASH_FADE) ui->splash = SPLASH_FADE;
     return;
@@ -1028,11 +1045,22 @@ void ui_tick(UI *ui) {
     if (update_available(ui)) trigger_update(ui);       /* atualizacao automatica: sem precisar apertar nada */
   }
   if (ui->slide) {                                    /* animacao de troca de capa: desacelera ate parar */
-    ui->slide = ui->slide / 2;
-    if (ui->slide > -12 && ui->slide < 12) ui->slide = 0;
+    ui->slide = ui->slide / 3;                         /* animacao curta (2 quadros): no PS4 cada quadro redesenha a tela toda */
+    if (ui->slide > -40 && ui->slide < 40) ui->slide = 0;
     ui->dirty = 1;
   }
   if (ui->fbg_due && !ui->slide) { ui->fbg_due = 0; rebuild_fbg(ui); ui->dirty = 1; }
+  if (ui->idle < 1000) ui->idle++;
+  if (ui->idle > 20 && !ui->slide && !ui->fbg_due && ui->mode == MODE_CATALOG && !ui->detail && ui->bg) {   /* parado: prepara 1 fundo por quadro */
+    for (int k = 0; k < ui->nfilt; k++) {
+      int gi = ui->filt[k];
+      if (ui->th[gi][0] && !ui->fbgc[gi]) {
+        Image *c = img_new(W, H);
+        if (c) { compose_fbg(ui, c, gi); ui->fbgc[gi] = c; }
+        break;
+      }
+    }
+  }
   cover_poll(ui);
   guide_tick(ui);
   if (ui->vid_mode) vid_tick(ui);
