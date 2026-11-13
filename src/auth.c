@@ -1,6 +1,7 @@
 #include "auth.h"
 #include "auth_proto.h"
 #include "install.h"           /* install_log */
+#include "version.h"
 
 #include <stdio.h>
 #include <stdlib.h>
@@ -220,6 +221,7 @@ static int http_do(int post, const char *path, const char *body, const char *bea
   req = sceHttpCreateRequestWithURL(conn, post ? ORBIS_METHOD_POST : ORBIS_METHOD_GET, url, blen);
   if (req < 0) { rc = req; logrc("http: CreateRequest", rc); goto out; }
 
+  sceHttpAddRequestHeader(req, "X-JK-App", APP_VERSION, 0);       /* o servidor sabe que e o app novo (planos) */
   if (post) sceHttpAddRequestHeader(req, "Content-Type", "application/x-www-form-urlencoded", 0);
   if (bearer && bearer[0]) {
     char h[400];
