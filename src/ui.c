@@ -97,6 +97,7 @@ struct UI {
   int detail;                          /* 0 = vitrine de capas, 1 = detalhe do jogo (downloads + videos) */
   int zone;                            /* detalhe: 0 = downloads, 1 = videos/imagens */
   int dfocus, dscroll, mfocus, mscroll;
+  int fbg_due;                         /* 1 = refazer o fundo borrado assim que a animacao de troca de capa terminar */
   int slide;                           /* vitrine: deslocamento (px) das capas durante a animacao de troca; 0 = parado */
 
   int filt[CAT_MAX_GAMES], nfilt;
@@ -161,7 +162,7 @@ static void select_game(UI *ui, int idx) {
   ui->sel = idx;
   ui->detail = 0;
   ui->dirty = 1;
-  rebuild_fbg(ui);
+  ui->fbg_due = 1;                     /* o fundo e refeito no ui_tick, depois da animacao (evita travar a cada troca) */
 }
 
 static void type_label(const char *type, char *out, int cap) {
@@ -1027,10 +1028,11 @@ void ui_tick(UI *ui) {
     if (update_available(ui)) trigger_update(ui);       /* atualizacao automatica: sem precisar apertar nada */
   }
   if (ui->slide) {                                    /* animacao de troca de capa: desacelera ate parar */
-    ui->slide = ui->slide * 2 / 3;
-    if (ui->slide > -10 && ui->slide < 10) ui->slide = 0;
+    ui->slide = ui->slide / 2;
+    if (ui->slide > -12 && ui->slide < 12) ui->slide = 0;
     ui->dirty = 1;
   }
+  if (ui->fbg_due && !ui->slide) { ui->fbg_due = 0; rebuild_fbg(ui); ui->dirty = 1; }
   cover_poll(ui);
   guide_tick(ui);
   if (ui->vid_mode) vid_tick(ui);
