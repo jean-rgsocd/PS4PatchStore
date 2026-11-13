@@ -74,9 +74,8 @@ static void logrc(const char *what, int rc) {            /* "o que" falhou + cod
 }
 
 /* ------------------------------------------------------------------ ID do console */
-/* O servidor prende a conta (e o teste gratis de 1 hora) a este ID. Usa o OpenPSID do PS4; se o sistema nao entregar,
- * cai para um ID aleatorio guardado em /data (so perde se o usuario apagar os dados do app). */
-extern int jk_get_openpsid(unsigned char *id) __asm__("sceKernelGetOpenPsId") __attribute__((weak));
+/* O servidor prende a conta (e o teste gratis de 1 hora) a este ID: um ID aleatorio criado na 1a vez e guardado em /data.
+ * (O OpenPSID nao esta nas bibliotecas do toolchain: o build recusa o simbolo.) */
 #define DEV_FILE "/data/jkpatchs_dev.txt"
 
 static const char *dev_id(void) {
@@ -84,21 +83,6 @@ static const char *dev_id(void) {
   static int done = 0;
   if (done) return dev;
   done = 1;
-  unsigned char raw[16];
-  memset(raw, 0, sizeof(raw));
-  if (jk_get_openpsid) {
-    int r = jk_get_openpsid(raw);
-    int nz = 0, nf = 0;
-    for (int i = 0; i < 16; i++) { if (raw[i]) nz = 1; if (raw[i] != 0xFF) nf = 1; }
-    if (r >= 0 && nz && nf) {
-      for (int i = 0; i < 16; i++) snprintf(dev + i * 2, 3, "%02x", raw[i]);
-      install_log("ID do console: OpenPSID lido.");
-      return dev;
-    }
-    logrc("ID do console: OpenPSID indisponivel", r);
-  } else {
-    install_log("ID do console: funcao OpenPSID ausente neste sistema.");
-  }
   char buf[64];
   int fd = open(DEV_FILE, O_RDONLY);
   if (fd >= 0) {
@@ -113,7 +97,7 @@ static const char *dev_id(void) {
   }
   fd = open(DEV_FILE, O_WRONLY | O_CREAT | O_TRUNC, 0600);
   if (fd >= 0) { write(fd, dev, 32); close(fd); }
-  install_log("ID do console: gerado um ID novo (OpenPSID indisponivel).");
+  install_log("ID do console: gerado um ID novo.");
   return dev;
 }
 
