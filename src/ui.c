@@ -1,4 +1,8 @@
 #include "ui.h"
+#include "auth_proto.h"
+#include "qrcode.h"
+#include "plans_default.h"
+#include <time.h>
 #include "version.h"
 #include "vplayer.h"
 
@@ -60,8 +64,14 @@ struct UI {
   int offline;                         /* 1 = mostrando o catalogo salvo porque o servidor nao respondeu */
   int locked, visitor;                 /* catalogo so para olhar: sem downloads (visitante ou plano vencido/pendente) */
   Image *qr;                           /* QR Code do WhatsApp do admin (assets/images/qr_whatsapp.png) */
-  Image *pix;                          /* QR Code do Pix de apoio (assets/images/qr_pix.png); sem o arquivo, o botao nao aparece */
-  int pix_open;
+  int shop;                            /* janela de planos: 0 fechada, 1 escolher plano, 2 Pix, 3 WhatsApp */
+  int shop_sel;                        /* plano em foco */
+  AuthPlans plans;                     /* precos e Pix (embutidos; o servidor atualiza) */
+  UiReloadFn reload_fn;                /* pede ao app para reler o plano no servidor */
+  char pi_state[16], pi_name[16];      /* plano atual (servidor novo): estado e nome */
+  long pi_exp, pi_now;                 /* vencimento e hora do servidor quando foi lido (s) */
+  time_t pi_t0;                        /* hora local da leitura: o contador do topo anda sozinho */
+  int pi_on;                           /* 1 = o topo mostra o plano calculado aqui */
   char qr_user[64];
   UiLogoutFn logout_fn;
   UiOpenUrlFn open_fn;
@@ -391,8 +401,7 @@ UI *ui_create(Image *surface, const Catalog *cat, const char *assets_dir, UiInst
     snprintf(lp, sizeof(lp), "%s/images/qr_whatsapp.png", assets_dir);
     ui->qr = img_load(lp);
     if (ui->qr) ui->qr_small = img_scale(ui->qr, 180, 180);
-    snprintf(lp, sizeof(lp), "%s/images/qr_pix.png", assets_dir);
-    ui->pix = img_load(lp);
+    auth_parse_plans(PLANS_DEFAULT_BODY, &ui->plans);
   }
 
   char path[320];
@@ -468,13 +477,56 @@ void ui_set_user(UI *ui, const char *name) {
 
 void ui_set_offline(UI *ui, int on) { ui->offline = on; ui->dirty = 1; }
 
-void ui_remind_support(UI *ui) {
-  if (!ui->pix || ui->mode != MODE_CATALOG || ui->locked) return;
-  ui->pix_open = 1;
+void ui_set_reload_handler(UI *ui, UiReloadFn fn) { ui->reload_fn = fn; }
+
+void ui_open_shop(UI *ui) {
+  if (ui->mode != MODE_CATALOG || ui->visitor || !ui->username[0]) return;
+  ui->shop = 1;
+  if (ui->shop_sel < 0 || ui->shop_sel >= ui->plans.n) ui->shop_sel = 0;
   ui->dirty = 1;
 }
 
+void ui_remind_support(UI *ui) { ui_open_shop(ui); }
+
+void ui_set_plans_text(UI *ui, const char *body) {
+  AuthPlans p;
+  if (!body || !body[0] || auth_parse_plans(body, &p) != 0) return;
+  ui->plans = p;
+  if (ui->shop_sel >= ui->plans.n) ui->shop_sel = 0;
+  ui->dirty = 1;
+}
+
+/* Recalcula o texto do plano no topo com a hora do servidor + o tempo passado desde a leitura. */
+static void plan_refresh(UI *ui) {
+  if (!ui->pi_on) return;
+  long now = ui->pi_now > 0 ? ui->pi_now + (long)(time(NULL) - ui->pi_t0) : 0;
+  char t[96];
+  int lv = auth_plan_status(ui->pi_state, ui->pi_name, ui->pi_exp, now, t, sizeof(t));
+  if (strcmp(t, ui->plan) != 0 || lv != ui->plan_level) {
+    snprintf(ui->plan, sizeof(ui->plan), "%s", t);
+    ui->plan_level = lv;
+    ui->dirty = 1;
+  }
+  if (ui->pi_exp > 0 && now >= 1700000000L && now >= ui->pi_exp && !ui->locked && !ui->visitor && ui->mode == MODE_CATALOG) {
+    ui->locked = 1;                                       /* venceu com o app aberto: trava na hora */
+    ui->detail = 0;
+    ui_toast(ui, "Seu acesso terminou. Assine um plano para continuar baixando.", UI_TOAST_ERR);
+    ui_open_shop(ui);
+  }
+}
+
+void ui_set_plan_info(UI *ui, const char *state, const char *plan_name, long expires, long server_now) {
+  snprintf(ui->pi_state, sizeof(ui->pi_state), "%s", state ? state : "");
+  snprintf(ui->pi_name, sizeof(ui->pi_name), "%s", plan_name ? plan_name : "");
+  ui->pi_exp = expires;
+  ui->pi_now = server_now;
+  ui->pi_t0 = time(NULL);
+  ui->pi_on = 1;
+  plan_refresh(ui);
+}
+
 void ui_set_plan(UI *ui, const char *text, int level) {
+  ui->pi_on = 0;
   snprintf(ui->plan, sizeof(ui->plan), "%s", text ? text : "");
   ui->plan_level = level;
   ui->dirty = 1;
@@ -485,7 +537,7 @@ void ui_set_catalog(UI *ui, const Catalog *cat) {
   ui->upd_ready = 0;
   ui->upd_help = 0;
   ui->cat = cat;
-  ui->pix_open = 0;
+  ui->shop = 0;
   load_thumbs(ui);
   ui->cat_idx = 0;
   refilter(ui);
@@ -497,7 +549,8 @@ void ui_set_catalog(UI *ui, const Catalog *cat) {
   ui->visitor = ui->locked && !ui->username[0];
   if (ui->offline) ui_toast(ui, "Servidor fora do ar: mostrando a última loja salva. Os downloads podem não funcionar agora.", UI_TOAST_INFO);
   else if (ui->visitor) ui_toast(ui, "Modo visitante: veja tudo, mas para baixar é preciso ativar o plano.", UI_TOAST_INFO);
-  else if (ui->locked) ui_toast(ui, "Ative seu plano para baixar. Vídeos e tutoriais continuam liberados.", UI_TOAST_INFO);
+  else if (ui->locked) ui_toast(ui, "Assine um plano para baixar. Vídeos e tutoriais continuam liberados.", UI_TOAST_INFO);
+  if (ui->locked && !ui->visitor && !ui->offline) ui_open_shop(ui);       /* bloqueado: ja abre a janela de planos */
 }
 
 /* ---- teclado na tela */
@@ -911,6 +964,36 @@ static void guide_tick(UI *ui) {
   ui_toast(ui, st < 0 ? "Não foi possível baixar o guia. Verifique a internet e tente de novo." : "A imagem do guia está inválida.", UI_TOAST_ERR);
 }
 
+static void shop_close(UI *ui) { ui->shop = 0; ui->dirty = 1; }
+
+static void shop_reload(UI *ui) {
+  shop_close(ui);
+  if (!ui->reload_fn) return;
+  ui_toast(ui, "Verificando seu plano no servidor...", UI_TOAST_INFO);
+  ui_set_busy(ui, 1);
+  ui->reload_fn(ui->auth_ud);
+}
+
+static void shop_key(UI *ui, int key) {
+  ui->dirty = 1;
+  if (ui->shop == 1) {
+    int n = ui->plans.n;
+    if (key == UI_LEFT && ui->shop_sel > 0) ui->shop_sel--;
+    else if (key == UI_RIGHT && ui->shop_sel + 1 < n) ui->shop_sel++;
+    else if (key == UI_OK) ui->shop = 2;
+    else if (key == UI_SQUARE) shop_reload(ui);
+    else if (key == UI_BACK || key == UI_OPTIONS || key == UI_TRIANGLE) shop_close(ui);
+  } else if (ui->shop == 2) {
+    if (key == UI_OK) ui->shop = 3;
+    else if (key == UI_BACK || key == UI_TRIANGLE) ui->shop = 1;
+    else if (key == UI_OPTIONS) shop_close(ui);
+  } else {
+    if (key == UI_OK || key == UI_SQUARE) shop_reload(ui);
+    else if (key == UI_BACK || key == UI_TRIANGLE) ui->shop = 2;
+    else if (key == UI_OPTIONS) shop_close(ui);
+  }
+}
+
 void ui_key(UI *ui, int key) {
   ui->idle = 0;
   if (ui->splash < SPLASH_END) {                                  /* durante a abertura as teclas so pulam */
@@ -928,11 +1011,13 @@ void ui_key(UI *ui, int key) {
     if (key == UI_BACK || key == UI_OK || key == UI_OPTIONS || key == UI_TRIANGLE || key == UI_SQUARE) { ui->upd_help = 0; ui->dirty = 1; }
     return;
   }
-  if (ui->pix_open) {                                             /* tela de apoio (Pix): qualquer botao de voltar fecha */
-    if (key == UI_BACK || key == UI_OK || key == UI_OPTIONS || key == UI_TRIANGLE) { ui->pix_open = 0; ui->dirty = 1; }
+  if (ui->shop) { shop_key(ui, key); return; }
+  if (key == UI_OPTIONS && !ui->vid_mode) {
+    if (ui->visitor) ui_toast(ui, "Entre ou cadastre-se para assinar um plano.", UI_TOAST_INFO);
+    else if (ui->offline) ui_toast(ui, "Sem conexão com o servidor. Tente de novo quando a internet voltar.", UI_TOAST_INFO);
+    else ui_open_shop(ui);
     return;
   }
-  if (key == UI_OPTIONS && ui->pix && !ui->vid_mode) { ui->pix_open = 1; ui->dirty = 1; return; }
   if (ui->vid_mode == 1 || (ui->vid_mode == 2 && (key == UI_TRIANGLE || key == UI_OPTIONS))) { vid_key(ui, key); return; }
   if (key == UI_TRIANGLE) {                                     /* sair da conta */
     if (ui->busy) { ui_toast(ui, "Aguarde o pedido atual terminar.", UI_TOAST_INFO); return; }
@@ -1061,6 +1146,7 @@ void ui_tick(UI *ui) {
       }
     }
   }
+  if (ui->pi_on && ui->frame % 120 == 0) plan_refresh(ui);
   cover_poll(ui);
   guide_tick(ui);
   if (ui->vid_mode) vid_tick(ui);
@@ -1118,8 +1204,8 @@ static void draw_topbar(UI *ui) {
   T(ui, 1, 20, W - MARGIN - w, 62, st, C_MUTED, 255, 3);
   gfx_circle(s, W - MARGIN - w - 22, 55, 7, (ui->mode == MODE_CATALOG && !ui->locked) ? C_ACCENT : C_FOCUS, 255);
 
-  if (ui->mode == MODE_CATALOG && ui->pix) {               /* convite de apoio: abre a tela do Pix com OPTIONS */
-    const char *lab = "Apoie o app";
+  if (ui->mode == MODE_CATALOG && !ui->visitor) {          /* atalho da janela de planos: OPTIONS */
+    const char *lab = (ui->locked || ui->plan_level >= 1) ? "Assinar plano" : "Meu plano";
     int kw = TW(ui, 1, 16, "OPTIONS", 1) + 22, lw = TW(ui, 0, 20, lab, 0);
     int cw = kw + lw + 40, cx = W - MARGIN - w - 22 - 7 - 44 - cw, cy = 33;
     gfx_rrect(s, cx, cy, cw, 44, 22, C_PANEL2, 255, 0);
@@ -1569,7 +1655,20 @@ static void draw_footer(UI *ui) {
     if (ui->preview_fn) x = hint(ui, x, "\xE2\x97\x80", "no teclado: Ver a loja");
   } else if (ui->mode == MODE_QR) {
     x = hint(ui, x, "O", "Voltar ao login");
-  } else if (ui->mode == MODE_CATALOG && (ui->pix_open || ui->upd_help)) {
+  } else if (ui->mode == MODE_CATALOG && ui->shop) {
+    if (ui->shop == 1) {
+      x = hint(ui, x, "\xE2\x97\x80 \xE2\x96\xB6", "Escolher");
+      x = hint(ui, x, "X", "Assinar");
+      x = hint(ui, x, "\xE2\x96\xA1", "Atualizar meu plano");
+      x = hint(ui, x, "O", ui->locked ? "Só olhar a loja" : "Fechar");
+    } else if (ui->shop == 2) {
+      x = hint(ui, x, "X", "Já paguei");
+      x = hint(ui, x, "O", "Voltar");
+    } else {
+      x = hint(ui, x, "X", "Já enviei: atualizar plano");
+      x = hint(ui, x, "O", "Voltar");
+    }
+  } else if (ui->mode == MODE_CATALOG && ui->upd_help) {
     x = hint(ui, x, "O", "Voltar");
   } else if (ui->mode == MODE_CATALOG && ui->detail) {
     x = hint(ui, x, "\xE2\x97\x80 \xE2\x96\xB2 \xE2\x96\xBC \xE2\x96\xB6", "Mover");
@@ -1743,18 +1842,121 @@ static void draw_qr(UI *ui) {
   text_draw_in(s, ui->f, 24, QR_X, QR_W, qy + q + 96, "Quando ele ativar sua conta (30 dias), volte e toque em ENTRAR.", C_MUTED, 255, 0, 1);
 }
 
-static void draw_pix(UI *ui) {
+/* Desenha um QR Code gerado na hora (fundo branco com margem). box = lado maximo em pixels. */
+static void draw_qr_text(UI *ui, const char *txt, int ecc, int cxm, int y, int box) {
+  static uint8_t m[QR_MAX_SIZE * QR_MAX_SIZE];
   Image *s = ui->s;
-  gfx_fill(s, 0, 0, W, H, C_BLACK, 190);
-  int cw = 900, ch = 840, cx = (W - cw) / 2, cy = 120;
+  int n = qr_encode(txt, ecc, m);
+  if (!n) { text_draw_in(s, ui->f, 24, cxm - box / 2, box, y + box / 2, "(QR Code indisponível)", C_TEXT, 255, 0, 1); return; }
+  int sc = box / (n + 8);
+  if (sc < 2) sc = 2;
+  int total = sc * (n + 8), x0 = cxm - total / 2;
+  gfx_rrect(s, x0, y, total, total, 16, RGB(255, 255, 255), 255, 0);
+  for (int j = 0; j < n; j++) {
+    int i = 0;
+    while (i < n) {
+      if (!m[j * n + i]) { i++; continue; }
+      int k = i;
+      while (k < n && m[j * n + k]) k++;
+      gfx_fill(s, x0 + (i + 4) * sc, y + (j + 4) * sc, (k - i) * sc, sc, RGB(0, 0, 0), 255);
+      i = k;
+    }
+  }
+}
+
+static void shop_button(UI *ui, int x, int y, int w, int h, const char *label) {
+  Image *s = ui->s;
+  gfx_rrect(s, x, y, w, h, 18, C_BASE, 255, 0);
+  gfx_rrect(s, x, y, w, h, 18, C_BASE_EDGE, 255, 2);
+  gfx_rrect(s, x - 5, y - 5, w + 10, h + 10, 22, C_FOCUS, 255, 4);
+  text_draw_in(s, ui->fb, 30, x, w, y + h / 2 + 11, label, C_WHITE, 255, 0, 1);
+}
+
+static void draw_shop(UI *ui) {
+  Image *s = ui->s;
+  gfx_fill(s, 0, 0, W, H, C_BLACK, 205);
+  const AuthPlans *pl = &ui->plans;
+  if (pl->n <= 0) return;
+  const AuthPlan *sel = &pl->plan[ui->shop_sel < pl->n ? ui->shop_sel : 0];
+  char money[32], t[260];
+
+  if (ui->shop == 1) {
+    int cw = 1500, ch = 780, cx = (W - cw) / 2, cy = 110;
+    gfx_rrect(s, cx, cy, cw, ch, 28, C_PANEL, 250, 0);
+    gfx_rrect(s, cx, cy, cw, ch, 28, C_WHITE, 26, 2);
+    text_draw_in(s, ui->fb, 46, cx, cw, cy + 84, "Escolha seu plano", C_ACCENT, 255, 0, 1);
+    const char *msg;
+    if (ui->locked) msg = "Seu acesso está bloqueado. Assine para voltar a baixar.";
+    else if (ui->plan_level >= 1) msg = ui->plan[0] ? ui->plan : "Renove seu plano";
+    else msg = "Seu plano está ativo. Se renovar agora, os dias são somados.";
+    text_fit(ui->f, 28, msg, cw - 120, t, sizeof(t));
+    text_draw_in(s, ui->f, 28, cx, cw, cy + 140, t, ui->locked ? C_ERR : (ui->plan_level >= 1 ? C_FOCUS : C_MUTED), 255, 0, 1);
+
+    int n = pl->n, gap = 40, bw = (cw - 100 - gap * (n - 1)) / n, bh = 470, by = cy + 190;
+    double mensal = 0;
+    for (int i = 0; i < n; i++) if (pl->plan[i].days <= 31) { mensal = atof(pl->plan[i].price); break; }
+    for (int i = 0; i < n; i++) {
+      const AuthPlan *p = &pl->plan[i];
+      int bx = cx + 50 + i * (bw + gap), on = i == ui->shop_sel;
+      gfx_rrect(s, bx, by, bw, bh, 24, on ? C_PANEL2 : C_BG, 255, 0);
+      gfx_rrect(s, bx, by, bw, bh, 24, C_WHITE, on ? 40 : 22, 2);
+      if (on) gfx_rrect(s, bx - 5, by - 5, bw + 10, bh + 10, 28, C_FOCUS, 255, 4);
+      text_draw_in(s, ui->fb, 40, bx, bw, by + 80, p->name, C_TEXT, 255, 0, 1);
+      auth_money(p->price, money, sizeof(money));
+      text_draw_in(s, ui->fb, 64, bx, bw, by + 190, money, C_ACCENT, 255, 0, 1);
+      if (p->days == 30) snprintf(t, sizeof(t), "30 dias");
+      else if (p->days % 30 == 0 || p->days == 365) snprintf(t, sizeof(t), "%d dias", p->days);
+      else snprintf(t, sizeof(t), "%d dias", p->days);
+      text_draw_in(s, ui->f, 30, bx, bw, by + 250, t, C_TEXT, 255, 0, 1);
+      double per = atof(p->price) / (p->days / 30.0);
+      char pm[32], pmm[40];
+      snprintf(pm, sizeof(pm), "%.2f", per);
+      auth_money(pm, pmm, sizeof(pmm));
+      snprintf(t, sizeof(t), "%s por mês", pmm);
+      text_draw_in(s, ui->f, 26, bx, bw, by + 300, t, C_MUTED, 255, 0, 1);
+      if (mensal > 0 && p->days > 31) {
+        int save = (int)((1.0 - per / mensal) * 100.0 + 0.5);
+        if (save > 0) {
+          snprintf(t, sizeof(t), "ECONOMIZE %d%%", save);
+          int tw = text_width(ui->fb, 24, t, 1) + 40;
+          gfx_rrect(s, bx + (bw - tw) / 2, by + 340, tw, 46, 23, C_FOCUS, 255, 0);
+          text_draw_in(s, ui->fb, 24, bx, bw, by + 372, t, C_DARKTXT, 255, 1, 1);
+        }
+      }
+      if (on) text_draw_in(s, ui->fb, 26, bx, bw, by + bh - 36, "X  ASSINAR", C_FOCUS, 255, 1, 1);
+    }
+    text_draw_in(s, ui->f, 24, cx, cw, cy + ch - 30, "Pague pelo Pix, avise no WhatsApp e seu plano é ativado.", C_MUTED, 255, 0, 1);
+    return;
+  }
+
+  int cw = 1100, ch = 850, cx = (W - cw) / 2, cy = 115;
   gfx_rrect(s, cx, cy, cw, ch, 28, C_PANEL, 250, 0);
   gfx_rrect(s, cx, cy, cw, ch, 28, C_WHITE, 26, 2);
-  text_draw_in(s, ui->fb, 44, cx, cw, cy + 82, "Curtiu o App?", C_ACCENT, 255, 0, 1);
-  text_draw_in(s, ui->f, 28, cx, cw, cy + 136, "Faça sua doação e ajude a gente a manter o App ativo.", C_TEXT, 255, 0, 1);
-  int qx = cx + (cw - ui->pix->w) / 2, qy = cy + 170;
-  gfx_rrect(s, qx - 10, qy - 10, ui->pix->w + 20, ui->pix->h + 20, 18, RGB(255, 255, 255), 255, 0);
-  gfx_blit(s, ui->pix, qx, qy, 0, 255);
-  text_draw_in(s, ui->f, 24, cx, cw, qy + ui->pix->h + 58, "Abra o app do seu banco  \xE2\x80\xBA  Pix  \xE2\x80\xBA  Ler QR Code", C_MUTED, 255, 0, 1);
+  auth_money(sel->price, money, sizeof(money));
+  if (ui->shop == 2) {
+    text_draw_in(s, ui->fb, 44, cx, cw, cy + 76, "Pague com Pix", C_ACCENT, 255, 0, 1);
+    snprintf(t, sizeof(t), "Plano %s  ·  %s  ·  %d dias", sel->name, money, sel->days);
+    text_draw_in(s, ui->fb, 30, cx, cw, cy + 124, t, C_TEXT, 255, 0, 1);
+    draw_qr_text(ui, sel->pix, 1, W / 2, cy + 150, 500);
+    text_draw_in(s, ui->f, 25, cx, cw, cy + 700, "Abra o app do seu banco  \xE2\x80\xBA  Pix  \xE2\x80\xBA  Ler QR Code", C_MUTED, 255, 0, 1);
+    shop_button(ui, cx + (cw - 440) / 2, cy + 735, 440, 72, "JÁ PAGUEI");
+  } else {
+    char user[80], msgtxt[200], enc[400], url[520];
+    snprintf(user, sizeof(user), "%s", ui->username);
+    char lower[64];
+    snprintf(lower, sizeof(lower), "%s", sel->name);
+    for (char *c = lower; *c; c++) if (*c >= 'A' && *c <= 'Z') *c += 32;
+    snprintf(msgtxt, sizeof(msgtxt), "Olá meu usuário é %s e eu assinei o plano %s", user, lower);
+    auth_urlencode(msgtxt, enc, sizeof(enc));
+    snprintf(url, sizeof(url), "https://wa.me/%s?text=%s", pl->wa[0] ? pl->wa : "5511984970539", enc);
+    text_draw_in(s, ui->fb, 44, cx, cw, cy + 76, "Avise que você pagou", C_ACCENT, 255, 0, 1);
+    text_draw_in(s, ui->f, 28, cx, cw, cy + 122, "Escaneie com o celular e envie a mensagem pronta no WhatsApp.", C_TEXT, 255, 0, 1);
+    draw_qr_text(ui, url, 1, W / 2, cy + 150, 480);
+    text_fit(ui->f, 24, msgtxt, cw - 100, t, sizeof(t));
+    text_draw_in(s, ui->f, 24, cx, cw, cy + 680, t, C_MUTED, 255, 0, 1);
+    text_draw_in(s, ui->f, 24, cx, cw, cy + 715, "Seu plano é ativado em alguns minutos. Depois, toque no botão abaixo.", C_MUTED, 255, 0, 1);
+    shop_button(ui, cx + (cw - 560) / 2, cy + 745, 560, 72, "JÁ ENVIEI · ATUALIZAR PLANO");
+  }
 }
 
 static void draw_upd_help(UI *ui) {
@@ -1956,7 +2158,7 @@ static void draw_scene(UI *ui) {
   if (ui->mode == MODE_CATALOG) {
     if (ui->detail) draw_detail(ui); else draw_vitrine(ui);
     draw_message_line(ui);
-    if (ui->pix_open && ui->pix) draw_pix(ui);
+    if (ui->shop) draw_shop(ui);
     if (ui->upd_help) draw_upd_help(ui);
   } else if (ui->mode == MODE_LOGIN) {
     draw_login(ui);

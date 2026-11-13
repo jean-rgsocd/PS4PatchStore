@@ -30,13 +30,20 @@ void ui_set_cover_fetcher(UI *ui, UiCoverFetchFn fn, const char *dir, void *ud);
 typedef void (*UiPreviewFn)(void *ud);
 void ui_set_preview_handler(UI *ui, UiPreviewFn fn);  /* botao "Ver a loja" da tela de login (modo visitante, so olhar) */
 void ui_set_register_handler(UI *ui, UiLoginFn fn);   /* botao CADASTRAR da tela de login */
-void ui_show_register_done(UI *ui, const char *user);  /* cadastro enviado: mostra o QR Code do WhatsApp do admin */
+void ui_show_register_done(UI *ui, const char *user);  /* (antigo) cadastro enviado: QR Code do WhatsApp do admin */
+/* Planos: janela "Mensal / Semestral / Anual" -> Pix -> "Ja paguei" -> QR do WhatsApp com a mensagem pronta. */
+typedef void (*UiReloadFn)(void *ud);
+void ui_set_reload_handler(UI *ui, UiReloadFn fn);     /* chamado quando o usuario pede para atualizar o plano */
+void ui_set_plans_text(UI *ui, const char *body);      /* resposta do /plans (precos + Pix atuais); vazio = mantem os embutidos */
+void ui_open_shop(UI *ui);                             /* abre a janela de planos (se ha conta logada) */
+/* Plano da conta (servidor novo): o app calcula o texto do topo, o aviso de 48 h e o bloqueio quando vence durante o uso. */
+void ui_set_plan_info(UI *ui, const char *state, const char *plan_name, long expires, long server_now);
 void ui_show_loading(UI *ui, const char *msg);
 void ui_show_login(UI *ui, const char *msg);          /* msg: erro/aviso (pode ser NULL); limpa a senha */
 void ui_set_catalog(UI *ui, const Catalog *cat);      /* o Catalog precisa continuar valido enquanto a UI o usa */
 void ui_set_user(UI *ui, const char *name);
 void ui_set_offline(UI *ui, int on);                    /* 1 = catalogo salvo no console (servidor fora do ar): downloads indisponiveis */
-void ui_remind_support(UI *ui);                        /* abre a tela "Apoie o app" (lembrete de 30 dias); nao bloqueia nada */
+void ui_remind_support(UI *ui);                        /* lembrete fixo / apoio vencido: abre a janela de planos */
 void ui_set_plan(UI *ui, const char *text, int level);   /* linha do plano no topo; text vazio/NULL esconde. level: 0 ok, 1 aviso, 2 vencido */
 void ui_key(UI *ui, int key);
 void ui_skip_splash(UI *ui);          /* pula a abertura animada (usado pelo simulador) */

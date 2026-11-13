@@ -39,6 +39,16 @@ int auth_build_login_body(const char *user, const char *pass, char *out, size_t 
   return 0;
 }
 
+int auth_build_login_body_dev(const char *user, const char *pass, const char *dev, char *out, size_t cap) {
+  if (auth_build_login_body(user, pass, out, cap) != 0) return -1;
+  if (!dev || !dev[0]) return 0;
+  size_t n = strlen(out);
+  if (n + 6 + enc_len(dev) + 1 > cap) return -1;
+  memcpy(out + n, "&dev=", 5); n += 5;
+  auth_urlencode(dev, out + n, cap - n);
+  return 0;
+}
+
 char *auth_trim(char *s) {
   while (*s && isspace((unsigned char)*s)) s++;
   size_t n = strlen(s);
@@ -158,4 +168,116 @@ int auth_plan_text(const char *plan, long now, char *out, size_t cap) {
   }
   snprintf(out, cap, "PLANO ATIVO  \xC2\xB7  EXPIRA %s", date);
   return 0;
+}
+
+/* ------------------------------------------------------------------ /me completo, textos do plano, /plans */
+static const char *nth_line(const char *s, int n) {          /* inicio da linha n (0-based) ou NULL */
+  for (int i = 0; i < n && s; i++) { s = strchr(s, '\n'); if (s) s++; }
+  return s;
+}
+
+static void copy_line(const char *p, char *dst, size_t cap) {
+  dst[0] = 0;
+  if (!p) return;
+  const char *e = strchr(p, '\n');
+  size_t n = e ? (size_t)(e - p) : strlen(p);
+  if (n >= cap) n = cap - 1;
+  memcpy(dst, p, n);
+  dst[n] = 0;
+  while (n > 0 && (dst[n - 1] == '\r' || dst[n - 1] == ' ')) dst[--n] = 0;
+}
+
+int auth_parse_me2(int http, const char *body, AuthMe *m) {
+  memset(m, 0, sizeof(*m));
+  if (http != 200 || !body || strncmp(body, "OK\n", 3) != 0) return -1;
+  copy_line(nth_line(body, 2), m->plan, sizeof(m->plan));
+  if (!m->plan[0]) return -1;
+  for (const char *c = m->plan; *c; c++)
+    if (!isalnum((unsigned char)*c) && !strchr(":.-", *c)) return -1;
+  copy_line(nth_line(body, 3), m->state, sizeof(m->state));
+  const char *p;
+  if ((p = nth_line(body, 4))) m->now = atol(p);
+  if ((p = nth_line(body, 5))) m->support = atol(p);
+  if ((p = nth_line(body, 6))) m->nag = p[0] == '1';
+  if ((p = nth_line(body, 7))) m->expires = atol(p);
+  copy_line(nth_line(body, 8), m->plan_name, sizeof(m->plan_name));
+  return 0;
+}
+
+static void plan_label(const char *name, char *out, size_t cap) {      /* "mensal" -> "MENSAL" */
+  size_t n = 0;
+  for (; name && name[n] && n + 1 < cap; n++) out[n] = (name[n] >= 'a' && name[n] <= 'z') ? name[n] - 32 : name[n];
+  out[n] = 0;
+}
+
+int auth_plan_status(const char *state, const char *plan_name, long expires, long now, char *out, size_t cap) {
+  out[0] = 0;
+  int trial = plan_name && !strcmp(plan_name, "trial");
+  if (state && !strcmp(state, "pendente")) { snprintf(out, cap, "AGUARDANDO ATIVAÇÃO  ·  FALE COM A GENTE"); return 2; }
+  int clock_ok = now >= 1700000000L;
+  if ((state && !strcmp(state, "vencido")) || (expires > 0 && clock_ok && expires <= now)) {
+    snprintf(out, cap, trial ? "TESTE GRÁTIS ENCERRADO  ·  ASSINE PARA BAIXAR" : "PLANO VENCIDO  ·  ASSINE PARA BAIXAR");
+    return 2;
+  }
+  if (expires <= 0) {
+    snprintf(out, cap, (plan_name && !strcmp(plan_name, "vitalicio")) ? "PLANO VITALÍCIO" : "CONTA ATIVA");
+    return 0;
+  }
+  if (!clock_ok) { snprintf(out, cap, trial ? "TESTE GRÁTIS" : "PLANO ATIVO"); return trial ? 1 : 0; }
+  long rem = expires - now;
+  if (trial) {
+    long min = (rem + 59) / 60;
+    snprintf(out, cap, "TESTE GRÁTIS  ·  FALTAM %ld MIN", min < 1 ? 1 : min);
+    return 1;
+  }
+  char lab[24], nm[40];
+  plan_label(plan_name, lab, sizeof(lab));
+  snprintf(nm, sizeof(nm), "PLANO%s%s", lab[0] ? " " : "", lab);
+  if (rem <= 48L * 3600L) {
+    long h = rem / 3600, mi = (rem % 3600 + 59) / 60;
+    if (mi == 60) { h++; mi = 0; }
+    if (h >= 24) snprintf(out, cap, "%s  ·  EXPIRA EM 1 DIA E %ld H", nm, h - 24);
+    else if (h >= 1) snprintf(out, cap, "%s  ·  EXPIRA EM %ld H %ld MIN", nm, h, mi);
+    else snprintf(out, cap, "%s  ·  EXPIRA EM %ld MIN", nm, mi < 1 ? 1 : mi);
+    return 1;
+  }
+  long loc = expires - 3 * 3600L;
+  int y, mo, d;
+  civil_from_days(loc >= 0 ? loc / 86400 : (loc - 86399) / 86400, &y, &mo, &d);
+  snprintf(out, cap, "%s  ·  EXPIRA %02d/%02d/%04d", nm, d, mo, y);
+  return 0;
+}
+
+void auth_money(const char *price, char *out, size_t cap) {
+  char t[24];
+  snprintf(t, sizeof(t), "%s", price ? price : "");
+  for (char *c = t; *c; c++) if (*c == '.') *c = ',';
+  snprintf(out, cap, "R$ %s", t);
+}
+
+int auth_parse_plans(const char *body, AuthPlans *o) {
+  memset(o, 0, sizeof(*o));
+  if (!body || strncmp(body, "OK\n", 3) != 0) return -1;
+  const char *p = body + 3;
+  while (*p) {
+    char line[520];
+    copy_line(p, line, sizeof(line));
+    const char *nl = strchr(p, '\n');
+    p = nl ? nl + 1 : p + strlen(p);
+    char *f[8]; int nf = 0;
+    f[nf++] = line;
+    for (char *c = line; *c && nf < 8; c++) if (*c == '\t') { *c = 0; f[nf++] = c + 1; }
+    if (!strcmp(f[0], "WA") && nf >= 2) snprintf(o->wa, sizeof(o->wa), "%s", f[1]);
+    else if (!strcmp(f[0], "TRIAL") && nf >= 2) o->trial_min = atoi(f[1]);
+    else if (!strcmp(f[0], "PLAN") && nf >= 6 && o->n < 4) {
+      AuthPlan *a = &o->plan[o->n];
+      snprintf(a->id, sizeof(a->id), "%s", f[1]);
+      snprintf(a->name, sizeof(a->name), "%s", f[2]);
+      snprintf(a->price, sizeof(a->price), "%s", f[3]);
+      a->days = atoi(f[4]);
+      snprintf(a->pix, sizeof(a->pix), "%s", f[5]);
+      if (a->id[0] && a->days > 0 && strlen(a->pix) > 40) o->n++;
+    }
+  }
+  return o->n > 0 ? 0 : -1;
 }

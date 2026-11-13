@@ -9,6 +9,7 @@
 #include <unistd.h>
 #include <fcntl.h>
 #include <pthread.h>
+#include <time.h>
 #include <stdbool.h>              /* Http.h usa bool sem incluir */
 
 #include <orbis/Http.h>
@@ -33,6 +34,9 @@ static AuthEvent evq;
 static int g_offline = 0;
 static long g_support = 0;                   /* prazo do apoio (lido do /me), entregue junto do evento */
 static int g_nag = 0;
+static char g_state[16], g_plan_name[16], g_plans[1500];
+static long g_expires = 0;
+static int g_registered = 0;
 static char server[256];                     /* sem barra final */
 
 static void post_event2(int type, const char *msg, const char *user, char *text, const char *plan, long plan_now) {
@@ -46,6 +50,12 @@ static void post_event2(int type, const char *msg, const char *user, char *text,
   evq.plan_now = plan_now;
   evq.support_until = g_support;
   evq.nag = g_nag;
+  snprintf(evq.state, sizeof(evq.state), "%s", g_state);
+  snprintf(evq.plan_name, sizeof(evq.plan_name), "%s", g_plan_name);
+  snprintf(evq.plans, sizeof(evq.plans), "%s", g_plans);
+  evq.expires = g_expires;
+  evq.registered = g_registered;
+  g_registered = 0;
   evq.offline = g_offline;
   evq.text = text;
   have_ev = 1;
@@ -61,6 +71,50 @@ static void logrc(const char *what, int rc) {            /* "o que" falhou + cod
   char m[256];
   snprintf(m, sizeof(m), "%s rc=0x%x", what, (unsigned)rc);
   install_log(m);
+}
+
+/* ------------------------------------------------------------------ ID do console */
+/* O servidor prende a conta (e o teste gratis de 1 hora) a este ID. Usa o OpenPSID do PS4; se o sistema nao entregar,
+ * cai para um ID aleatorio guardado em /data (so perde se o usuario apagar os dados do app). */
+extern int jk_get_openpsid(unsigned char *id) __asm__("sceKernelGetOpenPsId") __attribute__((weak));
+#define DEV_FILE "/data/jkpatchs_dev.txt"
+
+static const char *dev_id(void) {
+  static char dev[40];
+  static int done = 0;
+  if (done) return dev;
+  done = 1;
+  unsigned char raw[16];
+  memset(raw, 0, sizeof(raw));
+  if (jk_get_openpsid) {
+    int r = jk_get_openpsid(raw);
+    int nz = 0, nf = 0;
+    for (int i = 0; i < 16; i++) { if (raw[i]) nz = 1; if (raw[i] != 0xFF) nf = 1; }
+    if (r >= 0 && nz && nf) {
+      for (int i = 0; i < 16; i++) snprintf(dev + i * 2, 3, "%02x", raw[i]);
+      install_log("ID do console: OpenPSID lido.");
+      return dev;
+    }
+    logrc("ID do console: OpenPSID indisponivel", r);
+  } else {
+    install_log("ID do console: funcao OpenPSID ausente neste sistema.");
+  }
+  char buf[64];
+  int fd = open(DEV_FILE, O_RDONLY);
+  if (fd >= 0) {
+    ssize_t n = read(fd, buf, sizeof(buf) - 1);
+    close(fd);
+    if (n >= 32) { memcpy(dev, buf, 32); dev[32] = 0; install_log("ID do console: usando o ID salvo."); return dev; }
+  }
+  uint64_t x = (uint64_t)(uintptr_t)&x ^ ((uint64_t)time(NULL) << 20) ^ ((uint64_t)clock() << 7) ^ 0x9E3779B97F4A7C15ULL;
+  for (int i = 0; i < 16; i++) {
+    x ^= x << 13; x ^= x >> 7; x ^= x << 17;
+    snprintf(dev + i * 2, 3, "%02x", (unsigned)((x >> 24) & 0xFF));
+  }
+  fd = open(DEV_FILE, O_WRONLY | O_CREAT | O_TRUNC, 0600);
+  if (fd >= 0) { write(fd, dev, 32); close(fd); }
+  install_log("ID do console: gerado um ID novo (OpenPSID indisponivel).");
+  return dev;
 }
 
 /* ------------------------------------------------------------------ configuracao */
@@ -316,7 +370,8 @@ static int cache_use(const char *user) {
   char want[100];
   snprintf(want, sizeof(want), "# user\t%s\n", user);
   if (strncmp(buf, want, strlen(want)) != 0) { free(buf); return 0; }
-  g_support = 0; g_nag = 0; g_offline = 1;
+  g_support = 0; g_nag = 0; g_offline = 1; g_expires = 0;
+  g_state[0] = 0; g_plan_name[0] = 0; g_plans[0] = 0;
   install_log("Servidor indisponivel: usando a ultima loja salva no console.");
   post_event2(AUTH_EV_CATALOG, NULL, user, buf, "", 0);
   g_offline = 0;
@@ -351,22 +406,35 @@ static int fetch_catalog(const char *user, const char *token, int silent_login_n
   /* Plano do usuario (para o topo do app). Se falhar, o app so nao mostra o plano. */
   char plan[48] = "";
   long now = 0;
-  g_support = 0; g_nag = 0;
-  {
+  g_support = 0; g_nag = 0; g_expires = 0;
+  g_state[0] = 0; g_plan_name[0] = 0; g_plans[0] = 0;
+  if (!preview) {
     char e2[200] = "";
     char *r2 = NULL;
     int s2 = 0;
-    if (!preview && http_do(0, "/me", NULL, token, &s2, &r2, e2, sizeof(e2)) == 0) {
-      if (auth_parse_me(s2, r2, plan, sizeof(plan), &now) != 0) { plan[0] = 0; now = 0; }
-      else {                                              /* 6a linha do /me: cadastro (segundos) */
-        const char *q = r2;
-        for (int ln = 0; ln < 5 && q; ln++) { q = strchr(q, '\n'); if (q) q++; }
-        if (q) { g_support = atol(q); const char *n2 = strchr(q, '\n'); if (n2) g_nag = n2[1] == '1'; }
+    if (http_do(0, "/me", NULL, token, &s2, &r2, e2, sizeof(e2)) == 0) {
+      AuthMe me;
+      if (auth_parse_me2(s2, r2, &me) == 0) {
+        snprintf(plan, sizeof(plan), "%s", me.plan);
+        now = me.now;
+        g_support = me.support; g_nag = me.nag; g_expires = me.expires;
+        snprintf(g_state, sizeof(g_state), "%s", me.state);
+        snprintf(g_plan_name, sizeof(g_plan_name), "%s", me.plan_name);
       }
       free(r2);
     }
+    {                                                  /* precos e Pix atuais (opcional: sem isso o app usa os que vieram nele) */
+      char e3[200] = "";
+      char *r3 = NULL;
+      int s3 = 0;
+      if (http_do(0, "/plans", NULL, NULL, &s3, &r3, e3, sizeof(e3)) == 0) {
+        if (s3 == 200 && !strncmp(r3, "OK\n", 3) && strlen(r3) < sizeof(g_plans)) snprintf(g_plans, sizeof(g_plans), "%s", r3);
+        free(r3);
+      }
+    }
   }
   post_event2(AUTH_EV_CATALOG, NULL, user, resp, plan, now);
+  g_registered = 0;
   return 0;
 }
 
@@ -398,7 +466,7 @@ static void *login_thread(void *arg) {
   int st = 0;
   long exp = 0;
 
-  if (auth_build_login_body(j->user, j->pass, body, sizeof(body)) != 0) {
+  if (auth_build_login_body_dev(j->user, j->pass, dev_id(), body, sizeof(body)) != 0) {
     post_event(AUTH_EV_LOGIN_FAIL, "Usuário ou senha longos demais.", NULL, NULL);
   } else if (http_do(1, "/login", body, NULL, &st, &resp, err, sizeof(err)) != 0) {
     post_event(AUTH_EV_LOGIN_FAIL, err, NULL, NULL);
@@ -427,18 +495,35 @@ static void *register_thread(void *arg) {
   int st = 0;
   long exp = 0;
 
-  if (auth_build_login_body(j->user, j->pass, body, sizeof(body)) != 0) {
+  if (auth_build_login_body_dev(j->user, j->pass, dev_id(), body, sizeof(body)) != 0) {
     post_event(AUTH_EV_REGISTER_FAIL, "Usuário ou senha longos demais.", NULL, NULL);
   } else if (http_do(1, "/register", body, NULL, &st, &resp, err, sizeof(err)) != 0) {
     post_event(AUTH_EV_REGISTER_FAIL, err, NULL, NULL);
   } else {
-    if (auth_parse_login(st, resp, token, sizeof(token), &exp, err, sizeof(err)) != 0) {   /* "OK\ncadastrado" */
+    if (auth_parse_login(st, resp, token, sizeof(token), &exp, err, sizeof(err)) != 0) {   /* "OK\ncadastrado\n<estado>" */
       post_event(AUTH_EV_REGISTER_FAIL, err, NULL, NULL);
+      free(resp);
     } else {
-      install_log("Cadastro enviado (aguardando ativacao).");
-      post_event(AUTH_EV_REGISTER_OK, NULL, j->user, NULL);
+      free(resp);
+      install_log("Cadastro criado; entrando na conta.");
+      /* servidor novo: ja libera o teste gratis. Entra direto (mesmos dados) e a janela de planos abre por cima. */
+      char *r2 = NULL;
+      char e2[200] = "";
+      int s2 = 0;
+      if (http_do(1, "/login", body, NULL, &s2, &r2, e2, sizeof(e2)) == 0 &&
+          auth_parse_login(s2, r2, token, sizeof(token), &exp, e2, sizeof(e2)) == 0) {
+        char user[64];
+        snprintf(user, sizeof(user), "%s", j->user);
+        for (char *p = user; *p; p++) if (*p >= 'A' && *p <= 'Z') *p += 32;
+        session_save(user, token, exp);
+        g_registered = 1;
+        free(r2);
+        fetch_catalog(user, token, 0, 0);
+      } else {
+        free(r2);
+        post_event(AUTH_EV_LOGIN_FAIL, "Cadastro criado! Toque em ENTRAR.", NULL, NULL);
+      }
     }
-    free(resp);
   }
   memset(j, 0, sizeof(*j));
   free(j);

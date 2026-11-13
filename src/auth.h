@@ -20,6 +20,11 @@ typedef struct {
   int offline;            /* 1 = servidor fora do ar: este catalogo e a ultima copia salva no console */
   int nag;                /* 1 = o admin ligou o lembrete fixo: mostra o "Apoie o app" toda vez que abrir */
   long plan_now;          /* hora do servidor (segundos) quando o plano foi lido; 0 = desconhecida */
+  char state[16];         /* AUTH_EV_CATALOG: ativo / vencido / pendente (vazio = servidor antigo) */
+  long expires;           /* AUTH_EV_CATALOG: vencimento do plano em segundos (hora do servidor); 0 = sem vencimento */
+  char plan_name[16];     /* trial, mensal, semestral, anual, vitalicio, legado */
+  int registered;         /* 1 = conta acabou de ser criada neste pedido (abre a janela de planos) */
+  char plans[1500];       /* corpo do /plans (vazio se nao veio): precos e Pix atuais */
   char *text;
 } AuthEvent;
 
