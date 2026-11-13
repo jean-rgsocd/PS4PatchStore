@@ -304,21 +304,53 @@ static void *install_thread(void *arg) {
     const char *d = j->btn.dest;
     if (!strncmp(d, "/data/", 6) && !strstr(d, "..") && strlen(d) < 120) dir = d;      /* destino escolhido no catalogo */
     mkdir("/data/PS4PatchStore", 0777);
-    {                                                  /* cria a pasta e as intermediarias (mkdir -p) */
-      char tmp[160];
-      snprintf(tmp, sizeof(tmp), "%s", dir);
-      for (char *p = tmp + 1; *p; p++)
-        if (*p == '/') { *p = 0; mkdir(tmp, 0777); *p = '/'; }
-      mkdir(tmp, 0777);
+    /* Lista de arquivos do botao: o principal (url/dest) + os "extras" separados por '|'.
+     * Cada extra pode ser "https://..." (mesma pasta do principal) ou "/data/pasta=https://..." (outra pasta).
+     * Ex.: plugin = .cpk + DpFileList.bin; Comemoracoes = 5 arquivos em 3 pastas. */
+    enum { MAXIT = 8 };
+    char it_url[MAXIT][1024];
+    char it_dir[MAXIT][120];
+    int nit = 0;
+    snprintf(it_url[0], sizeof(it_url[0]), "%s", j->btn.url);
+    snprintf(it_dir[0], sizeof(it_dir[0]), "%s", dir);
+    nit = 1;
+    {
+      char ex[1024];
+      snprintf(ex, sizeof(ex), "%s", j->btn.extra);
+      char *sv = ex;
+      while (*sv && nit < MAXIT) {
+        char *tok = sv;
+        char *bar = strchr(sv, '|');
+        if (bar) { *bar = 0; sv = bar + 1; } else sv += strlen(sv);
+        if (!tok[0]) continue;
+        const char *tdir = dir;
+        char *u = tok;
+        if (!strncmp(tok, "/data/", 6)) {
+          char *eq = strchr(tok, '=');
+          if (!eq) continue;
+          *eq = 0;
+          u = eq + 1;
+          if (!strstr(tok, "..") && strlen(tok) < 120) tdir = tok;
+        }
+        if (strncmp(u, "https://", 8) != 0) continue;
+        snprintf(it_url[nit], sizeof(it_url[0]), "%s", u);
+        snprintf(it_dir[nit], sizeof(it_dir[0]), "%s", tdir);
+        nit++;
+      }
     }
-    /* baixa o arquivo principal e, se houver, o segundo arquivo do botao (ex.: plugin = .cpk + DpFileList.bin) */
-    const char *urls[2] = { j->btn.url, j->btn.extra[0] ? j->btn.extra : NULL };
     char lastname[180] = "";
     rc = 0;
-    for (int u = 0; u < 2 && urls[u] && rc == 0; u++) {
+    for (int u = 0; u < nit && rc == 0; u++) {
       char path[512], filename[180];
-      const char *base = strrchr(urls[u], '/');
-      base = base ? base + 1 : urls[u];
+      {                                                /* cria a pasta e as intermediarias (mkdir -p) */
+        char tmp[160];
+        snprintf(tmp, sizeof(tmp), "%s", it_dir[u]);
+        for (char *p = tmp + 1; *p; p++)
+          if (*p == '/') { *p = 0; mkdir(tmp, 0777); *p = '/'; }
+        mkdir(tmp, 0777);
+      }
+      const char *base = strrchr(it_url[u], '/');
+      base = base ? base + 1 : it_url[u];
       size_t k = 0;
       while (*base && *base != '?' && k + 1 < sizeof(filename)) {
         unsigned char ch = (unsigned char)*base++;
@@ -333,18 +365,18 @@ static void *install_thread(void *arg) {
       }
       filename[k] = 0;
       if (!filename[0] || !strcmp(filename, ".") || !strcmp(filename, "..")) snprintf(filename, sizeof(filename), "arquivo_download.bin");
-      snprintf(path, sizeof(path), "%s/%s", dir, filename);
+      snprintf(path, sizeof(path), "%s/%s", it_dir[u], filename);
       volatile int cancel = 0;
-      char lm[700];
-      snprintf(lm, sizeof(lm), "Iniciando download de arquivo pelo app: %s", urls[u]);
+      char lm[1200];
+      snprintf(lm, sizeof(lm), "Iniciando download de arquivo pelo app (%d/%d): %s", u + 1, nit, it_url[u]);
       install_log(lm);
       snprintf(dl_name, sizeof(dl_name), "%s", filename);
       dl_pct = 0;
       dl_active = 1;
-      rc = auth_download(urls[u], path, &dl_pct, &cancel, err, sizeof(err));
+      rc = auth_download(it_url[u], path, &dl_pct, &cancel, err, sizeof(err));
       dl_active = 0;
       if (rc != 0) {
-        snprintf(lm, sizeof(lm), "Download falhou: %s", err[0] ? err : "(sem mensagem)");
+        snprintf(lm, sizeof(lm), "Download falhou (%s): %s", filename, err[0] ? err : "(sem mensagem)");
         install_log(lm);
         unlink(path);
         if (!err[0]) snprintf(err, sizeof(err), "Falha ao baixar o arquivo.");
@@ -354,7 +386,8 @@ static void *install_thread(void *arg) {
       }
     }
     if (rc == 0) {
-      if (urls[1]) snprintf(err, sizeof(err), "Download concluído: %s + 1 arquivo", lastname);
+      if (nit > 2) snprintf(err, sizeof(err), "Download concluído: %d arquivos", nit);
+      else if (nit == 2) snprintf(err, sizeof(err), "Download concluído: %s + 1 arquivo", lastname);
       else snprintf(err, sizeof(err), "Download concluído: %s", lastname);
       rc = 1; /* sucesso de download (diferente de pedido de instalacao) */
     }
