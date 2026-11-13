@@ -131,7 +131,8 @@ static void refilter(UI *ui) {
   if (!ui->cat) return;
   const char *id = ui->cat->cat[ui->cat_idx].id;
   for (int i = 0; i < ui->cat->ngame; i++) {
-    if (ui->cat_idx == 0 || !strcmp(ui->cat->game[i].category, id)) ui->filt[ui->nfilt++] = i;
+    /* em "Todos" os cards da categoria "plugins" ficam escondidos: so aparecem ao abrir o card-pasta "Plugins & Mods" */
+    if (ui->cat_idx == 0 ? strcmp(ui->cat->game[i].category, "plugins") != 0 : !strcmp(ui->cat->game[i].category, id)) ui->filt[ui->nfilt++] = i;
   }
 }
 
@@ -982,10 +983,20 @@ void ui_key(UI *ui, int key) {
       break;
     }
     case UI_BACK:
-      if (ui->sel != 0) select_game(ui, 0);
+      if (ui->cat_idx != 0 && !strcmp(ui->cat->cat[ui->cat_idx].id, "plugins")) {   /* dentro da pasta: volta para o card "Plugins & Mods" */
+        int pos = 0;
+        ui->cat_idx = 0;
+        refilter(ui);
+        for (int k = 0; k < ui->nfilt; k++) if (!strcmp(ui->cat->game[ui->filt[k]].category, "hub")) { pos = k; break; }
+        select_game(ui, pos);
+      } else if (ui->sel != 0) select_game(ui, 0);
       break;
     case UI_OK:
-      if (g) {                                                     /* abre o detalhe do jogo */
+      if (g && !strcmp(g->category, "hub")) {                      /* card-pasta: abre a categoria "plugins" */
+        for (int k = 1; k < ui->cat->ncat; k++) if (!strcmp(ui->cat->cat[k].id, "plugins")) {
+          ui->cat_idx = k; refilter(ui); select_game(ui, 0); break;
+        }
+      } else if (g) {                                              /* abre o detalhe do jogo */
         int dl[CAT_MAX_BTNS], md[CAT_MAX_BTNS + 1], nd, nm;
         lists(g, dl, &nd, md, &nm);
         ui->detail = 1; ui->zone = nd > 0 ? 0 : 1;
