@@ -43,6 +43,7 @@ typedef struct {
 } CatApp;
 
 typedef struct {
+  int locked;              /* 1 = catalogo "so olhar" (visitante / plano vencido ou pendente): sem links de download */
   CatApp app;
   int ncat;
   CatCategory cat[CAT_MAX_CATS];   /* cat[0] e sempre "all" */
