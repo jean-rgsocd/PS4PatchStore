@@ -1436,7 +1436,10 @@ static void draw_detail(UI *ui) {
   }
 
   int dy = cy + chh + 40;
-  draw_desc(ui, DT_X, dy, DT_W, 31, 7, g->desc);
+  /* aviso amarelo no rodape: o que vier depois de " !! " na descricao nao entra na lista de topicos */
+  char dtxt[1200]; const char *note = strstr(g->desc, " !! ");
+  if (note) { size_t nn = (size_t)(note - g->desc); if (nn >= sizeof(dtxt)) nn = sizeof(dtxt) - 1; memcpy(dtxt, g->desc, nn); dtxt[nn] = 0; note += 4; }
+  draw_desc(ui, DT_X, dy, DT_W, 31, 7, note ? dtxt : g->desc);
 
   /* videos e guias */
   int my = 742;
@@ -1493,6 +1496,10 @@ static void draw_detail(UI *ui) {
   if (ui->locked) {
     text_wrap(s, ui->fb, 20, DT_PX + 44, DT_PY + DT_PH - 118, DT_PW - 88, 28, 2,
               ui->offline ? "Servidor fora do ar: mostrando a última versão salva. Os downloads voltam quando ele voltar." : "Downloads bloqueados: ative seu plano para baixar. Vídeos, tutoriais e descrições continuam liberados.", C_FOCUS, 255);
+  } else if (note && note[0]) {
+    gfx_rrect(s, DT_PX + 30, DT_PY + DT_PH - 68, DT_PW - 60, 58, 14, C_FOCUS, 36, 0);
+    gfx_rrect(s, DT_PX + 30, DT_PY + DT_PH - 68, DT_PW - 60, 58, 14, C_FOCUS, 200, 2);
+    text_wrap(s, ui->fb, 18, DT_PX + 46, DT_PY + DT_PH - 44, DT_PW - 92, 26, 2, note, C_FOCUS, 255);
   } else
   text_wrap(s, ui->f, 18, DT_PX + 44, DT_PY + DT_PH - 52, DT_PW - 88, 26, 2,
             "Antes de instalar: confira a versão de cada arquivo. O jogo base precisa estar instalado antes do update. "
