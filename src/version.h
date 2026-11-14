@@ -2,5 +2,5 @@
  * e cole o catalogo novo no /admin. Formato: "N.NN" (vira o VERSION do param.sfo e aparece no tile do PS4). */
 #ifndef VERSION_H
 #define VERSION_H
-#define APP_VERSION "1.14"
+#define APP_VERSION "1.15"
 #endif

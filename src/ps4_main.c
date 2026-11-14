@@ -307,7 +307,7 @@ static void *install_thread(void *arg) {
     /* Lista de arquivos do botao: o principal (url/dest) + os "extras" separados por '|'.
      * Cada extra pode ser "https://..." (mesma pasta do principal) ou "/data/pasta=https://..." (outra pasta).
      * Ex.: plugin = .cpk + DpFileList.bin; Comemoracoes = 5 arquivos em 3 pastas. */
-    enum { MAXIT = 8 };
+    enum { MAXIT = 20 };
     char it_url[MAXIT][1024];
     char it_dir[MAXIT][120];
     int nit = 0;
@@ -315,7 +315,7 @@ static void *install_thread(void *arg) {
     snprintf(it_dir[0], sizeof(it_dir[0]), "%s", dir);
     nit = 1;
     {
-      char ex[1024];
+      char ex[2048];
       snprintf(ex, sizeof(ex), "%s", j->btn.extra);
       char *sv = ex;
       while (*sv && nit < MAXIT) {
