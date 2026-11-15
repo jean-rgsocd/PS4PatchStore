@@ -139,13 +139,16 @@ struct UI {
 };
 
 /* ------------------------------------------------------------------ utilidades */
+/* Pastas: categorias que so aparecem ao abrir o card-pasta (tag "PASTA") de mesmo nome. "plugins" e "jkmod" (v1.16). */
+static int is_folder_cat(const char *id) { return !strcmp(id, "plugins") || !strcmp(id, "jkmod"); }
+
 static void refilter(UI *ui) {
   ui->nfilt = 0;
   if (!ui->cat) return;
   const char *id = ui->cat->cat[ui->cat_idx].id;
   for (int i = 0; i < ui->cat->ngame; i++) {
     /* em "Todos" os cards da categoria "plugins" ficam escondidos: so aparecem ao abrir o card-pasta "Plugins & Mods" */
-    if (ui->cat_idx == 0 ? strcmp(ui->cat->game[i].category, "plugins") != 0 : !strcmp(ui->cat->game[i].category, id)) ui->filt[ui->nfilt++] = i;
+    if (ui->cat_idx == 0 ? !is_folder_cat(ui->cat->game[i].category) : !strcmp(ui->cat->game[i].category, id)) ui->filt[ui->nfilt++] = i;
   }
 }
 
@@ -1086,7 +1089,16 @@ void ui_key(UI *ui, int key) {
       break;
     }
     case UI_BACK:
-      if (ui->cat_idx != 0 && !strcmp(ui->cat->cat[ui->cat_idx].id, "plugins")) {   /* dentro da pasta: volta para o card "Plugins & Mods" */
+      if (ui->cat_idx != 0 && !strcmp(ui->cat->cat[ui->cat_idx].id, "jkmod")) {      /* dentro da pasta JK-MOD: volta para a pasta Plugins & Mods (card JK-MOD) */
+        int back = 0;
+        for (int k = 1; k < ui->cat->ncat; k++) if (!strcmp(ui->cat->cat[k].id, "plugins")) { ui->cat_idx = k; back = 1; break; }
+        if (back) {
+          int pos = 0;
+          refilter(ui);
+          for (int k = 0; k < ui->nfilt; k++) { const CatGame *q = &ui->cat->game[ui->filt[k]]; if (!strcmp(q->tag, "PASTA") && !strcmp(q->title, "JK-MOD")) { pos = k; break; } }
+          select_game(ui, pos);
+        }
+      } else if (ui->cat_idx != 0 && !strcmp(ui->cat->cat[ui->cat_idx].id, "plugins")) {   /* dentro da pasta: volta para o card "Plugins & Mods" */
         int pos = 0;
         ui->cat_idx = 0;
         refilter(ui);
@@ -1095,8 +1107,8 @@ void ui_key(UI *ui, int key) {
       } else if (ui->sel != 0) select_game(ui, 0);
       break;
     case UI_OK:
-      if (g && !strcmp(g->category, "hub")) {                      /* card-pasta: abre a categoria "plugins" */
-        for (int k = 1; k < ui->cat->ncat; k++) if (!strcmp(ui->cat->cat[k].id, "plugins")) {
+      if (g && !strcmp(g->tag, "PASTA")) {                         /* card-pasta: abre a categoria de mesmo nome (rotulo = titulo do card) */
+        for (int k = 1; k < ui->cat->ncat; k++) if (!strcmp(ui->cat->cat[k].label, g->title)) {
           ui->cat_idx = k; refilter(ui); select_game(ui, 0); break;
         }
       } else if (g) {                                              /* abre o detalhe do jogo */

@@ -307,15 +307,17 @@ static void *install_thread(void *arg) {
     /* Lista de arquivos do botao: o principal (url/dest) + os "extras" separados por '|'.
      * Cada extra pode ser "https://..." (mesma pasta do principal) ou "/data/pasta=https://..." (outra pasta).
      * Ex.: plugin = .cpk + DpFileList.bin; Comemoracoes = 5 arquivos em 3 pastas. */
-    enum { MAXIT = 20 };
+    enum { MAXIT = 33 };   /* 1 principal + ate 32 extras */
     char it_url[MAXIT][1024];
     char it_dir[MAXIT][120];
+    char it_soft[MAXIT];                                /* 1 = falha nao derruba a instalacao (ex.: icone) */
     int nit = 0;
     snprintf(it_url[0], sizeof(it_url[0]), "%s", j->btn.url);
     snprintf(it_dir[0], sizeof(it_dir[0]), "%s", dir);
+    it_soft[0] = 0;
     nit = 1;
     {
-      char ex[2048];
+      char ex[8192];
       snprintf(ex, sizeof(ex), "%s", j->btn.extra);
       char *sv = ex;
       while (*sv && nit < MAXIT) {
@@ -325,16 +327,21 @@ static void *install_thread(void *arg) {
         if (!tok[0]) continue;
         const char *tdir = dir;
         char *u = tok;
-        if (!strncmp(tok, "/data/", 6)) {
+        int soft = 0;
+        if (!strncmp(tok, "/data/", 6) || !strncmp(tok, "/user/appmeta/", 14)) {
           char *eq = strchr(tok, '=');
           if (!eq) continue;
           *eq = 0;
           u = eq + 1;
-          if (!strstr(tok, "..") && strlen(tok) < 120) tdir = tok;
+          if (!strstr(tok, "..") && strlen(tok) < 120) {
+            tdir = tok;
+            if (!strncmp(tok, "/user/appmeta/", 14)) soft = 1;   /* icone do jogo: se nao puder gravar, segue sem erro */
+          }
         }
         if (strncmp(u, "https://", 8) != 0) continue;
         snprintf(it_url[nit], sizeof(it_url[0]), "%s", u);
         snprintf(it_dir[nit], sizeof(it_dir[0]), "%s", tdir);
+        it_soft[nit] = (char)soft;
         nit++;
       }
     }
@@ -379,7 +386,11 @@ static void *install_thread(void *arg) {
         snprintf(lm, sizeof(lm), "Download falhou (%s): %s", filename, err[0] ? err : "(sem mensagem)");
         install_log(lm);
         unlink(path);
-        if (!err[0]) snprintf(err, sizeof(err), "Falha ao baixar o arquivo.");
+        if (it_soft[u]) {                              /* item opcional (icone): registra e continua */
+          install_log("item opcional falhou; seguindo a instalacao.");
+          rc = 0;
+          err[0] = 0;
+        } else if (!err[0]) snprintf(err, sizeof(err), "Falha ao baixar o arquivo.");
       } else {
         install_log(path);
         snprintf(lastname, sizeof(lastname), "%s", filename);
