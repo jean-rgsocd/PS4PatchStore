@@ -155,7 +155,7 @@ xml = '''<?xml version="1.0"?>
   <rootdir>
 %s  </rootdir>
 </psproject>
-''' % ("pkg_ps4_patch" if os.environ.get("PATCH") == "1" else "pkg_ps4_app", CONTENT_ID, file_xml, tree("", 0))
+''' % ("pkg_ps4_patch" if (os.environ.get("PATCH") == "1" and os.environ.get("GP4_VOLUME") != "app") else "pkg_ps4_app", CONTENT_ID, file_xml, tree("", 0))
 
 
 with open("project.gp4", "w", encoding="utf-8") as fh:
