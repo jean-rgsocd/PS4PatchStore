@@ -89,7 +89,7 @@ textarea.raw{width:100%;height:calc(100vh - 220px);font:12px/1.4 Consolas,monosp
 
 <div id="app" hidden>
  <div class="top">
-  <img src="%%LOGO%%" alt=""><b>JK PATCHS</b> <span class="mut" style="font-size:11px">painel v11</span>
+  <img src="%%LOGO%%" alt=""><b>JK PATCHS</b> <span class="mut" style="font-size:11px">painel v12</span>
   <div class="tabs" id="tabs"></div>
   <span id="dirtyTag" class="warn" hidden>● alterações não salvas</span>
   <button class="s" onclick="sair()">Sair</button>
@@ -416,17 +416,20 @@ async function r2Auditoria(){
 }
 function r2Upload(){
   abrir("Enviar arquivo para o R2",
-   "<p class='mut'>Para arquivos até 90 MB (capas, mods, imagens, vídeos curtos). PKGs grandes ficam para a próxima etapa.</p>"+
+   "<p class='mut'>Para arquivos até 99 MB. Se já existir um arquivo com o mesmo nome, o painel pergunta se pode substituir.</p>"+
    "<div class='fg'><div class='w'><label>Pasta de destino</label><input id='upd' value='"+esc(R2P)+"'></div><div class='w'><label>Arquivo</label><input type='file' id='upf'></div><div class='w'><label>Nome no R2 (deixe vazio para manter)</label><input id='upn'></div></div>"+
    "<p><button class='p' onclick='r2Enviar()'>Enviar</button> <span id='ups' class='mut'></span></p>");
 }
 function r2Enviar(){
   var f=$("upf").files[0];if(!f){alert("Escolha um arquivo.");return}
-  if(f.size>90*1048576){alert("Arquivo maior que 90 MB. Esse envio ainda não é suportado pelo painel.");return}
+  if(f.size>99*1048576){alert("Arquivo maior que 99 MB ("+(f.size/1048576).toFixed(1)+" MB). Esse envio ainda não é suportado pelo painel: troque pelo Cloudflare.");return}
   var pasta=$("upd").value.trim().replace(/^\/+/,"");if(pasta&&pasta.slice(-1)!=="/")pasta+="/";
   var nome=($("upn").value.trim()||f.name),key=pasta+nome;
   var sobre="";
-  if(ALL&&ALL[key]){alert("Já existe "+key+". O painel não substitui arquivos: use outro nome ou troque pelo Cloudflare.");return}
+  if(ALL&&ALL[key]){
+    if(!confirm("Já existe "+key+" ("+(ALL[key].s/1048576).toFixed(1)+" MB).\nSubstituir pelo novo arquivo ("+(f.size/1048576).toFixed(1)+" MB)?\nO antigo será perdido."))return;
+    sobre="&overwrite=1";
+  }
   var x=new XMLHttpRequest();x.open("PUT","/jkpainel17/api/r2/upload?key="+encodeURIComponent(key)+sobre);
   x.setRequestHeader("Authorization","Bearer "+TK);x.setRequestHeader("Content-Type",f.type||"application/octet-stream");
   x.upload.onprogress=function(e){if(e.lengthComputable)$("ups").textContent=Math.round(e.loaded*100/e.total)+"%"};

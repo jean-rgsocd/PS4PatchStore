@@ -8,7 +8,7 @@ w = aqui.parent / "worker.js"
 html = (aqui / "painel.html").read_text(encoding="utf-8")
 html = (html.replace("%%LOGO%%", "/jkpainel17/logo.png")
             .replace("%%R2PUBLIC%%", "https://pub-c6518eb1477949a58d959f5a769703d1.r2.dev/")
-            .replace("%%PROTEGIDOS%%", json.dumps(["APP-PS4/JKPATCHS.pkg", "APP-PS4/APP.mp4"])))
+            .replace("%%PROTEGIDOS%%", json.dumps([])))
 src = w.read_text(encoding="utf-8")
 novo, n = re.subn(r'const PANEL_HTML = ".*";\n', lambda m: "const PANEL_HTML = " + json.dumps(html) + ";\n", src, count=1)
 if n != 1:
