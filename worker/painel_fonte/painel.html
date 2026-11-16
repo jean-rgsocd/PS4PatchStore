@@ -89,7 +89,7 @@ textarea.raw{width:100%;height:calc(100vh - 220px);font:12px/1.4 Consolas,monosp
 
 <div id="app" hidden>
  <div class="top">
-  <img src="%%LOGO%%" alt=""><b>JK PATCHS</b> <span class="mut" style="font-size:11px">painel v10</span>
+  <img src="%%LOGO%%" alt=""><b>JK PATCHS</b> <span class="mut" style="font-size:11px">painel v11</span>
   <div class="tabs" id="tabs"></div>
   <span id="dirtyTag" class="warn" hidden>● alterações não salvas</span>
   <button class="s" onclick="sair()">Sair</button>
@@ -303,7 +303,7 @@ function btnHtml(g,b,i){
   }
   return h+"</div></div>";
 }
-function sujo(){marcar(true);var d=$("dirtyTag");if(d)d.hidden=false}
+function sujo(){marcar(true);var d=$("dirtyTag");if(d)d.hidden=false;fixBar()}
 function setG(i,v,nr){M.games[SEL].f[i]=v;if(i===0&&!SQ)PATH=childSet()[v]?[v]:[];sujo();if(!nr)desenharCat();else{var cdv=document.querySelectorAll(".cd");if(cdv[SEL]){var t=cdv[SEL].querySelector("b");if(t&&i===4)t.textContent=v;if(i===1)cdv[SEL].querySelector("img").src=v}}fixBar()}
 function setB(i,j,v,mode){var b=M.games[SEL].btns[i];b.f[j]=v;sujo();if(mode===2){if(v==="video"||v==="image"){b.f[3]="";b.f[4]="0";b.f[5]="";b.f[6]="0"}if(v==="pkg"){b.f[5]=b.f[5]||"PS4GD"}desenharCat()}else if(mode===3){}fixBar()}
 function fixBar(){var bs=document.querySelectorAll("#v_cat .bar button");bs.forEach(function(b){if(b.textContent==="Salvar catálogo"||b.textContent==="Descartar")b.disabled=!DIRTY})}
