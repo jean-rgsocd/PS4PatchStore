@@ -1,20 +1,20 @@
-# Configuracao do Worker "jkpatchs" (publicado automaticamente pelo Cloudflare a cada push nesta pasta).
+﻿# Configuracao do Worker "jkpatchs" (o Cloudflare publica sozinho a cada push na pasta worker/).
 name = "jkpatchs"
 main = "worker.js"
 compatibility_date = "2025-01-01"
 workers_dev = true
+preview_urls = false
+routes = [{ pattern = "jkpatchs.com", custom_domain = true }]
 
-# 1) COLE o ID do KV (Cloudflare > Storage & Databases > KV > o namespace usado como DB > ID)
 [[kv_namespaces]]
 binding = "DB"
-id = "COLE_AQUI_O_ID_DO_KV"
+id = "1400b12da84b4165bb5fba122d272fab"
 
 [[r2_buckets]]
 binding = "APP_BUCKET"
 bucket_name = "pes-patches-store"
 
-# 2) Se o jkpatchs.com aponta para este Worker, descomente (e confira o dominio no painel do Cloudflare):
-# routes = [{ pattern = "jkpatchs.com", custom_domain = true }]
+[observability]
+enabled = true
 
-# Secrets (NAO ficam aqui): TOKEN_SECRET, ADMIN_KEY e, opcional, PANEL_USER.
-# Eles continuam guardados no Cloudflare e nao sao apagados pelo deploy.
+# Secrets (ficam so no Cloudflare, nao aqui): ADMIN_KEY, TOKEN_SECRET, GH_TOKEN, PANEL_USER (opcional)
