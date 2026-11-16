@@ -82,6 +82,7 @@ struct UI {
   int cover_gen;                       /* muda a cada catalogo novo: downloads antigos sao ignorados */
   volatile int cover_pending;          /* ha capa baixada esperando ser carregada */
   int cover_ready[CAT_MAX_GAMES];
+  unsigned char th_todo[CAT_MAX_GAMES];   /* capa ja no disco, esperando ser decodificada (1 por quadro, depois da abertura) */
   void *auth_ud;
   char field[2][FLD_MAX + 1];          /* 0 = usuario, 1 = senha */
   int cur_field, kr, kc, caps, show_pass;
@@ -340,6 +341,7 @@ static void load_thumbs(UI *ui) {
   ui->cover_gen++;
   for (int i = 0; i < CAT_MAX_GAMES; i++) ui->cover_ready[i] = 0;
   ui->cover_pending = 0;
+  memset(ui->th_todo, 0, sizeof(ui->th_todo));
   int gen = ui->cover_gen;
   pthread_mutex_unlock(&cover_mu);
   for (int i = 0; i < CAT_MAX_GAMES; i++) free_thumbs(ui, i);
@@ -351,8 +353,9 @@ static void load_thumbs(UI *ui) {
     if (is_remote_cover(cv)) {
       if (!ui->cover_fetch || !ui->cover_dir[0]) continue;
       cover_cache_path(ui, cv, path, sizeof(path));
-      thumbs_from_file(ui, i, path);                            /* ja baixada antes? */
-      if (!ui->th[i][0]) {
+      FILE *cf = fopen(path, "rb");                             /* ja baixada antes? So marca: a decodificacao fica para depois da abertura */
+      if (cf) { fclose(cf); ui->th_todo[i] = 1; }
+      else {
         const char *base = strrchr(cv, '/'); base = base ? base + 1 : cv;       /* capa de reserva dentro do app, se tiver */
         char nm[96]; snprintf(nm, sizeof(nm), "%s", base);
         char *q = strchr(nm, '?'); if (q) *q = 0;
@@ -367,13 +370,12 @@ static void load_thumbs(UI *ui) {
       }
       continue;
     }
-    snprintf(path, sizeof(path), "%s/images/%s", ui->assets, cv);
-    thumbs_from_file(ui, i, path);
+    ui->th_todo[i] = 1;                                         /* capa de dentro do app: tambem decodifica depois */
   }
   if (J) { if (J->n > 0) cover_start(ui, J); else free(J); }
 }
 
-/* chamado do ui_tick: carrega as capas que terminaram de baixar */
+/* chamado do ui_tick: marca as capas que terminaram de baixar (a decodificacao e feita 1 por quadro em th_step) */
 static void cover_poll(UI *ui) {
   if (!ui->cover_pending) return;
   int ready[CAT_MAX_GAMES];
@@ -382,12 +384,32 @@ static void cover_poll(UI *ui) {
   memset(ui->cover_ready, 0, sizeof(ui->cover_ready));
   ui->cover_pending = 0;
   pthread_mutex_unlock(&cover_mu);
-  for (int i = 0; i < CAT_MAX_GAMES && ui->cat; i++) {
-    if (!ready[i] || i >= ui->cat->ngame) continue;
-    char path[320];
-    cover_cache_path(ui, ui->cat->game[i].cover, path, sizeof(path));
-    if (thumbs_from_file(ui, i, path)) { ui->dirty = 1; if (ui->nfilt > 0 && ui->filt[ui->sel] == i) rebuild_fbg(ui); }
-    else remove(path);                                          /* arquivo ruim: apaga para tentar de novo na proxima abertura */
+  for (int i = 0; i < CAT_MAX_GAMES && ui->cat; i++)
+    if (ready[i] && i < ui->cat->ngame) ui->th_todo[i] = 1;
+}
+
+/* Decodifica UMA capa por quadro, a mais perto da selecionada primeiro, e so depois da animacao de abertura.
+ * Antes, todas as capas eram decodificadas de uma vez quando o catalogo chegava, e a abertura travava varios segundos. */
+static void th_step(UI *ui) {
+  if (!ui->cat || ui->splash < SPLASH_END) return;
+  int cur = (ui->nfilt > 0) ? ui->filt[ui->sel] : 0, best = -1, bd = 1 << 30;
+  for (int i = 0; i < ui->cat->ngame && i < CAT_MAX_GAMES; i++) {
+    if (!ui->th_todo[i]) continue;
+    int d = i > cur ? i - cur : cur - i;
+    if (d < bd) { bd = d; best = i; }
+  }
+  if (best < 0) return;
+  int i = best;
+  ui->th_todo[i] = 0;
+  const char *cv = ui->cat->game[i].cover;
+  char path[320];
+  if (is_remote_cover(cv)) cover_cache_path(ui, cv, path, sizeof(path));
+  else snprintf(path, sizeof(path), "%s/images/%s", ui->assets, cv);
+  if (thumbs_from_file(ui, i, path)) {
+    ui->dirty = 1;
+    if (ui->nfilt > 0 && ui->filt[ui->sel] == i) rebuild_fbg(ui);
+  } else if (is_remote_cover(cv)) {
+    remove(path);                                               /* arquivo ruim: apaga para baixar de novo na proxima abertura */
   }
 }
 
@@ -1186,6 +1208,7 @@ void ui_tick(UI *ui) {
   }
   if (ui->pi_on && ui->frame % 120 == 0) plan_refresh(ui);
   cover_poll(ui);
+  th_step(ui);
   guide_tick(ui);
   if (ui->vid_mode) vid_tick(ui);
   if ((ui->busy || ui->mode == MODE_LOADING) && ui->frame % 6 == 0) ui->dirty = 1;   /* spinner */
