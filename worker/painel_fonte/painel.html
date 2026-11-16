@@ -89,7 +89,7 @@ textarea.raw{width:100%;height:calc(100vh - 220px);font:12px/1.4 Consolas,monosp
 
 <div id="app" hidden>
  <div class="top">
-  <img src="%%LOGO%%" alt=""><b>JK PATCHS</b> <span class="mut" style="font-size:11px">painel v12</span>
+  <img src="%%LOGO%%" alt=""><b>JK PATCHS</b> <span class="mut" style="font-size:11px">painel v13</span>
   <div class="tabs" id="tabs"></div>
   <span id="dirtyTag" class="warn" hidden>● alterações não salvas</span>
   <button class="s" onclick="sair()">Sair</button>
@@ -416,13 +416,12 @@ async function r2Auditoria(){
 }
 function r2Upload(){
   abrir("Enviar arquivo para o R2",
-   "<p class='mut'>Para arquivos até 99 MB. Se já existir um arquivo com o mesmo nome, o painel pergunta se pode substituir.</p>"+
+   "<p class='mut'>Qualquer tamanho (acima de 90 MB o envio é feito em partes, com retomada). Se já existir um arquivo com o mesmo nome, o painel pergunta se pode substituir.</p>"+
    "<div class='fg'><div class='w'><label>Pasta de destino</label><input id='upd' value='"+esc(R2P)+"'></div><div class='w'><label>Arquivo</label><input type='file' id='upf'></div><div class='w'><label>Nome no R2 (deixe vazio para manter)</label><input id='upn'></div></div>"+
    "<p><button class='p' onclick='r2Enviar()'>Enviar</button> <span id='ups' class='mut'></span></p>");
 }
 function r2Enviar(){
   var f=$("upf").files[0];if(!f){alert("Escolha um arquivo.");return}
-  if(f.size>99*1048576){alert("Arquivo maior que 99 MB ("+(f.size/1048576).toFixed(1)+" MB). Esse envio ainda não é suportado pelo painel: troque pelo Cloudflare.");return}
   var pasta=$("upd").value.trim().replace(/^\/+/,"");if(pasta&&pasta.slice(-1)!=="/")pasta+="/";
   var nome=($("upn").value.trim()||f.name),key=pasta+nome;
   var sobre="";
@@ -430,6 +429,7 @@ function r2Enviar(){
     if(!confirm("Já existe "+key+" ("+(ALL[key].s/1048576).toFixed(1)+" MB).\nSubstituir pelo novo arquivo ("+(f.size/1048576).toFixed(1)+" MB)?\nO antigo será perdido."))return;
     sobre="&overwrite=1";
   }
+  if(f.size>90*1048576){mpuEnviar(f,key,sobre);return}
   var x=new XMLHttpRequest();x.open("PUT","/jkpainel17/api/r2/upload?key="+encodeURIComponent(key)+sobre);
   x.setRequestHeader("Authorization","Bearer "+TK);x.setRequestHeader("Content-Type",f.type||"application/octet-stream");
   x.upload.onprogress=function(e){if(e.lengthComputable)$("ups").textContent=Math.round(e.loaded*100/e.total)+"%"};
@@ -438,6 +438,94 @@ function r2Enviar(){
     else $("ups").innerHTML="<span class='bad'>"+esc(j.erro||("erro "+x.status))+"</span>"};
   x.onerror=function(){$("ups").innerHTML="<span class='bad'>falha de rede</span>"};
   $("ups").textContent="enviando...";x.send(f);
+}
+
+
+/* ---------- envio grande em partes ---------- */
+var MPU_PART=64*1048576,MPU_PAR=3,MPU=null;
+function mpuB(n){return n>=1073741824?(n/1073741824).toFixed(2)+" GB":(n/1048576).toFixed(1)+" MB"}
+function mpuT(s){s=Math.round(s);var h=Math.floor(s/3600),m=Math.floor(s%3600/60);return h?h+"h"+("0"+m).slice(-2)+"min":m+"min "+("0"+(s%60)).slice(-2)+"s"}
+function mpuCancelar(){if(MPU){MPU.cancel=true;MPU.xhrs.forEach(function(x){try{x.abort()}catch(e){}})}}
+function mpuParte(f,key,uid,n,pr){
+  return new Promise(function(ok,fail){
+    var tent=0;
+    function tenta(){
+      if(MPU.cancel||MPU.stop){fail(new Error(MPU.cancel?"cancelado":"parado"));return}
+      tent++;
+      var ini=(n-1)*MPU_PART,blob=f.slice(ini,Math.min(f.size,ini+MPU_PART));
+      var x=new XMLHttpRequest();MPU.xhrs.push(x);
+      x.open("PUT","/jkpainel17/api/r2/mpu/part?key="+encodeURIComponent(key)+"&uploadId="+encodeURIComponent(uid)+"&n="+n);
+      x.setRequestHeader("Authorization","Bearer "+TK);
+      x.upload.onprogress=function(e){pr(e.loaded)};
+      x.onload=function(){
+        MPU.xhrs=MPU.xhrs.filter(function(y){return y!==x});
+        var j={};try{j=JSON.parse(x.responseText)}catch(e){}
+        if(x.status===200&&j.etag){pr(blob.size);ok(j.etag)}
+        else if(tent<6&&x.status!==403&&x.status!==400){pr(0);setTimeout(tenta,2000*tent)}
+        else fail(new Error(j.erro||("erro "+x.status)))};
+      x.onerror=function(){MPU.xhrs=MPU.xhrs.filter(function(y){return y!==x});if(tent<6){pr(0);setTimeout(tenta,2000*tent)}else fail(new Error("falha de rede"))};
+      x.onabort=function(){fail(new Error("cancelado"))};
+      x.send(blob);
+    }
+    tenta();
+  });
+}
+async function mpuEnviar(f,key,sobre){
+  if(MPU){alert("Já existe um envio em andamento.");return}
+  var total=f.size,np=Math.ceil(total/MPU_PART),st=$("ups");
+  if(np>10000){alert("Arquivo grande demais para o painel.");return}
+  var sk="pn_mpu:"+key+":"+f.size+":"+f.lastModified,saved=null,uid="",parts={};
+  try{saved=JSON.parse(ler(sk)||"null")}catch(e){}
+  MPU={cancel:false,xhrs:[]};
+  var ptxt="Tamanho: "+mpuB(total)+" em "+np+" partes de 64 MB.";
+  try{
+    if(saved&&saved.uploadId&&saved.parts&&confirm("Existe um envio anterior incompleto deste mesmo arquivo ("+Object.keys(saved.parts).length+" de "+np+" partes já enviadas).\nContinuar de onde parou?\n\nOK = continuar   Cancelar = recomeçar do zero")){uid=saved.uploadId;parts=saved.parts}
+    else{
+      if(saved&&saved.uploadId){try{await api("r2/mpu/abort?key="+encodeURIComponent(key)+"&uploadId="+encodeURIComponent(saved.uploadId),"POST")}catch(e){}}
+      var s=await api("r2/mpu/start?key="+encodeURIComponent(key)+"&ct="+encodeURIComponent(f.type||"application/octet-stream")+sobre,"POST");
+      uid=s.uploadId;parts={};guardar(sk,JSON.stringify({uploadId:uid,parts:parts}));
+    }
+    var done={},fila=[],feitos=0,t0=Date.now(),base=0;
+    Object.keys(parts).forEach(function(n){done[n]=true;base+=Math.min(MPU_PART,total-(n-1)*MPU_PART)});
+    for(var n=1;n<=np;n++)if(!parts[n])fila.push(n);
+    var emv={},bytesOk=base,jaFeitas=Object.keys(parts).length;
+    function mostrar(){
+      var cur=bytesOk;for(var k in emv)cur+=emv[k];
+      var pct=Math.min(100,cur*100/total),dt=(Date.now()-t0)/1000,v=dt>3?(cur-base)/dt:0;
+      st.innerHTML="<div style='background:#1b2a4a;border-radius:6px;height:12px;margin:8px 0'><div style='background:#2f7d4f;height:12px;border-radius:6px;width:"+pct.toFixed(1)+"%'></div></div>"+
+        pct.toFixed(1)+"% · "+mpuB(cur)+" de "+mpuB(total)+(v?" · "+mpuB(v)+"/s · faltam ~"+mpuT((total-cur)/v):"")+
+        "<br><span class='mut'>"+ptxt+" Não feche esta aba. <a href='#' onclick='mpuCancelar();return false'>Cancelar envio</a></span>";
+    }
+    var tick=setInterval(mostrar,500);
+    var tok=setInterval(function(){api("refresh","POST").then(function(j){TK=j.token;guardar("pn_tk",TK)}).catch(function(){})},20*60*1000);
+    window.onbeforeunload=function(){return "Envio em andamento"};
+    async function worker(){
+      while(fila.length&&!MPU.cancel&&!MPU.stop){
+        var n=fila.shift();
+        var etag;try{etag=await mpuParte(f,key,uid,n,function(b){emv[n]=b})}catch(e){MPU.stop=true;throw e}
+        delete emv[n];bytesOk+=Math.min(MPU_PART,total-(n-1)*MPU_PART);parts[n]=etag;
+        guardar(sk,JSON.stringify({uploadId:uid,parts:parts}));
+      }
+    }
+    try{
+      var ws=[];for(var i=0;i<MPU_PAR;i++)ws.push(worker());
+      var rs=await Promise.allSettled(ws);
+      var ruim=rs.filter(function(r){return r.status==="rejected"});
+      if(ruim.length){var rc=ruim.filter(function(r){return String(r.reason&&r.reason.message)!=="parado"});throw (rc[0]||ruim[0]).reason}
+    }finally{clearInterval(tick);clearInterval(tok);window.onbeforeunload=null}
+    if(MPU.cancel)throw new Error("cancelado");
+    st.textContent="Juntando as partes no R2...";
+    var lista=Object.keys(parts).map(function(n){return{partNumber:+n,etag:parts[n]}});
+    if(lista.length!==np)throw new Error("faltam partes ("+lista.length+" de "+np+")");
+    await api("r2/mpu/complete?key="+encodeURIComponent(key)+"&uploadId="+encodeURIComponent(uid)+sobre,"POST",{parts:lista});
+    guardar(sk,"");MPU=null;
+    st.innerHTML="<span class='ok'>Enviado: "+esc(key)+" ("+mpuB(total)+")</span>";
+    ALL=null;carregarAll().then(function(){r2Abrir(R2P)});
+  }catch(e){
+    var cancelou=MPU&&MPU.cancel;MPU=null;
+    if(cancelou){try{await api("r2/mpu/abort?key="+encodeURIComponent(key)+"&uploadId="+encodeURIComponent(uid),"POST")}catch(e2){}guardar(sk,"");st.innerHTML="<span class='bad'>Envio cancelado.</span>"}
+    else st.innerHTML="<span class='bad'>"+esc(e.message)+"</span><br><span class='mut'>Se foi queda de internet ou da aba, é só enviar o mesmo arquivo de novo: o painel pergunta se quer continuar de onde parou.</span>";
+  }
 }
 
 /* ---------- ABA PREVIA ---------- */
