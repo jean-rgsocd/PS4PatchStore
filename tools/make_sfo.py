@@ -62,9 +62,19 @@ ENTRIES = {
 
 # Patch (gp): como nos patches reais, o content id e o TITLE_ID sao os do app base, VERSION fica
 # na versao base (01.00) e APP_VER carrega a versao do patch; inclui FORMAT=obs.
+# PATCH_VARIANT (so para o teste de patch): A = VERSION igual a APP_VER + FORMAT; B = VERSION igual a APP_VER, sem FORMAT;
+# C = VERSION 01.00, sem FORMAT. Sem PATCH_VARIANT mantem o comportamento antigo.
 if os.environ.get("PATCH") == "1":
-    ENTRIES["VERSION"] = s("01.00", 8)
-    ENTRIES["FORMAT"] = s("obs", 4)
+    PV = os.environ.get("PATCH_VARIANT", "")
+    if PV in ("A", "B"):
+        ENTRIES["VERSION"] = s(VERSION, 8)
+        if PV == "A":
+            ENTRIES["FORMAT"] = s("obs", 4)
+    elif PV == "C":
+        ENTRIES["VERSION"] = s("01.00", 8)
+    else:
+        ENTRIES["VERSION"] = s("01.00", 8)
+        ENTRIES["FORMAT"] = s("obs", 4)
 
 
 def build():

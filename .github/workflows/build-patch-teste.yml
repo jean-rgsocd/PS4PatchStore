@@ -1,6 +1,6 @@
 name: build-patch-teste
 # Teste de atualizacao por PATCH. So roda quando voce clicar em "Run workflow" (Actions > build-patch-teste).
-# Gera um app de TESTE (JK Patchs TESTE, PSTR00003) em duas partes: BASE (01.00) e PATCH (versao de src/version.h).
+# Gera 3 variacoes (A, B, C) do PATCH do app de TESTE (JK Patchs TESTE, PSTR00003). A BASE 01.00 ja esta instalada no PS4.
 # Nao mexe no app de verdade (PSTR00002) nem no workflow build-pkg.
 on:
   workflow_dispatch:
@@ -34,37 +34,42 @@ jobs:
           TC=$(dirname "$LX")
           echo "OO_PS4_TOOLCHAIN=$GITHUB_WORKSPACE/$TC" >> "$GITHUB_ENV"
           chmod -R +x "$TC/bin/linux" || true
-      - name: Gerar BASE de teste (01.00) e PATCH de teste
+      - name: Gerar 3 variacoes do PATCH de teste
         env:
           DOTNET_ROLL_FORWARD: Major
           TESTAPP: "1"
         run: |
           set -e
-          mkdir -p teste/BASE teste/PATCH
-          SFO_VERSION=01.00 bash build.sh > build_base.log 2>&1 || { tail -n 40 build_base.log; exit 1; }
-          cp out/native/*.pkg teste/BASE/
-          PATCH=1 bash build.sh > build_patch.log 2>&1 || { tail -n 40 build_patch.log; exit 1; }
-          cp out/native/*.pkg teste/PATCH/
-          cp out/project-native.gp4 teste/project-patch.gp4
-          echo "== BASE =="; ls -la teste/BASE; echo "== PATCH =="; ls -la teste/PATCH
+          mkdir -p teste
+          for V in A B C; do
+            PATCH=1 PATCH_VARIANT=$V bash build.sh > build_patch_$V.log 2>&1 || { tail -n 40 build_patch_$V.log; exit 1; }
+            cp out/native/*.pkg teste/TESTE_PATCH_$V.pkg
+          done
+          ls -la teste
       - name: Conferir os pacotes
         continue-on-error: true
-        env:
-          DOTNET_ROLL_FORWARD: Major
-          DOTNET_SYSTEM_GLOBALIZATION_INVARIANT: "1"
         run: |
-          DLL=$(find "$OO_PS4_TOOLCHAIN/bin" -name 'PkgTool.Core.dll' | head -1)
-          for P in teste/BASE/*.pkg teste/PATCH/*.pkg; do
-            echo "=== $P ==="; dotnet "$DLL" pkg_listentries "$P" | head -20 || true
-            dotnet "$DLL" pkg_extractfile "$P" sce_sys/param.sfo /tmp/p.sfo >/dev/null 2>&1 && dotnet "$DLL" sfo_listentries /tmp/p.sfo || true
-          done
+          python3 - <<'PY'
+          import struct,glob
+          for f in sorted(glob.glob("teste/*.pkg")):
+              d=open(f,"rb").read(2*1024*1024)
+              cnt=struct.unpack(">I",d[0x10:0x14])[0]; tab=struct.unpack(">I",d[0x18:0x1c])[0]
+              ct=struct.unpack(">I",d[0x74:0x78])[0]
+              for i in range(cnt):
+                  e=d[tab+i*32:tab+i*32+32]; id_,fo,f1,f2,off,sz=struct.unpack(">IIIIII",e[:24])
+                  if id_==0x1000:
+                      s=d[off:off+sz]; m,v,ks,ds,c=struct.unpack("<4sIIII",s[:20]); o={}
+                      for k in range(c):
+                          ko,fmt,ln,mx,do=struct.unpack("<HHIII",s[20+k*16:36+k*16]); n=s[ks+ko:s.index(b"\0",ks+ko)].decode(); raw=s[ds+do:ds+do+ln]
+                          o[n]=raw.rstrip(b"\0").decode() if fmt==0x0204 else struct.unpack("<I",raw)[0]
+                      print(f, "type 0x%02X"%ct, {k:o.get(k) for k in ("CATEGORY","APP_VER","VERSION","FORMAT")})
+          PY
       - uses: actions/upload-artifact@v4
         if: always()
         with:
-          name: teste-patch
+          name: teste-patch-variacoes
           path: |
-            teste/BASE/*.pkg
-            teste/PATCH/*.pkg
-            teste/project-patch.gp4
-            build_base.log
-            build_patch.log
+            teste/*.pkg
+            build_patch_A.log
+            build_patch_B.log
+            build_patch_C.log
