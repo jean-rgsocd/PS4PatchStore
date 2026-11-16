@@ -1,0 +1,13 @@
+PASTA worker/ - servidor do JK Patchs (Cloudflare Worker) + painel
+
+worker.js ............ o servidor inteiro (login do app, catalogo, /baixar, painel em /jkpainel17)
+wrangler.toml ........ liga o Worker ao KV (DB) e ao R2 (pes-patches-store)
+painel_fonte/ ........ tela do painel em arquivo separado (painel.html) + montar_painel.py
+
+Para mudar a tela do painel: edite painel_fonte/painel.html e rode
+    python3 painel_fonte/montar_painel.py
+(ele reescreve a linha PANEL_HTML dentro do worker.js).
+
+Publicar: o Cloudflare publica sozinho a cada push que mexe nesta pasta
+(Workers & Pages > jkpatchs > Settings > Builds, "Root directory" = worker).
+Mexer so aqui NAO gera PKG novo (o workflow build-pkg ignora a pasta worker/).

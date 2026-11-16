@@ -1,0 +1,674 @@
+<!DOCTYPE html>
+<html lang="pt-BR"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
+<title>JK PATCHS - Painel</title>
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Poppins:wght@600;700;800&display=swap">
+<style>
+*{box-sizing:border-box}
+body{margin:0;background:#000;color:#e8ecf5;font:14px Arial,Helvetica,sans-serif}
+a{color:#4d9bff}
+button,input,select,textarea{font:inherit;color:#e8ecf5;background:#0d0e12;border:1px solid #2a2e3a;border-radius:8px;padding:7px 10px}
+button{cursor:pointer;background:#16181f}
+button:hover{border-color:#4d9bff}
+button.p{background:#35d07f;color:#04210f;border-color:#35d07f;font-weight:bold}
+button.d{border-color:#7a2a2a;color:#ff8a8a}
+button.s{padding:3px 8px;font-size:12px}
+button:disabled{opacity:.45;cursor:default}
+input:focus,select:focus,textarea:focus{outline:none;border-color:#4d9bff}
+.mut{color:#8c93a6}.ok{color:#35d07f}.bad{color:#ff6b6b}.warn{color:#f5c542}
+[hidden]{display:none!important}
+#login{min-height:100vh;display:flex;align-items:center;justify-content:center}
+#login .box{width:340px;text-align:center}
+#login img{width:150px;height:150px;border-radius:50%;margin-bottom:14px}
+#login input{width:100%;margin-bottom:10px;padding:11px}
+#login button{width:100%;padding:11px}
+.top{display:flex;align-items:center;gap:14px;padding:10px 18px;border-bottom:1px solid #23262f;position:sticky;top:0;background:#000;z-index:5}
+.top img{width:42px;height:42px;border-radius:50%}
+.top b{font-size:17px}
+.tabs{display:flex;gap:6px;flex:1;margin-left:14px;flex-wrap:wrap}
+.tab{padding:8px 16px;border-radius:8px;background:#0d0e12;border:1px solid #23262f;cursor:pointer;color:#9aa1b3}
+.tab.on{background:#0b1830;border-color:#4d9bff;color:#fff}
+.page{padding:16px 18px}
+h2{margin:0 0 10px;font-size:18px;color:#35d07f}
+.bar{display:flex;gap:8px;align-items:center;flex-wrap:wrap;margin-bottom:12px}
+.bar .sp{flex:1}
+.box{background:#0d0e12;border:1px solid #23262f;border-radius:12px;padding:12px}
+table{border-collapse:collapse;width:100%}
+th,td{text-align:left;padding:7px 8px;border-bottom:1px solid #1b1e27;vertical-align:middle}
+th{color:#8c93a6;font-weight:normal;font-size:12px}
+tr:hover td{background:#0f1218}
+.ed{display:flex;gap:14px;align-items:flex-start}
+.ed .l{width:330px;flex:none;max-height:calc(100vh - 150px);overflow:auto}
+.ed .r{flex:1;min-width:0}
+.cd{display:flex;gap:9px;align-items:center;padding:8px;border:1px solid #23262f;border-radius:10px;margin-bottom:6px;cursor:pointer;background:#0d0e12}
+.cd.on{border-color:#4d9bff;background:#0b1830}
+.cd img{width:36px;height:61px;object-fit:contain;border-radius:5px;background:#16181f;flex:none}
+.cd .t{min-width:0}.cd .t b{display:block;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.cd .t span{font-size:12px;color:#8c93a6}
+.fg{display:grid;grid-template-columns:repeat(2,1fr);gap:8px}
+.fg label{display:block;font-size:12px;color:#8c93a6}
+.fg input,.fg select,.fg textarea{width:100%}
+.fg .w{grid-column:1/3}
+.bt{border:1px solid #23262f;border-radius:10px;padding:9px;margin-bottom:8px;background:#0b0c10}
+.bt.bad{border-color:#7a2a2a}.bt.warn{border-color:#6b5a1d}
+.bt .r1{display:flex;gap:6px;align-items:center;flex-wrap:wrap;margin-bottom:6px}
+.bt .r1 input.lb{flex:1;min-width:160px;font-weight:bold}
+.bt .r2{display:grid;grid-template-columns:repeat(4,1fr);gap:6px}
+.bt .r2 .w2{grid-column:span 2}.bt .r2 .w4{grid-column:span 4}
+.bt .r2 input,.bt .r2 select,.bt .r2 textarea{width:100%;font-size:12px;padding:5px 7px}
+.bt small{color:#8c93a6;font-size:11px;display:block}
+.pill{display:inline-block;padding:1px 8px;border-radius:99px;font-size:11px;border:1px solid #2a2e3a;color:#9aa1b3}
+.pill.g{border-color:#1d6b43;color:#35d07f}.pill.r{border-color:#7a2a2a;color:#ff8a8a}.pill.y{border-color:#6b5a1d;color:#f5c542}
+.modal{position:fixed;inset:0;background:rgba(0,0,0,.75);z-index:20;display:flex;align-items:center;justify-content:center}
+.modal .m{background:#0d0e12;border:1px solid #2a2e3a;border-radius:14px;width:min(980px,94vw);max-height:90vh;display:flex;flex-direction:column}
+.modal .mh{padding:12px 16px;border-bottom:1px solid #23262f;display:flex;align-items:center;gap:10px}
+.modal .mh b{flex:1;font-size:16px}
+.modal .mb{padding:14px 16px;overflow:auto}
+.grid{display:flex;flex-wrap:wrap;gap:12px}
+.pc{width:176px;background:#0d0e12;border:1px solid #23262f;border-radius:12px;overflow:hidden;cursor:pointer}
+.pc img{width:100%;height:auto;aspect-ratio:744/1254;object-fit:contain;background:#16181f;display:block}
+.pc div{padding:9px}.pc small{color:#8c93a6;display:block;font-size:11px}
+.pc b{display:block;margin:3px 0}
+.chips{display:flex;gap:6px;flex-wrap:wrap;margin-bottom:12px}
+.chip{padding:6px 12px;border-radius:99px;border:1px solid #23262f;cursor:pointer;color:#9aa1b3;background:#0d0e12}
+.chip.on{border-color:#4d9bff;color:#fff;background:#0b1830}
+.crumb a{cursor:pointer;text-decoration:none}
+.th{width:34px;height:34px;object-fit:cover;border-radius:5px;vertical-align:middle;background:#16181f}
+iframe{width:100%;height:calc(100vh - 90px);border:1px solid #23262f;border-radius:12px;background:#000}
+textarea.raw{width:100%;height:calc(100vh - 220px);font:12px/1.4 Consolas,monospace}
+</style></head>
+<body>
+
+<div id="login" hidden><div class="box">
+  <img src="%%LOGO%%" alt="JK Patchs">
+  <h2 style="text-align:center">Painel JK PATCHS</h2>
+  <input id="lu" placeholder="Usuário" autocomplete="username">
+  <input id="lp" type="password" placeholder="Senha" autocomplete="current-password" onkeydown="if(event.key==='Enter')entrar()">
+  <button class="p" onclick="entrar()">Entrar</button>
+  <p id="lm" class="bad"></p>
+</div></div>
+
+<div id="app" hidden>
+ <div class="top">
+  <img src="%%LOGO%%" alt=""><b>JK PATCHS</b> <span class="mut" style="font-size:11px">painel v9</span>
+  <div class="tabs" id="tabs"></div>
+  <span id="dirtyTag" class="warn" hidden>● alterações não salvas</span>
+  <button class="s" onclick="sair()">Sair</button>
+ </div>
+ <div id="v_cat" class="page" hidden></div>
+ <div id="v_r2" class="page" hidden></div>
+ <div id="v_prev" class="page" hidden></div>
+  <div id="v_users" class="page" hidden></div>
+</div>
+
+<div id="modal" class="modal" hidden><div class="m"><div class="mh"><b id="mt"></b><button class="s" onclick="fechar()">Fechar</button></div><div class="mb" id="mb"></div></div></div>
+
+<script>
+/*CATLIB*/
+function splitL(t){return String(t).replace(/\r/g,"").split("\n")}
+function padTo(a,n){a=a.slice();while(a.length<n)a.push("");return a}
+function parseCat(txt){
+  var m={head:[],cats:[],games:[],tail:[],endNL:/\n$/.test(txt)};
+  var lines=splitL(txt);if(m.endNL)lines.pop();
+  for(var i=0;i<lines.length;i++){
+    var l=lines[i],f=l.split("\t");
+    if(f[0]==="CAT"){m.cats.push([f[1]||"",f[2]||""])}
+    else if(f[0]==="GAME"){m.games.push({f:padTo(f.slice(1),7),btns:[]})}
+    else if(f[0]==="BTN"&&m.games.length){m.games[m.games.length-1].btns.push({f:padTo(f.slice(1),10),n:f.length-1})}
+    else if(l.charAt(0)==="#"&&!m.games.length&&!m.cats.length){m.head.push(l)}
+    else if(l!==""){m.tail.push(l)}
+  }
+  return m;
+}
+function serCat(m){
+  var o=m.head.slice();
+  m.cats.forEach(function(c){o.push("CAT\t"+c[0]+"\t"+c[1])});
+  m.games.forEach(function(g){
+    o.push("GAME\t"+g.f.join("\t"));
+    g.btns.forEach(function(b){o.push("BTN\t"+b.f.join("\t"))});
+  });
+  m.tail.forEach(function(l){o.push(l)});
+  return o.join("\n")+(m.endNL?"\n":"");
+}
+/*ENDCATLIB*/
+
+var R2B="%%R2PUBLIC%%";
+var TK="",PROT=%%PROTEGIDOS%%;
+var M=null,ORIG="",SEL=0,DIRTY=false,ALL=null,RAW=false;
+function $(i){return document.getElementById(i)}
+function esc(s){return String(s==null?"":s).replace(/[&<>"]/g,function(c){return{"&":"&amp;","<":"&lt;",">":"&gt;",'"':"&quot;"}[c]})}
+function fs(n){n=+n||0;if(n>=1073741824)return (n/1073741824).toFixed(2)+" GB";if(n>=1048576)return (n/1048576).toFixed(1)+" MB";if(n>=1024)return (n/1024).toFixed(1)+" KB";return n+" B"}
+function fd(t){return t?new Date(t).toLocaleString("pt-BR",{day:"2-digit",month:"2-digit",year:"numeric",hour:"2-digit",minute:"2-digit"}):"-"}
+function urlOf(k){return R2B+k.split("/").map(encodeURIComponent).join("/")}
+function keyOf(u){u=String(u||"").trim();if(u.indexOf(R2B)!==0)return null;var r=u.slice(R2B.length).split("?")[0];try{return decodeURIComponent(r)}catch(e){return r}}
+
+async function api(p,method,body){
+  var h={"Authorization":"Bearer "+TK};
+  var o={method:method||"GET",headers:h};
+  if(body!==undefined){h["Content-Type"]="application/json";o.body=JSON.stringify(body)}
+  var r=await fetch("/jkpainel17/api/"+p,o);
+  var j={};try{j=await r.json()}catch(e){}
+  if(r.status===401&&p!=="login"){mostrarLogin("Sessão expirada. Entre de novo.");throw new Error("sessão expirada")}
+  if(!r.ok)throw new Error(j.erro||("erro "+r.status));
+  return j;
+}
+function guardar(k,v){try{localStorage.setItem(k,v)}catch(e){}}
+function ler(k){try{return localStorage.getItem(k)||""}catch(e){return ""}}
+
+/* ---------- login ---------- */
+function mostrarLogin(msg){$("login").hidden=false;$("app").hidden=true;$("lm").textContent=msg||"";TK="";guardar("pn_tk","")}
+async function entrar(){
+  $("lm").textContent="";
+  try{
+    var r=await fetch("/jkpainel17/api/login",{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify({user:$("lu").value,pass:$("lp").value})});
+    var j=await r.json();if(!r.ok)throw new Error(j.erro||"erro");
+    TK=j.token;guardar("pn_tk",TK);$("lp").value="";iniciar();
+  }catch(e){$("lm").textContent=e.message}
+}
+function sair(){if(DIRTY&&!confirm("Há alterações não salvas no catálogo. Sair mesmo assim?"))return;DIRTY=false;mostrarLogin("")}
+window.addEventListener("beforeunload",function(e){if(DIRTY){e.preventDefault();e.returnValue=""}});
+
+/* ---------- abas ---------- */
+var TABS=[["users","Usuários"],["cat","Catálogo"],["r2","Arquivos (R2)"],["prev","Prévia do app"]];
+var TABV="users";
+function abas(){
+  $("tabs").innerHTML=TABS.map(function(t){return "<div class='tab"+(t[0]===TABV?" on":"")+"' onclick='irAba(\""+t[0]+"\")'>"+t[1]+"</div>"}).join("");
+  TABS.forEach(function(t){$("v_"+t[0]).hidden=t[0]!==TABV});
+}
+function irAba(a){TABV=a;abas();if(a==="cat")desenharCat();if(a==="r2")r2Abrir(R2P);if(a==="prev")desenharPrev();if(a==="users"){var v=$("v_users");if(!v.firstChild)v.innerHTML="<iframe src='/jkpainel17/usuarios'></iframe>"}}
+async function iniciar(){
+  $("login").hidden=true;$("app").hidden=false;abas();
+  try{await carregarCat();await carregarAll()}catch(e){}
+  irAba(TABV);
+}
+function marcar(d){DIRTY=d;$("dirtyTag").hidden=!d}
+
+/* ---------- modal ---------- */
+function abrir(t,h){$("mt").textContent=t;$("mb").innerHTML=h;$("modal").hidden=false}
+function fechar(){$("modal").hidden=true;$("mb").innerHTML=""}
+
+/* ---------- dados ---------- */
+async function carregarCat(){var j=await api("catalog");ORIG=j.catalog||"";M=parseCat(ORIG);if(SEL>=M.games.length)SEL=0;marcar(false)}
+async function carregarAll(){var j=await api("r2/all");ALL={};j.files.forEach(function(f){ALL[f.k]=f});ALL._trunc=j.truncated;ALL._n=j.files.length}
+function refKeys(){
+  var s={};if(!M)return s;
+  function add(u){var k=keyOf(u);if(k)s[k]=1}
+  M.games.forEach(function(g){add(g.f[1]);add(g.f[6]);g.btns.forEach(function(b){add(b.f[2]);String(b.f[9]||"").split("|").forEach(add)})});
+  return s;
+}
+
+/* ---------- ABA CATALOGO ---------- */
+function desenharCat(){
+  var v=$("v_cat");
+  if(!M){v.innerHTML="<p class='mut'>Carregando...</p>";return}
+  var bar="<div class='bar'><h2 style='margin:0'>Catálogo do app</h2><span class='mut'>"+M.games.length+" cards · "+M.games.reduce(function(a,g){return a+g.btns.length},0)+" botões</span><span class='sp'></span>"+
+   "<button onclick='validarCat()'>Validar</button><button onclick='sincTam()'>Sincronizar tamanhos</button><button onclick='histCat()'>Histórico</button><button onclick='toggleRaw()'>"+(RAW?"Voltar ao editor":"Modo texto")+"</button>"+
+   "<button onclick='descartar()' "+(DIRTY?"":"disabled")+">Descartar</button><button class='p' onclick='salvarCat()' "+(DIRTY?"":"disabled")+">Salvar catálogo</button></div>";
+  if(RAW){v.innerHTML=bar+"<textarea class='raw' id='rawta' spellcheck='false'></textarea><p class='mut'>Edite o texto e clique em &quot;Voltar ao editor&quot; para aplicar.</p>";$("rawta").value=serCat(M);return}
+  v.innerHTML=bar+"<div class='ed'><div class='l' id='lcol'></div><div class='r' id='cardR'></div></div>";
+  desenharLista();
+  desenharCard();
+}
+var PATH=[],SQ="";
+function catLabel(id){for(var i=0;i<M.cats.length;i++)if(M.cats[i][0]===id)return M.cats[i][1];return id}
+function norm(t){return String(t||"").toLowerCase().normalize("NFD").replace(/[̀-ͯ]/g,"").replace(/[^a-z0-9]+/g," ").trim()}
+function childCat(g){
+  if(g.f[0]==="hub")return "plugins";
+  var t=norm(g.f[4]);
+  for(var i=0;i<M.cats.length;i++){var id=M.cats[i][0];if(id!=="all"&&id!==g.f[0]&&norm(M.cats[i][1])===t)return id}
+  return null;
+}
+function childSet(){var s={};M.games.forEach(function(g){var c=childCat(g);if(c)s[c]=1});return s}
+function nivelCards(){
+  var cur=PATH.length?PATH[PATH.length-1]:null,cs=childSet(),out=[];
+  M.games.forEach(function(g,i){if(cur===null?!cs[g.f[0]]:g.f[0]===cur)out.push(i)});
+  return out;
+}
+function cardRow(g,i){
+  var n=g.btns.length,ch=childCat(g),sub;
+  if(ch){var k=M.games.filter(function(x){return x.f[0]===ch}).length;sub=k+" card(s) dentro";}
+  else sub=esc(g.f[2])+" · "+n+(n>32?" ⚠":"")+" botões";
+  if(SQ)sub+=" · "+esc(catLabel(g.f[0]));
+  return "<div class='cd"+(i===SEL?" on":"")+"' onclick='"+(ch&&!SQ?"abrirPasta("+i+")":"selCard("+i+")")+"'><img src='"+esc(g.f[1])+"' onerror=\"this.style.visibility='hidden'\"><div class='t'><b>"+esc(g.f[4]||"(sem título)")+"</b><span>"+sub+"</span></div>"+(ch?"<div style='margin-left:auto;font-size:22px;color:#8c93a6'>›</div>":"")+"</div>";
+}
+function desenharLista(){
+  var el=$("lcol");if(!el)return;
+  var h="<div class='bar' style='margin-bottom:8px'><input id='sq' placeholder='buscar card...' value='"+esc(SQ)+"' oninput='SQ=this.value;desenharLista();var q=$(\"sq\");q.focus();q.setSelectionRange(q.value.length,q.value.length)' style='flex:1;min-width:0'></div>";
+  var q=SQ.trim().toLowerCase();
+  if(q){
+    h+="<div class='mut' style='margin:4px 0 8px'>Resultado da busca</div>";
+    var c=0;M.games.forEach(function(g,i){if((g.f[4]+" "+g.f[2]+" "+g.f[3]).toLowerCase().indexOf(q)>=0){h+=cardRow(g,i);c++}});
+    if(!c)h+="<p class='mut'>Nenhum card encontrado.</p>";
+  }else{
+    var tr=["Início"];PATH.forEach(function(id){tr.push(catLabel(id))});
+    h+="<div class='bar' style='margin-bottom:8px'>"+(PATH.length?"<button class='s' onclick='voltarPasta()'>← Voltar</button>":"")+"<span class='mut' style='flex:1'>"+esc(tr.join(" › "))+"</span><button class='s' onclick='novoCard()'>+ Novo card"+(PATH.length?" aqui":"")+"</button></div>";
+    var l=nivelCards();
+    l.forEach(function(i){h+=cardRow(M.games[i],i)});
+    if(!l.length)h+="<p class='mut'>Nada aqui ainda. Use &quot;+ Novo card&quot;.</p>";
+  }
+  el.innerHTML=h;
+}
+function abrirPasta(i){SEL=i;PATH.push(childCat(M.games[i]));desenharCat()}
+function voltarPasta(){PATH.pop();desenharCat()}
+function selCard(i){SEL=i;desenharCat()}
+function catOpts(sel){
+  var o=M.cats.map(function(c){return "<option value='"+esc(c[0])+"'"+(c[0]===sel?" selected":"")+">"+esc(c[1])+" ("+esc(c[0])+")</option>"}).join("");
+  if(sel&&!M.cats.some(function(c){return c[0]===sel}))o+="<option value='"+esc(sel)+"' selected>"+esc(sel)+"</option>";
+  return o;
+}
+function desenharCard(){
+  var g=M.games[SEL],el=$("cardR");if(!g){el.innerHTML="<p class='mut'>Nenhum card.</p>";return}
+  var h="<div class='box' style='margin-bottom:12px'><div class='bar'><b>Card</b><span class='sp'></span><button class='s' onclick='moveCard(-1)'>↑ subir</button><button class='s' onclick='moveCard(1)'>↓ descer</button></div><div class='fg'>"+
+   "<div><label>Categoria</label><select onchange='setG(0,this.value)'>"+catOpts(g.f[0])+"</select></div>"+
+   "<div><label>Etiqueta (tag)</label><input value='"+esc(g.f[2])+"' oninput='setG(2,this.value,1)'></div>"+
+   "<div class='w'><label>Capa (URL) <button class='s' onclick='pickCover()'>escolher do R2</button> <button class='s' onclick='capaAbrir()'>gerar capa</button></label><input value='"+esc(g.f[1])+"' oninput='setG(1,this.value,1)'></div>"+
+   "<div><label>Título</label><input value='"+esc(g.f[4])+"' oninput='setG(4,this.value,1)'></div>"+
+   "<div><label>Subtítulo (kicker)</label><input value='"+esc(g.f[3])+"' oninput='setG(3,this.value,1)'></div>"+
+   "<div class='w'><label>Descrição</label><textarea rows='3' oninput='setG(5,this.value,1)'>"+esc(g.f[5])+"</textarea></div>"+
+   "<div class='w'><label>Vídeo do card (URL .jkv, opcional) <button class='s' onclick='jkvAbrir(-1)'>gerar vídeo</button></label><input value='"+esc(g.f[6])+"' oninput='setG(6,this.value,1)'></div></div></div>";
+  h+="<div class='bar'><b>Botões ("+g.btns.length+(g.btns.length>32?" — passou do limite de 32!":"")+")</b><span class='sp'></span><button class='s' onclick='novoBtn(\"pkg\")'>+ PKG</button><button class='s' onclick='novoBtn(\"video\")'>+ Vídeo</button><button class='s' onclick='novoBtn(\"image\")'>+ Imagem</button><button class='s' onclick='novoBtn(\"download\")'>+ Arquivo</button></div>";
+  h+=g.btns.map(function(b,i){return btnHtml(g,b,i)}).join("");
+  el.innerHTML=h;
+}
+function btnProb(b){
+  var f=b.f,a=f[7]||"pkg",k=keyOf(f[2]),p=[];
+  if(!f[0])p.push(["bad","sem texto"]);
+  if(!f[2])p.push(["bad","sem URL"]);
+  if(a==="pkg"&&!f[3])p.push(["bad","PKG sem content_id"]);
+  if(a==="pkg"&&f[2]&&(!f[4]||f[4]==="0"))p.push(["warn","tamanho 0"]);
+  if(ALL&&k&&!ALL[k])p.push(["bad","arquivo não existe no R2"]);
+  if(ALL&&k&&ALL[k]&&a==="pkg"&&String(ALL[k].s)!==String(f[4]))p.push(["warn","tamanho diferente do R2"]);
+  return p;
+}
+function btnHtml(g,b,i){
+  var f=b.f,a=f[7]||"pkg",pr=btnProb(b);
+  var cls="bt"+(pr.some(function(x){return x[0]==="bad"})?" bad":(pr.length?" warn":""));
+  var pills=pr.map(function(x){return "<span class='pill "+(x[0]==="bad"?"r":"y")+"'>"+esc(x[1])+"</span>"}).join(" ");
+  var k=keyOf(f[2]);if(ALL&&k&&ALL[k])pills+=" <span class='pill g'>"+fs(ALL[k].s)+"</span>";
+  var h="<div class='"+cls+"'><div class='r1'><input class='lb' value='"+esc(f[0])+"' placeholder='Texto do botão' oninput='setB("+i+",0,this.value)'>"+
+   "<select onchange='setB("+i+",7,this.value,2)'>"+["pkg","video","image","download"].map(function(x){return "<option"+(x===a?" selected":"")+">"+x+"</option>"}).join("")+"</select>"+
+   "<button class='s' onclick='moveBtn("+i+",-1)'>↑</button><button class='s' onclick='moveBtn("+i+",1)'>↓</button>"+
+   "<select onchange='moverBtn("+i+",this.value)'><option value=''>mover para…</option>"+M.games.map(function(x,j){return j===SEL?"":"<option value='"+j+"'>"+esc(x.f[4])+"</option>"}).join("")+"</select>"+
+   "</div><div>"+pills+"</div><div class='r2' style='margin-top:6px'>"+
+   "<div class='w4'><small>Descrição (aparece no app)</small><input value='"+esc(f[1])+"' oninput='setB("+i+",1,this.value)'></div>"+
+   "<div class='w4'><small>URL do arquivo <button class='s' onclick='pickUrl("+i+")'>escolher do R2</button>"+(a==="video"?" <button class='s' onclick='jkvAbrir("+i+")'>gerar vídeo</button>":"")+"</small><input value='"+esc(f[2])+"' oninput='setB("+i+",2,this.value,3)'></div>";
+  if(a==="pkg"){
+    h+="<div class='w2'><small>content_id</small><input value='"+esc(f[3])+"' oninput='setB("+i+",3,this.value,3)'></div>"+
+       "<div><small>tamanho (bytes)</small><input value='"+esc(f[4])+"' oninput='setB("+i+",4,this.value,3)'></div>"+
+       "<div><small>tipo</small><select onchange='setB("+i+",5,this.value)'>"+["PS4GD","PS4GP","PS4AC","PS4AL",""].map(function(x){return "<option value='"+x+"'"+(x===f[5]?" selected":"")+">"+(x||"(vazio)")+"</option>"}).join("")+"</select></div>"+
+       "<div><small>jogo base?</small><select onchange='setB("+i+",6,this.value)'><option value='0'"+(f[6]!=="1"?" selected":"")+">não</option><option value='1'"+(f[6]==="1"?" selected":"")+">sim</option></select></div>";
+  }
+  if(a==="download"){
+    h+="<div class='w2'><small>pasta de destino no PS4</small><input value='"+esc(f[8])+"' oninput='setB("+i+",8,this.value)'></div>"+
+       "<div class='w4'><small>arquivos extras (URLs separadas por |)</small><textarea rows='2' oninput='setB("+i+",9,this.value,3)'>"+esc(f[9])+"</textarea></div>";
+  }
+  return h+"</div></div>";
+}
+function sujo(){marcar(true);var d=$("dirtyTag");if(d)d.hidden=false}
+function setG(i,v,nr){M.games[SEL].f[i]=v;if(i===0&&!SQ)PATH=childSet()[v]?[v]:[];sujo();if(!nr)desenharCat();else{var cdv=document.querySelectorAll(".cd");if(cdv[SEL]){var t=cdv[SEL].querySelector("b");if(t&&i===4)t.textContent=v;if(i===1)cdv[SEL].querySelector("img").src=v}}fixBar()}
+function setB(i,j,v,mode){var b=M.games[SEL].btns[i];b.f[j]=v;sujo();if(mode===2){if(v==="video"||v==="image"){b.f[3]="";b.f[4]="0";b.f[5]="";b.f[6]="0"}if(v==="pkg"){b.f[5]=b.f[5]||"PS4GD"}desenharCat()}else if(mode===3){}fixBar()}
+function fixBar(){var bs=document.querySelectorAll("#v_cat .bar button");bs.forEach(function(b){if(b.textContent==="Salvar catálogo"||b.textContent==="Descartar")b.disabled=!DIRTY})}
+function novoCard(){var cat=PATH.length?PATH[PATH.length-1]:"patch";M.games.push({f:padTo([cat,"","","","Novo card","",""],7),btns:[]});SEL=M.games.length-1;sujo();desenharCat()}
+function moveCard(d){var c=M.games[SEL].f[0],j=SEL+d;while(j>=0&&j<M.games.length&&M.games[j].f[0]!==c)j+=d;if(j<0||j>=M.games.length)return;var t=M.games[SEL];M.games[SEL]=M.games[j];M.games[j]=t;SEL=j;sujo();desenharCat()}
+function novoBtn(a){var f=["NOVO BOTÃO","","","","0","","0",a,"",""];if(a==="pkg"){f[5]="PS4GD"}M.games[SEL].btns.push({f:f,n:10});sujo();desenharCat()}
+function moveBtn(i,d){var a=M.games[SEL].btns,j=i+d;if(j<0||j>=a.length)return;var t=a[i];a[i]=a[j];a[j]=t;sujo();desenharCat()}
+function moverBtn(i,j){if(j==="")return;var a=M.games[SEL].btns;var b=a.splice(i,1)[0];M.games[+j].btns.push(b);sujo();desenharCat()}
+function toggleRaw(){
+  if(RAW){var t=$("rawta").value;if(serCat(M)!==t){M=parseCat(t);if(SEL>=M.games.length)SEL=0;sujo()}RAW=false}else RAW=true;
+  desenharCat();
+}
+function descartar(){if(!confirm("Descartar as alterações e voltar ao catálogo salvo?"))return;M=parseCat(ORIG);SEL=0;marcar(false);desenharCat()}
+
+function problemas(){
+  var er=[],av=[];
+  M.games.forEach(function(g,gi){
+    var n=g.btns.length;
+    if(n>32)er.push("Card \""+g.f[4]+"\" tem "+n+" botões (limite 32).");
+    if(g.f[1]&&ALL){var k=keyOf(g.f[1]);if(k&&!ALL[k])av.push("Card \""+g.f[4]+"\": capa não existe no R2.")}
+    g.btns.forEach(function(b){
+      btnProb(b).forEach(function(p){(p[0]==="bad"?er:av).push("Card \""+g.f[4]+"\" › \""+b.f[0]+"\": "+p[1]+".")});
+    });
+  });
+  return {er:er,av:av};
+}
+function validarCat(){
+  var p=problemas();
+  var h="<p>"+(ALL?"Comparado com "+ALL._n+" arquivos do R2.":"Lista do R2 não carregada.")+"</p>";
+  h+=p.er.length?"<h3 class='bad'>Erros ("+p.er.length+")</h3><ul>"+p.er.map(function(x){return "<li>"+esc(x)+"</li>"}).join("")+"</ul>":"<p class='ok'>Nenhum erro.</p>";
+  h+=p.av.length?"<h3 class='warn'>Avisos ("+p.av.length+")</h3><ul>"+p.av.map(function(x){return "<li>"+esc(x)+"</li>"}).join("")+"</ul>":"<p class='ok'>Nenhum aviso.</p>";
+  abrir("Validação do catálogo",h);
+}
+function sincTam(){
+  if(!ALL){alert("Lista do R2 não carregada.");return}
+  var n=0;M.games.forEach(function(g){g.btns.forEach(function(b){if((b.f[7]||"pkg")!=="pkg")return;var k=keyOf(b.f[2]);if(k&&ALL[k]&&String(ALL[k].s)!==String(b.f[4])){b.f[4]=String(ALL[k].s);n++}})});
+  if(n){sujo();desenharCat()}alert(n?n+" tamanho(s) atualizado(s) com o valor real do R2. Falta salvar.":"Todos os tamanhos já batem com o R2.");
+}
+async function salvarCat(){
+  if(RAW){toggleRaw()}
+  var p=problemas();
+  if(p.er.length){abrir("Não dá para salvar",
+    "<p class='bad'>Corrija antes de salvar:</p><ul>"+p.er.map(function(x){return "<li>"+esc(x)+"</li>"}).join("")+"</ul>");return}
+  if(p.av.length&&!confirm("Há "+p.av.length+" aviso(s) (arquivos que não existem no R2 ou tamanhos diferentes). Salvar mesmo assim?"))return;
+  try{var txt=serCat(M);var j=await api("catalog","PUT",{catalog:txt});ORIG=txt;marcar(false);desenharCat();alert("Catálogo salvo. O app já usa a versão nova (a anterior ficou no Histórico).")}catch(e){alert("Erro ao salvar: "+e.message)}
+}
+async function histCat(){
+  try{var j=await api("catalog/history");
+    var h=j.items.length?"<table><tr><th>Data</th><th>Cards</th><th>Botões</th><th></th></tr>"+j.items.map(function(x){return "<tr><td>"+fd(+x.ts)+"</td><td>"+(x.g||"-")+"</td><td>"+(x.b||"-")+"</td><td><button class='s' onclick='restaurar(\""+x.ts+"\")'>Restaurar esta versão</button></td></tr>"}).join("")+"</table>":"<p class='mut'>Ainda não há versões anteriores. Elas aparecem a cada &quot;Salvar&quot;.</p>";
+    abrir("Histórico do catálogo (últimas "+j.items.length+")",h+"<p class='mut'>Restaurar só carrega a versão no editor. Falta clicar em &quot;Salvar catálogo&quot;.</p>");
+  }catch(e){alert(e.message)}
+}
+async function restaurar(ts){
+  try{var j=await api("catalog/version?ts="+encodeURIComponent(ts));M=parseCat(j.catalog||"");SEL=0;RAW=false;sujo();fechar();desenharCat();alert("Versão carregada no editor. Revise e clique em Salvar catálogo.")}catch(e){alert(e.message)}
+}
+
+/* ---------- seletor de arquivo do R2 (modal) ---------- */
+var PK=null,PKP="";
+async function pkAbrir(pref){
+  PKP=pref;
+  try{var j=await api("r2/list?prefix="+encodeURIComponent(pref));
+    var h="<div class='crumb mut' style='margin-bottom:8px'>"+crumb(pref,"pkAbrir")+"</div><table>";
+    j.folders.forEach(function(d){h+="<tr><td colspan='3'><a onclick='pkAbrir(\""+esc(d)+"\")'>📁 "+esc(d.slice(pref.length))+"</a></td></tr>"});
+    j.files.forEach(function(f){h+="<tr><td><a style='cursor:pointer' onclick='pkEsc(\""+esc(f.key).replace(/'/g,"&#39;")+"\")'>"+esc(f.key.slice(pref.length))+"</a></td><td>"+fs(f.size)+"</td><td class='mut'>"+fd(f.uploaded)+"</td></tr>"});
+    h+="</table>";
+    $("mb").innerHTML=h;
+  }catch(e){$("mb").innerHTML="<p class='bad'>"+esc(e.message)+"</p>"}
+}
+function pickUrl(i){PK={t:"btn",i:i};abrir("Escolher arquivo do R2","");pkAbrir("")}
+function pickCover(){PK={t:"cover"};abrir("Escolher capa do R2","");pkAbrir("COVERS/")}
+function pkEsc(key){
+  var g=M.games[SEL];
+  if(PK.t==="cover"){g.f[1]=urlOf(key)}
+  else{var b=g.btns[PK.i];b.f[2]=urlOf(key);if((b.f[7]||"pkg")==="pkg"&&ALL&&ALL[key])b.f[4]=String(ALL[key].s)}
+  sujo();fechar();desenharCat();
+}
+function crumb(pref,fn){
+  var parts=pref.split("/").filter(Boolean),acc="",h="<a onclick='"+fn+"(\"\")'>raiz</a>";
+  parts.forEach(function(p){acc+=p+"/";h+=" / <a onclick='"+fn+"(\""+esc(acc).replace(/'/g,"&#39;")+"\")'>"+esc(p)+"</a>"});
+  return h;
+}
+
+/* ---------- ABA R2 ---------- */
+var R2P="";
+async function r2Abrir(pref){
+  R2P=pref;var v=$("v_r2");
+  v.innerHTML="<p class='mut'>Carregando...</p>";
+  try{
+    if(!ALL)await carregarAll();
+    var j=await api("r2/list?prefix="+encodeURIComponent(pref));
+    var ref=refKeys();
+    var h="<div class='bar'><h2 style='margin:0'>Arquivos no R2</h2><span class='mut'>"+ALL._n+" arquivos no bucket"+(ALL._trunc?" (lista parcial)":"")+"</span><span class='sp'></span><button onclick='r2Auditoria()'>Histórico de envios</button><button onclick='r2Recarregar()'>Atualizar</button><button class='p' onclick='r2Upload()'>Enviar arquivo</button></div>";
+    h+="<div class='box'><div class='crumb' style='margin-bottom:8px'>"+crumb(pref,"r2Abrir")+"</div><table><tr><th>Nome</th><th>Tamanho</th><th>Data</th><th></th><th></th></tr>";
+    j.folders.forEach(function(d){h+="<tr><td colspan='4'><a style='cursor:pointer' onclick='r2Abrir(\""+esc(d).replace(/'/g,"&#39;")+"\")'>📁 "+esc(d.slice(pref.length))+"</a></td><td></td></tr>"});
+    j.files.forEach(function(f,i){
+      var img=/\.(png|jpe?g|webp|gif)$/i.test(f.key)&&f.size<4e6?"<img class='th' loading='lazy' src='"+esc(urlOf(f.key))+"'> ":"";
+      var uso=ref[f.key]?"<span class='pill g'>no catálogo</span>":(PROT.indexOf(f.key)>=0||f.key.indexOf("APP-PS4/ICONE/")===0?"<span class='pill y'>protegido</span>":"<span class='pill'>sem uso</span>");
+      h+="<tr><td>"+img+esc(f.key.slice(pref.length))+"</td><td>"+fs(f.size)+"</td><td class='mut'>"+fd(f.uploaded)+"</td><td>"+uso+"</td><td style='white-space:nowrap'><button class='s' onclick='r2Copiar("+i+")'>copiar link</button> <a href='"+esc(urlOf(f.key))+"' target='_blank'><button class='s'>abrir</button></a></td></tr>";
+    });
+    if(!j.folders.length&&!j.files.length)h+="<tr><td colspan='5' class='mut'>Pasta vazia.</td></tr>";
+    h+="</table>"+(j.truncated?"<p class='warn'>Há mais itens nesta pasta do que o painel mostra.</p>":"")+"</div>";
+    v.innerHTML=h;window.R2F=j.files;
+  }catch(e){v.innerHTML="<p class='bad'>"+esc(e.message)+"</p>"}
+}
+async function r2Recarregar(){ALL=null;await carregarAll();r2Abrir(R2P)}
+function r2Copiar(i){var u=urlOf(R2F[i].key);if(navigator.clipboard)navigator.clipboard.writeText(u).then(function(){alert("Link copiado")},function(){prompt("Copie o link:",u)});else prompt("Copie o link:",u)}
+async function r2Auditoria(){
+  try{var j=await api("audit");abrir("Histórico de envios e salvamentos",j.items.length?"<table><tr><th>Quando</th><th>Ação</th><th>Arquivos</th></tr>"+j.items.map(function(x){return "<tr><td>"+fd(x.t)+"</td><td>"+esc(x.a)+"</td><td>"+esc((x.keys||[]).join(", "))+"</td></tr>"}).join("")+"</table>":"<p class='mut'>Nada registrado ainda.</p>")}catch(e){alert(e.message)}
+}
+function r2Upload(){
+  abrir("Enviar arquivo para o R2",
+   "<p class='mut'>Para arquivos até 90 MB (capas, mods, imagens, vídeos curtos). PKGs grandes ficam para a próxima etapa.</p>"+
+   "<div class='fg'><div class='w'><label>Pasta de destino</label><input id='upd' value='"+esc(R2P)+"'></div><div class='w'><label>Arquivo</label><input type='file' id='upf'></div><div class='w'><label>Nome no R2 (deixe vazio para manter)</label><input id='upn'></div></div>"+
+   "<p><button class='p' onclick='r2Enviar()'>Enviar</button> <span id='ups' class='mut'></span></p>");
+}
+function r2Enviar(){
+  var f=$("upf").files[0];if(!f){alert("Escolha um arquivo.");return}
+  if(f.size>90*1048576){alert("Arquivo maior que 90 MB. Esse envio ainda não é suportado pelo painel.");return}
+  var pasta=$("upd").value.trim().replace(/^\/+/,"");if(pasta&&pasta.slice(-1)!=="/")pasta+="/";
+  var nome=($("upn").value.trim()||f.name),key=pasta+nome;
+  var sobre="";
+  if(ALL&&ALL[key]){alert("Já existe "+key+". O painel não substitui arquivos: use outro nome ou troque pelo Cloudflare.");return}
+  var x=new XMLHttpRequest();x.open("PUT","/jkpainel17/api/r2/upload?key="+encodeURIComponent(key)+sobre);
+  x.setRequestHeader("Authorization","Bearer "+TK);x.setRequestHeader("Content-Type",f.type||"application/octet-stream");
+  x.upload.onprogress=function(e){if(e.lengthComputable)$("ups").textContent=Math.round(e.loaded*100/e.total)+"%"};
+  x.onload=function(){var j={};try{j=JSON.parse(x.responseText)}catch(e){}
+    if(x.status===200){$("ups").innerHTML="<span class='ok'>Enviado: "+esc(key)+"</span>";ALL=null;carregarAll().then(function(){r2Abrir(R2P)})}
+    else $("ups").innerHTML="<span class='bad'>"+esc(j.erro||("erro "+x.status))+"</span>"};
+  x.onerror=function(){$("ups").innerHTML="<span class='bad'>falha de rede</span>"};
+  $("ups").textContent="enviando...";x.send(f);
+}
+
+/* ---------- ABA PREVIA ---------- */
+var PCAT="all";
+function desenharPrev(){
+  var v=$("v_prev");if(!M){v.innerHTML="";return}
+  var h="<div class='bar'><h2 style='margin:0'>Prévia do app</h2><span class='mut'>Mostra o catálogo como está no editor agora (mesmo sem salvar). É uma prévia aproximada do layout.</span></div><div class='chips'>"+
+   M.cats.map(function(c){return "<span class='chip"+(c[0]===PCAT?" on":"")+"' onclick='PCAT=\""+esc(c[0])+"\";desenharPrev()'>"+esc(c[1])+"</span>"}).join("")+"</div><div class='grid'>";
+  M.games.forEach(function(g,i){
+    if(PCAT!=="all"&&g.f[0]!==PCAT)return;
+    h+="<div class='pc' onclick='prevCard("+i+")'><img src='"+esc(g.f[1])+"' onerror=\"this.style.visibility='hidden'\"><div><small>"+esc(g.f[2])+" · "+esc(g.f[3])+"</small><b>"+esc(g.f[4])+"</b><small>"+g.btns.length+" botões</small></div></div>";
+  });
+  v.innerHTML=h+"</div>";
+}
+function prevCard(i){
+  var g=M.games[i];
+  var h="<div style='display:flex;gap:14px'><img src='"+esc(g.f[1])+"' style='width:200px;height:auto;aspect-ratio:744/1254;object-fit:contain;border-radius:10px'><div><span class='pill'>"+esc(g.f[2])+"</span><h3 style='margin:6px 0'>"+esc(g.f[4])+"</h3><div class='mut'>"+esc(g.f[3])+"</div><p>"+esc(g.f[5])+"</p></div></div><div style='margin-top:12px'>";
+  g.btns.forEach(function(b){var a=b.f[7]||"pkg";h+="<div class='cd' style='cursor:default'><div class='t'><b>"+esc(b.f[0])+"</b><span>"+esc(b.f[1])+" · "+esc(a)+(a==="pkg"&&b.f[4]!=="0"?" · "+fs(b.f[4]):"")+"</span></div></div>"});
+  abrir("Card: "+g.f[4],h+"</div>");
+}
+
+/* ---------- ABA SEM USO ---------- */
+/* ---------- gerador de capa (moldura PS4) ---------- */
+var CVIMG=null;
+function capaAbrir(){
+  CVIMG=null;
+  var t=(M.games[SEL].f[4]||"novo").toLowerCase().normalize("NFD").replace(/[̀-ͯ]/g,"").replace(/[^a-z0-9]+/g,"_").replace(/^_+|_+$/g,"")||"novo";
+  var nome="COVERS/capa_"+t+".png",n=2;while(ALL&&ALL[nome]){nome="COVERS/capa_"+t+"_"+n+".png";n++}
+  abrir("Gerar capa com a moldura do PS4",
+   "<div style='display:flex;gap:18px;align-items:flex-start;flex-wrap:wrap'><canvas id='cvc' width='744' height='1254' style='width:280px;height:472px;border-radius:8px;background:#000;flex:none'></canvas><div style='flex:1;min-width:300px'><div class='fg'>"+
+   "<div class='w'><label>Imagem do seu PC (capa do jogo, arte, etc.)</label><input type='file' id='cvf' accept='image/*' onchange='capaImg(this)'></div>"+
+   "<div><label>Tipo</label><select id='cvt' onchange='capaTipo()'><option value='jogo'>Jogo / Patch</option><option value='pasta'>Plugins &amp; Mods / Pasta</option></select></div>"+
+   "<div><label>Ajuste da imagem</label><select id='cvj' onchange='capaDes()'><option value='fill'>Preencher (corta as bordas)</option><option value='fit'>Mostrar inteira</option></select></div>"+
+   "<div><label>Texto do topo (à direita)</label><input id='cv1' oninput='capaDes()'></div>"+
+   "<div><label>Etiqueta amarela</label><input id='cv2' oninput='capaDes()'></div>"+
+   "<div class='w'><label>Texto de baixo (à direita)</label><input id='cv3' oninput='capaDes()'></div>"+
+   "<div><label>Zoom</label><input type='range' id='cvz' min='100' max='250' value='100' oninput='capaDes()'></div>"+
+   "<div><label>Posição horizontal</label><input type='range' id='cvx' min='0' max='100' value='50' oninput='capaDes()'></div>"+
+   "<div><label>Posição vertical</label><input type='range' id='cvy' min='0' max='100' value='50' oninput='capaDes()'></div>"+
+   "<div class='w'><label>Nome do arquivo no R2 (não substitui arquivo existente)</label><input id='cvn' value='"+esc(nome)+"'></div></div>"+
+   "<p style='margin-top:12px'><button class='p' onclick='capaEnviar()'>Enviar para o R2 e usar neste card</button> <button onclick='capaBaixar()'>Baixar PNG</button> <span id='cvs' class='mut'></span></p></div></div>");
+  capaTipo();
+}
+function capaTipo(){
+  var p=$("cvt").value==="pasta";
+  $("cv1").value=p?"PLUGINS & MODS":"FUTEBOL";
+  $("cv2").value=p?"PASTA":"DISPONÍVEL";
+  $("cv3").value=p?"APPS • NARRADORES • PLACARES":"NOVO PATCH";
+  capaDes();
+}
+function capaImg(inp){
+  var f=inp.files[0];if(!f)return;
+  var im=new Image();im.onload=function(){CVIMG=im;capaDes()};im.onerror=function(){alert("Não consegui abrir essa imagem.")};
+  im.src=URL.createObjectURL(f);
+}
+function capaDes(){
+  var c=$("cvc");if(!c)return;
+  var x=c.getContext("2d"),W=744,H=1254,pasta=$("cvt").value==="pasta";
+  var go=function(){
+    x.clearRect(0,0,W,H);
+    x.fillStyle="#040a15";x.fillRect(0,0,W,H);
+    // area da imagem
+    var ax=3,ay=114,aw=738,ah=1011;
+    x.fillStyle="#fff";x.fillRect(0,112,W,1017);
+    x.fillStyle="#05070d";x.fillRect(ax,ay,aw,ah);
+    if(CVIMG){
+      var iw=CVIMG.naturalWidth,ih=CVIMG.naturalHeight,fit=$("cvj").value==="fit";
+      var s=fit?Math.min(aw/iw,ah/ih):Math.max(aw/iw,ah/ih)*(+$("cvz").value/100);
+      var dw=iw*s,dh=ih*s;
+      var dx=ax+(aw-dw)*(+$("cvx").value/100),dy=ay+(ah-dh)*(+$("cvy").value/100);
+      if(fit){dx=ax+(aw-dw)/2;dy=ay+(ah-dh)/2}
+      x.save();x.beginPath();x.rect(ax,ay,aw,ah);x.clip();x.drawImage(CVIMG,dx,dy,dw,dh);x.restore();
+    }else{
+      x.fillStyle="#8c93a6";x.font="600 28px Poppins,Arial,sans-serif";x.textAlign="center";x.textBaseline="middle";x.fillText("escolha uma imagem",W/2,ay+ah/2);
+    }
+    if(pasta){
+      x.strokeStyle="#22e6ff";x.lineWidth=5;
+      [[30,138,1,1],[714,138,-1,1],[30,1100,1,-1],[714,1100,-1,-1]].forEach(function(q){x.beginPath();x.moveTo(q[0]+q[2]*68,q[1]);x.lineTo(q[0],q[1]);x.lineTo(q[0],q[1]+q[3]*68);x.stroke()});
+    }
+    // linha amarela
+    x.fillStyle="#ffcd3c";x.fillRect(0,1126,W,3);
+    // topo
+    var g=x.createLinearGradient(0,0,0,112);g.addColorStop(0,"#0d44ba");g.addColorStop(1,"#082678");
+    x.fillStyle=g;x.fillRect(0,0,W,112);
+    x.fillStyle="#fff";x.fillRect(0,112,W,2);
+    x.textBaseline="middle";x.textAlign="left";x.fillStyle="#fff";x.font="800 60px Poppins,Arial,sans-serif";x.fillText("PS4",40,58);
+    x.textAlign="right";x.fillStyle="#bed7ff";x.font="700 26px Poppins,Arial,sans-serif";
+    try{x.letterSpacing="2px"}catch(e){}
+    x.fillText(($("cv1").value||"").toUpperCase(),706,56);
+    try{x.letterSpacing="0px"}catch(e){}
+    // rodape
+    var tag=($("cv2").value||"").toUpperCase();
+    x.font="800 34px Poppins,Arial,sans-serif";
+    var tw=x.measureText(tag).width,pw=Math.max(150,tw+64),py=1158,ph=64;
+    x.fillStyle="#ffcd3c";x.beginPath();
+    if(x.roundRect)x.roundRect(38,py,pw,ph,32);else x.rect(38,py,pw,ph);
+    x.fill();
+    x.fillStyle="#17361f";x.textAlign="center";x.fillText(tag,38+pw/2,py+ph/2+2);
+    x.textAlign="right";x.fillStyle="#bed7ff";x.font="600 26px Poppins,Arial,sans-serif";
+    x.fillText(($("cv3").value||"").toUpperCase(),706,py+ph/2+2);
+  };
+  if(document.fonts&&document.fonts.load){Promise.all([document.fonts.load("800 34px Poppins"),document.fonts.load("700 26px Poppins"),document.fonts.load("600 26px Poppins")]).then(go,go)}else go();
+}
+function capaBlob(cb){$("cvc").toBlob(cb,"image/png")}
+function capaBaixar(){
+  if(!CVIMG){alert("Escolha uma imagem primeiro.");return}
+  capaBlob(function(b){var a=document.createElement("a");a.href=URL.createObjectURL(b);a.download=($("cvn").value.split("/").pop()||"capa.png");document.body.appendChild(a);a.click();a.remove()});
+}
+function capaEnviar(){
+  if(!CVIMG){alert("Escolha uma imagem primeiro.");return}
+  var key=$("cvn").value.trim().replace(/^\/+/,"");
+  if(!/\.png$/i.test(key)){alert("O nome precisa terminar em .png");return}
+  if(ALL&&ALL[key]){alert("Já existe "+key+". O painel não substitui arquivos: mude o nome.");return}
+  capaBlob(function(b){
+    var x=new XMLHttpRequest();x.open("PUT","/jkpainel17/api/r2/upload?key="+encodeURIComponent(key));
+    x.setRequestHeader("Authorization","Bearer "+TK);x.setRequestHeader("Content-Type","image/png");
+    x.onload=function(){var j={};try{j=JSON.parse(x.responseText)}catch(e){}
+      if(x.status===200){
+        if(ALL){ALL[key]={k:key,s:b.size,u:new Date().toISOString()};ALL._n=(ALL._n||0)+1}
+        M.games[SEL].f[1]=urlOf(key);sujo();fechar();desenharCat();alert("Capa enviada e aplicada no card. Falta clicar em Salvar catálogo.");
+      }else $("cvs").innerHTML="<span class='bad'>"+esc(j.erro||("erro "+x.status))+"</span>"};
+    x.onerror=function(){$("cvs").innerHTML="<span class='bad'>falha de rede</span>"};
+    $("cvs").textContent="enviando...";x.send(b);
+  });
+}
+
+/* ---------- gerador de video (.jkv) ---------- */
+var ADS=[7,8,9,10,11,12,13,14,16,17,19,21,23,25,28,31,34,37,41,45,50,55,60,66,73,80,88,97,107,118,130,143,157,173,190,209,230,253,279,307,337,371,408,449,494,544,598,658,724,796,876,963,1060,1166,1282,1411,1552,1707,1878,2066,2272,2499,2749,3024,3327,3660,4026,4428,4871,5358,5894,6484,7132,7845,8630,9493,10442,11487,12635,13899,15289,16818,18500,20350,22385,24623,27086,29794,32767];
+var ADI=[-1,-1,-1,-1,2,4,6,8];
+function adpcmBlock(s,o,n){
+  var pred=s[o],idx=0,nib=[],out=new Uint8Array(4+((n-1+1)>>1));
+  for(var i=1;i<n;i++){
+    var step=ADS[idx],diff=s[o+i]-pred,code=0;
+    if(diff<0){code=8;diff=-diff}
+    var d=step>>3;
+    if(diff>=step){code|=4;diff-=step;d+=step}
+    var s2=step>>1;if(diff>=s2){code|=2;diff-=s2;d+=s2}
+    var s4=step>>2;if(diff>=s4){code|=1;d+=s4}
+    pred=(code&8)?pred-d:pred+d;if(pred>32767)pred=32767;if(pred<-32768)pred=-32768;
+    idx+=ADI[code&7];if(idx<0)idx=0;if(idx>88)idx=88;
+    nib.push(code);
+  }
+  if(nib.length%2)nib.push(0);
+  out[2]=0;out[3]=0;
+  // o cabecalho guarda o predictor INICIAL (amostra 0), igual ao script em Python
+  out[0]=s[o]&255;out[1]=(s[o]>>8)&255;
+  for(var k=0;k<nib.length;k+=2)out[4+(k>>1)]=nib[k]|(nib[k+1]<<4);
+  return out.subarray(0,4+(nib.length>>1));
+}
+var JKT=null,JKB=null,JKCANCEL=false;
+function jkvAbrir(i){
+  JKT=i<0?{t:"card"}:{t:"btn",i:i};JKB=null;JKCANCEL=false;
+  var g=M.games[SEL],t=(g.f[4]||"video").toLowerCase().normalize("NFD").replace(/[\u0300-\u036f]/g,"").replace(/[^a-z0-9]+/g,"_").replace(/^_+|_+$/g,"")||"video";
+  var nome="JKV/"+t+".jkv",n=2;while(ALL&&ALL[nome]){nome="JKV/"+t+"_"+n+".jkv";n++}
+  abrir("Gerar vídeo (.jkv) a partir de um MP4",
+   "<p class='mut'>O vídeo é convertido aqui no seu navegador (o MP4 não é enviado). Deixe esta aba aberta até terminar. Quanto maior a largura/fps/duração, maior o arquivo, e o app baixa o arquivo inteiro antes de tocar.</p>"+
+   "<div class='fg'><div class='w'><label>Vídeo (MP4, MOV, WEBM)</label><input type='file' id='jkf' accept='video/*'></div>"+
+   "<div><label>Largura (px)</label><input id='jkw' value='480'></div><div><label>Quadros por segundo</label><input id='jkr' value='15'></div>"+
+   "<div><label>Qualidade JPEG (1-100)</label><input id='jkq' value='70'></div><div><label>Duração máxima (segundos)</label><input id='jkm' value='120'></div>"+
+   "<div class='w'><label>Nome do arquivo no R2 (se já existir, pergunta se quer substituir)</label><input id='jkn' value='"+esc(nome)+"'></div></div>"+
+   "<p style='margin-top:12px'><button class='p' id='jkgo' onclick='jkvConverter()'>Converter</button> <button id='jkup' onclick='jkvEnviar()' disabled>Enviar para o R2 e usar</button> <button id='jkdl' onclick='jkvBaixar()' disabled>Baixar .jkv</button> <button onclick='JKCANCEL=true'>Cancelar</button></p>"+
+   "<div style='background:#16181f;border-radius:8px;height:10px;overflow:hidden'><div id='jkbar' style='height:10px;width:0;background:#35d07f'></div></div><p id='jks' class='mut'></p>");
+}
+function jkSt(t,c){var e=$("jks");if(e){e.className=c||"mut";e.textContent=t}}
+function jkvSeek(v,t){return new Promise(function(res,rej){
+  var done=false,to=setTimeout(function(){if(!done){done=true;v.removeEventListener("seeked",f);rej(new Error("o vídeo travou ao buscar um quadro"))}},15000);
+  function f(){if(done)return;done=true;clearTimeout(to);v.removeEventListener("seeked",f);res()}
+  v.addEventListener("seeked",f);v.currentTime=t;
+})}
+async function jkvConverter(){
+  var f=$("jkf").files[0];if(!f){alert("Escolha um vídeo.");return}
+  var W=Math.max(120,Math.min(960,parseInt($("jkw").value,10)||480));W-=W%2;
+  var FPS=Math.max(5,Math.min(30,parseInt($("jkr").value,10)||15));
+  var Q=Math.max(1,Math.min(100,parseInt($("jkq").value,10)||70))/100;
+  var MAXS=Math.max(1,Math.min(600,parseFloat($("jkm").value)||120));
+  JKCANCEL=false;JKB=null;$("jkgo").disabled=true;$("jkup").disabled=true;$("jkdl").disabled=true;$("jkbar").style.width="0";
+  var url=URL.createObjectURL(f);
+  try{
+    jkSt("Lendo o vídeo...");
+    var v=document.createElement("video");v.muted=true;v.preload="auto";v.playsInline=true;v.src=url;
+    await new Promise(function(res,rej){v.onloadeddata=res;v.onerror=function(){rej(new Error("o navegador não conseguiu abrir esse vídeo"))}});
+    var dur=Math.min(v.duration||0,MAXS);if(!isFinite(dur)||dur<=0)throw new Error("duração inválida");
+    var N=Math.floor(dur*FPS),H=Math.round(W*v.videoHeight/v.videoWidth/2)*2,SPF=Math.floor(24000/FPS);
+    // audio
+    jkSt("Extraindo o áudio...");
+    var pcm=new Int16Array(N*SPF),temAudio=true;
+    try{
+      var AC=window.AudioContext||window.webkitAudioContext,ac=new AC();
+      var buf=await ac.decodeAudioData((await f.arrayBuffer()));ac.close&&ac.close();
+      var oc=new OfflineAudioContext(1,Math.ceil(dur*24000)+24000,24000),src=oc.createBufferSource();src.buffer=buf;src.connect(oc.destination);src.start(0);
+      var r=await oc.startRendering(),ch=r.getChannelData(0);
+      for(var i=0;i<pcm.length&&i<ch.length;i++){var x=ch[i]*32767;pcm[i]=x>32767?32767:(x<-32768?-32768:x)}
+    }catch(e){temAudio=false}
+    var cv=document.createElement("canvas");cv.width=W;cv.height=H;var cx=cv.getContext("2d");
+    var parts=[],head=new Uint8Array(20),dv=new DataView(head.buffer);
+    head.set([74,75,86,49],0);dv.setUint16(4,W,true);dv.setUint16(6,H,true);dv.setUint16(8,FPS,true);dv.setUint16(10,24000,true);dv.setUint32(12,N,true);dv.setUint32(16,SPF,true);
+    parts.push(head);var total=20;
+    for(var k=0;k<N;k++){
+      if(JKCANCEL)throw new Error("cancelado");
+      await jkvSeek(v,Math.min(k/FPS+0.001,v.duration-0.01));
+      cx.drawImage(v,0,0,W,H);
+      var jb=await new Promise(function(res){cv.toBlob(res,"image/jpeg",Q)});
+      var jpg=new Uint8Array(await jb.arrayBuffer()),ad=adpcmBlock(pcm,k*SPF,SPF);
+      var h2=new Uint8Array(8),d2=new DataView(h2.buffer);d2.setUint32(0,jpg.length,true);d2.setUint32(4,ad.length,true);
+      parts.push(h2,jpg,ad);total+=8+jpg.length+ad.length;
+      if(k%5===0||k===N-1){$("jkbar").style.width=Math.round((k+1)*100/N)+"%";jkSt("Quadro "+(k+1)+" de "+N+" · "+fs(total))}
+    }
+    JKB=new Blob(parts,{type:"application/octet-stream"});
+    jkSt("Pronto: "+W+"x"+H+" · "+N+" quadros a "+FPS+" fps · "+dur.toFixed(1)+" s · "+fs(JKB.size)+(temAudio?"":" · SEM ÁUDIO (o navegador não leu o áudio desse vídeo)")+(JKB.size>30*1048576?" · grande: reduza largura/fps/duração":""),temAudio&&JKB.size<=30*1048576?"ok":"warn");
+    $("jkup").disabled=false;$("jkdl").disabled=false;
+  }catch(e){jkSt("Erro: "+e.message,"bad")}
+  URL.revokeObjectURL(url);$("jkgo").disabled=false;
+}
+function jkvBaixar(){if(!JKB)return;var a=document.createElement("a");a.href=URL.createObjectURL(JKB);a.download=($("jkn").value.split("/").pop()||"video.jkv");document.body.appendChild(a);a.click();a.remove()}
+function jkvEnviar(){
+  if(!JKB)return;
+  var key=$("jkn").value.trim().replace(/^\/+/,"");
+  if(!/\.jkv$/i.test(key)){alert("O nome precisa terminar em .jkv");return}
+  if(JKB.size>90*1048576){alert("Arquivo maior que 90 MB. Reduza largura, fps ou duração.");return}
+  var sobre=false;
+  if(ALL&&ALL[key]){if(!confirm("Já existe "+key+" ("+fs(ALL[key].s)+").\n\nSubstituir pelo vídeo novo? O vídeo antigo será perdido."))return;sobre=true}
+  var x=new XMLHttpRequest();x.open("PUT","/jkpainel17/api/r2/upload?key="+encodeURIComponent(key)+(sobre?"&overwrite=1":""));
+  x.setRequestHeader("Authorization","Bearer "+TK);x.setRequestHeader("Content-Type","application/octet-stream");
+  x.upload.onprogress=function(e){if(e.lengthComputable)jkSt("Enviando "+Math.round(e.loaded*100/e.total)+"%")};
+  x.onload=function(){var j={};try{j=JSON.parse(x.responseText)}catch(e){}
+    if(x.status===200){
+      if(ALL){ALL[key]={k:key,s:JKB.size,u:new Date().toISOString()};ALL._n=(ALL._n||0)+1}
+      var g=M.games[SEL],uu=urlOf(key)+(sobre?"?v="+Date.now():"");if(JKT.t==="card")g.f[6]=uu;else g.btns[JKT.i].f[2]=uu;
+      sujo();fechar();desenharCat();alert("Vídeo enviado e aplicado. Falta clicar em Salvar catálogo.");
+    }else jkSt("Erro: "+(j.erro||("erro "+x.status)),"bad")};
+  x.onerror=function(){jkSt("Erro: falha de rede","bad")};
+  jkSt("Enviando...");x.send(JKB);
+}
+
+/* ---------- inicio ---------- */
+(function(){var t=ler("pn_tk");if(t){TK=t;api("me").then(function(){iniciar()},function(){mostrarLogin("")})}else mostrarLogin("")})();
+</script>
+</body></html>
