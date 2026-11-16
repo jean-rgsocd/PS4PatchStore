@@ -106,7 +106,7 @@ struct UI {
   Image *qr_small;                     /* QR pequeno da tela de login */
   int detail;                          /* 0 = vitrine de capas, 1 = detalhe do jogo (downloads + videos) */
   int zone;                            /* detalhe: 0 = downloads, 1 = videos/imagens */
-  int dfocus, dscroll, mfocus, mscroll;
+  int dfocus, dscroll, dscroll2, mfocus, mscroll;   /* dscroll2: rolagem da 2a coluna (plugins) no modo dividido */
   Image *fbgc[CAT_MAX_GAMES];          /* fundos prontos (1 por capa): trocar de card so copia a imagem, sem refazer o desfoque */
   int idle;                            /* quadros desde o ultimo botao (so prepara os fundos quando o usuario para) */
   int fbg_due;                         /* 1 = refazer o fundo borrado assim que a animacao de troca de capa terminar */
@@ -160,9 +160,18 @@ static const CatGame *cur_game(UI *ui) {
 /* Itens do detalhe: "downloads" = botoes pkg/download; "midias" = botoes video/image e, por ultimo, o video do card
  * (indice nbtn). dl[] e md[] guardam o indice do botao dentro de g->btn. */
 static int is_media(const CatButton *b) { return !strcmp(b->action, "video") || !strcmp(b->action, "image"); }
+/* Modo dividido (card "APPs e Plugins", tag APPS): detalhe em 3 colunas = info | APPs (PKG, verde) | PLUGINS (arquivos, amarelo). */
+static int split_mode(const CatGame *g) { return g && !strcmp(g->tag, "APPS"); }
+static int is_pkg_btn(const CatButton *b) { return !is_media(b) && !strcmp(b->action, "pkg"); }
+static int split_na(const CatGame *g) { int n = 0; if (!split_mode(g)) return 0; for (int i = 0; i < g->nbtn; i++) if (is_pkg_btn(&g->btn[i])) n++; return n; }
 static void lists(const CatGame *g, int *dl, int *nd, int *md, int *nm) {
   *nd = 0; *nm = 0;
   if (!g) return;
+  if (split_mode(g)) {                                            /* PKGs primeiro, depois os demais downloads */
+    for (int i = 0; i < g->nbtn; i++) if (is_pkg_btn(&g->btn[i])) dl[(*nd)++] = i;
+    for (int i = 0; i < g->nbtn; i++) if (!is_media(&g->btn[i]) && !is_pkg_btn(&g->btn[i])) dl[(*nd)++] = i;
+    for (int i = 0; i < g->nbtn; i++) if (is_media(&g->btn[i])) md[(*nm)++] = i;
+  } else
   for (int i = 0; i < g->nbtn; i++) {
     if (is_media(&g->btn[i])) md[(*nm)++] = i;
     else dl[(*nd)++] = i;
@@ -1043,10 +1052,16 @@ void ui_key(UI *ui, int key) {
     int dl[CAT_MAX_BTNS], md[CAT_MAX_BTNS + 1], nd, nm;
     lists(g, dl, &nd, md, &nm);
     switch (key) {
-      case UI_UP:    if (ui->zone == 0 && ui->dfocus > 0) { ui->dfocus--; ui->dirty = 1; } break;
-      case UI_DOWN:  if (ui->zone == 0 && ui->dfocus + 1 < nd) { ui->dfocus++; ui->dirty = 1; } break;
+      case UI_UP:    { int na = split_na(g), lo = (na && ui->dfocus >= na) ? na : 0;
+                       if (ui->zone == 0 && ui->dfocus > lo) { ui->dfocus--; ui->dirty = 1; } } break;
+      case UI_DOWN:  { int na = split_na(g), hi = (na && ui->dfocus < na) ? na : nd;
+                       if (ui->zone == 0 && ui->dfocus + 1 < hi) { ui->dfocus++; ui->dirty = 1; } } break;
       case UI_LEFT:
-        if (ui->zone == 0) { if (nm > 0) { ui->zone = 1; ui->dirty = 1; } }
+        if (ui->zone == 0) {
+          int na = split_na(g);
+          if (na && ui->dfocus >= na) { int r = ui->dfocus - na; ui->dfocus = r < na ? r : na - 1; ui->dirty = 1; }   /* plugins -> apps */
+          else if (nm > 0) { ui->zone = 1; ui->dirty = 1; }
+        }
         else if (ui->mfocus > 0) { ui->mfocus--; ui->dirty = 1; }
         break;
       case UI_RIGHT:
@@ -1054,6 +1069,9 @@ void ui_key(UI *ui, int key) {
           if (ui->mfocus + 1 < nm) ui->mfocus++;
           else if (nd > 0) ui->zone = 0;
           ui->dirty = 1;
+        } else {
+          int na = split_na(g);
+          if (na && ui->dfocus < na && nd > na) { int r = ui->dfocus; ui->dfocus = na + (r < nd - na ? r : nd - na - 1); ui->dirty = 1; }   /* apps -> plugins */
         }
         break;
       case UI_BACK:  ui->detail = 0; ui->dirty = 1; rebuild_fbg(ui); break;
@@ -1066,8 +1084,15 @@ void ui_key(UI *ui, int key) {
       case UI_SQUARE: trigger_update(ui); break;
       default: break;
     }
-    if (ui->dfocus < ui->dscroll) ui->dscroll = ui->dfocus;
-    if (ui->dfocus >= ui->dscroll + DL_VIS) ui->dscroll = ui->dfocus - DL_VIS + 1;
+    { int na = split_na(g);
+      if (na && ui->dfocus >= na) {                                   /* modo dividido: coluna de plugins com rolagem propria */
+        int r = ui->dfocus - na;
+        if (r < ui->dscroll2) ui->dscroll2 = r;
+        if (r >= ui->dscroll2 + DL_VIS) ui->dscroll2 = r - DL_VIS + 1;
+      } else {
+        if (ui->dfocus < ui->dscroll) ui->dscroll = ui->dfocus;
+        if (ui->dfocus >= ui->dscroll + DL_VIS) ui->dscroll = ui->dfocus - DL_VIS + 1;
+      } }
     if (ui->mfocus < ui->mscroll) ui->mscroll = ui->mfocus;
     { int vis = !strcmp(g->category, "duvidas") ? 4 : MD_VIS;
       if (ui->mfocus >= ui->mscroll + vis) ui->mscroll = ui->mfocus - vis + 1; }
@@ -1116,7 +1141,7 @@ void ui_key(UI *ui, int key) {
         int dl[CAT_MAX_BTNS], md[CAT_MAX_BTNS + 1], nd, nm;
         lists(g, dl, &nd, md, &nm);
         ui->detail = 1; ui->zone = nd > 0 ? 0 : 1;
-        ui->dfocus = ui->dscroll = ui->mfocus = ui->mscroll = 0;
+        ui->dfocus = ui->dscroll = ui->dscroll2 = ui->mfocus = ui->mscroll = 0;
         ui->dirty = 1;
       }
       break;
@@ -1249,6 +1274,8 @@ static void draw_lock(Image *s, int cx, int cy, uint32_t col) {         /* cadea
   gfx_circle(s, cx, cy + 7, 3, C_PANEL2, 255);                           /* furo */
 }
 
+static uint32_t g_btn_col = 0;
+static int g_btn_compact = 0;                                    /* 1 = botao estreito (modo dividido): sem texto de info e letra menor */                                    /* 0 = verde padrao; senao cor do botao (plugins = amarelo) */
 static void draw_button(UI *ui, const CatButton *b, int x, int y, int w, int focused) {
   Image *s = ui->s;
   int r = 20;
@@ -1257,11 +1284,13 @@ static void draw_button(UI *ui, const CatButton *b, int x, int y, int w, int foc
     gfx_rrect(s, x, y, w, g_bh, r, C_WHITE, 30, 2);
     char info[48];
     info_text(b, info, sizeof(info));
+    if (g_btn_compact) info[0] = 0;
+    int fs0 = g_btn_compact ? 23 : 27;
     int iw = info[0] ? TW(ui, 0, 20, info, 0) : 0;
     int avail = w - 40 - 70 - (iw ? iw + 24 : 0);
     char lab[128];
-    text_fit(ui->fb, 27, strip_num(b->label), avail, lab, sizeof(lab));
-    T(ui, 1, 27, x + 32, y + g_bh / 2 + 10, lab, C_MUTED, 255, 0);
+    text_fit(ui->fb, fs0, strip_num(b->label), avail, lab, sizeof(lab));
+    T(ui, 1, fs0, x + 32, y + g_bh / 2 + 10, lab, C_MUTED, 255, 0);
     if (info[0]) T(ui, 0, 20, x + w - 70 - 12 - iw, y + g_bh / 2 + 7, info, C_MUTED, 170, 0);
     draw_lock(s, x + w - 38, y + g_bh / 2 - 1, C_MUTED);
     if (focused) gfx_rrect(s, x - 8, y - 8, w + 16, g_bh + 16, r + 8, C_FOCUS, 255, 4);
@@ -1271,21 +1300,23 @@ static void draw_button(UI *ui, const CatButton *b, int x, int y, int w, int foc
     gfx_rrect(s, x, y, w, g_bh, r, C_BASE, 255, 0);
     gfx_rrect(s, x, y, w, g_bh, r, C_BASE_EDGE, 255, 2);
   } else {
-    gfx_rrect(s, x, y, w, g_bh, r, C_ACCENT, 255, 0);
+    gfx_rrect(s, x, y, w, g_bh, r, g_btn_col ? g_btn_col : C_ACCENT, 255, 0);
   }
   uint32_t fg = b->base ? C_WHITE : C_DARKTXT;
   char info[48];
   info_text(b, info, sizeof(info));
+  if (g_btn_compact) info[0] = 0;
+  int fs1 = g_btn_compact ? 23 : 27;
   int iw = info[0] ? TW(ui, 0, 20, info, 0) : 0;
   int arrow_w = 56;
   int avail = w - 40 - arrow_w - (iw ? iw + 24 : 0);
   char lab[128];
-  text_fit(ui->fb, 27, strip_num(b->label), avail, lab, sizeof(lab));
-  T(ui, 1, 27, x + 32, y + g_bh / 2 + 10, lab, fg, 255, 0);
+  text_fit(ui->fb, fs1, strip_num(b->label), avail, lab, sizeof(lab));
+  T(ui, 1, fs1, x + 32, y + g_bh / 2 + 10, lab, fg, 255, 0);
   if (info[0]) T(ui, 0, 20, x + w - arrow_w - 12 - iw, y + g_bh / 2 + 7, info, fg, 190, 0);
   text_draw_in(s, ui->fb, 30, x + w - arrow_w - 4, arrow_w, y + g_bh / 2 + 11, "\xE2\x86\x93", fg, 255, 0, 1);
   if (!focused) gfx_rrect(s, x, y, w, g_bh, r, C_BG, 70, 0);
-  else gfx_rrect(s, x - 8, y - 8, w + 16, g_bh + 16, r + 8, C_FOCUS, 255, 4);
+  else gfx_rrect(s, x - 8, y - 8, w + 16, g_bh + 16, r + 8, g_btn_col ? C_WHITE : C_FOCUS, 255, 4);
 }
 
 
@@ -1501,6 +1532,56 @@ static void draw_faq(UI *ui, const CatGame *g) {
   }
 }
 
+static void draw_dl_panel(UI *ui, const CatGame *g, const int *dl, int lo, int hi, int px, int pw, const char *title, uint32_t col, int scroll, int notes) {
+  Image *s = ui->s;
+  int n = hi - lo;
+  gfx_rrect(s, px, DT_PY, pw, DT_PH, 26, C_PANEL, 235, 0);
+  gfx_rrect(s, px, DT_PY, pw, DT_PH, 26, C_WHITE, 26, 2);
+  if (col) gfx_rrect(s, px + 30, DT_PY + 14, pw - 60, 6, 3, col, 255, 0);       /* faixa colorida do topo (modo dividido) */
+  T(ui, 1, 26, px + 44, DT_PY + 58, title, col ? col : C_TEXT, 255, 3);
+  char ct[48];
+  int fr = ui->dfocus - lo;
+  if (n && fr >= 0 && fr < n) snprintf(ct, sizeof(ct), "%d / %d", fr + 1, n); else snprintf(ct, sizeof(ct), "%d", n);
+  int cw3 = TW(ui, 0, 22, ct, 0);
+  T(ui, 0, 22, px + pw - 44 - cw3, DT_PY + 58, ct, C_MUTED, 255, 0);
+  gfx_fill(s, px + 30, DT_PY + 82, pw - 60, 1, C_WHITE, 26);
+  if (n == 0) {
+    text_draw_in(s, ui->f, 26, px, pw, DT_PY + 200, "Nenhum item ainda.", C_MUTED, 255, 0, 1);
+  } else {
+    g_bh = BTN_H;
+    g_btn_col = col; g_btn_compact = notes >= 0 && ui->dfocus >= 0 && split_mode(g);
+    int by = DT_PY + 104, bx = px + 44, bw = pw - 88 - 18;
+    for (int i = 0; i < DL_VIS; i++) {
+      int di = scroll + i;
+      if (di >= n) break;
+      draw_button(ui, &g->btn[dl[lo + di]], bx, by + i * (g_bh + BTN_GAP), bw, ui->zone == 0 && lo + di == ui->dfocus);
+    }
+    g_btn_col = 0; g_btn_compact = 0;
+    if (n > DL_VIS) {                                               /* barra de rolagem */
+      int tr = DL_VIS * (g_bh + BTN_GAP) - BTN_GAP, sx = px + pw - 38;
+      gfx_rrect(s, sx, by, 8, tr, 4, C_PANEL2, 255, 0);
+      int bh = tr * DL_VIS / n; if (bh < 50) bh = 50;
+      int bt = by + (tr - bh) * scroll / (n - DL_VIS);
+      gfx_rrect(s, sx, bt, 8, bh, 4, col ? col : C_ACCENT, 255, 0);
+    }
+  }
+  if (!notes) return;
+  { char dtxt2[1200]; const char *note = strstr(g->desc, " !! "); (void)dtxt2;
+    if (note) note += 4;
+    if (ui->locked) {
+      text_wrap(s, ui->fb, 20, px + 44, DT_PY + DT_PH - 118, pw - 88, 28, 2,
+                ui->offline ? "Servidor fora do ar: mostrando a última versão salva. Os downloads voltam quando ele voltar." : "Downloads bloqueados: ative seu plano para baixar. Vídeos, tutoriais e descrições continuam liberados.", C_FOCUS, 255);
+    } else if (note && note[0]) {
+      gfx_rrect(s, px + 30, DT_PY + DT_PH - 68, pw - 60, 58, 14, C_FOCUS, 36, 0);
+      gfx_rrect(s, px + 30, DT_PY + DT_PH - 68, pw - 60, 58, 14, C_FOCUS, 200, 2);
+      text_wrap(s, ui->fb, 18, px + 46, DT_PY + DT_PH - 44, pw - 92, 26, 2, note, C_FOCUS, 255);
+    } else if (!split_mode(g))
+    text_wrap(s, ui->f, 18, px + 44, DT_PY + DT_PH - 52, pw - 88, 26, 2,
+              "Antes de instalar: confira a versão de cada arquivo. O jogo base precisa estar instalado antes do update. "
+              "A instalação é feita pelo PS4; acompanhe em Notificações.", C_MUTED, 200);
+  }
+}
+
 static void draw_detail(UI *ui) {
   Image *s = ui->s;
   const CatGame *g = cur_game(ui);
@@ -1509,6 +1590,8 @@ static void draw_detail(UI *ui) {
   int gi = ui->filt[ui->sel];
   int dl[CAT_MAX_BTNS], md[CAT_MAX_BTNS + 1], nd, nm;
   lists(g, dl, &nd, md, &nm);
+  int na = split_na(g), split = split_mode(g);
+  int LW = split ? 560 : DT_W;                                    /* largura da coluna de info (modo dividido: 3 colunas) */
 
   /* --- coluna da esquerda: capa + titulo, descricao, videos */
   int cx = DT_X, cy = 140, cw = TH_W[2], chh = TH_H[2];
@@ -1517,7 +1600,7 @@ static void draw_detail(UI *ui) {
   else draw_placeholder(ui, cx, cy, cw, chh, g->title);
   gfx_rrect(s, cx - 4, cy - 4, cw + 8, chh + 8, 21, C_ACCENT, 255, 4);
 
-  int tx = cx + cw + 36, tw = DT_X + DT_W - tx;
+  int tx = cx + cw + 36, tw = DT_X + LW - tx;
   int tl = text_wrap(s, ui->fb, 40, tx, cy + 46, tw, 48, 3, g->title, C_TEXT, 255);
   if (tl < 1) tl = 1;
   int ky = cy + 46 + (tl - 1) * 48 + 44;
@@ -1538,7 +1621,7 @@ static void draw_detail(UI *ui) {
   /* aviso amarelo no rodape: o que vier depois de " !! " na descricao nao entra na lista de topicos */
   char dtxt[1200]; const char *note = strstr(g->desc, " !! ");
   if (note) { size_t nn = (size_t)(note - g->desc); if (nn >= sizeof(dtxt)) nn = sizeof(dtxt) - 1; memcpy(dtxt, g->desc, nn); dtxt[nn] = 0; note += 4; }
-  draw_desc(ui, DT_X, dy, DT_W, 31, 7, note ? dtxt : g->desc);
+  draw_desc(ui, DT_X, dy, LW, 31, 7, note ? dtxt : g->desc);
 
   /* videos e guias */
   int my = 742;
@@ -1549,8 +1632,8 @@ static void draw_detail(UI *ui) {
     char pg[32];
     snprintf(pg, sizeof(pg), "%d / %d", ui->mfocus + 1, nm);
     int pw = TW(ui, 0, 20, pg, 0);
-    T(ui, 0, 20, DT_X + DT_W - pw, my, pg, C_MUTED, 255, 0);
-    int cw2 = (DT_W - 24) / 2;
+    T(ui, 0, 20, DT_X + LW - pw, my, pg, C_MUTED, 255, 0);
+    int cw2 = (LW - 24) / 2;
     for (int i = 0; i < MD_VIS; i++) {
       int mi = ui->mscroll + i;
       if (mi >= nm) break;
@@ -1561,48 +1644,16 @@ static void draw_detail(UI *ui) {
       draw_media_card(ui, DT_X + i * (cw2 + 24), my + 24, cw2, 132, label, is_img, ui->zone == 1 && mi == ui->mfocus);
     }
     if (ui->mscroll > 0) T(ui, 1, 24, DT_X - 34, my + 90, "◀", C_ACCENT, 255, 0);
-    if (ui->mscroll + MD_VIS < nm) T(ui, 1, 24, DT_X + DT_W + 8, my + 90, "▶", C_ACCENT, 255, 0);
+    if (ui->mscroll + MD_VIS < nm) T(ui, 1, 24, DT_X + LW + 8, my + 90, "▶", C_ACCENT, 255, 0);
   }
 
-  /* --- painel da direita: downloads */
-  gfx_rrect(s, DT_PX, DT_PY, DT_PW, DT_PH, 26, C_PANEL, 235, 0);
-  gfx_rrect(s, DT_PX, DT_PY, DT_PW, DT_PH, 26, C_WHITE, 26, 2);
-  T(ui, 1, 26, DT_PX + 44, DT_PY + 58, "DOWNLOADS", C_TEXT, 255, 3);
-  char ct[48];
-  if (nd) snprintf(ct, sizeof(ct), "%d / %d", ui->dfocus + 1, nd); else snprintf(ct, sizeof(ct), "0");
-  int cw3 = TW(ui, 0, 22, ct, 0);
-  T(ui, 0, 22, DT_PX + DT_PW - 44 - cw3, DT_PY + 58, ct, C_MUTED, 255, 0);
-  gfx_fill(s, DT_PX + 30, DT_PY + 82, DT_PW - 60, 1, C_WHITE, 26);
-
-  if (nd == 0) {
-    text_draw_in(s, ui->f, 26, DT_PX, DT_PW, DT_PY + 200, "Nenhum download disponível ainda.", C_MUTED, 255, 0, 1);
-  } else {
-    g_bh = BTN_H;
-    int by = DT_PY + 104, bx = DT_PX + 44, bw = DT_PW - 88 - 18;
-    for (int i = 0; i < DL_VIS; i++) {
-      int di = ui->dscroll + i;
-      if (di >= nd) break;
-      draw_button(ui, &g->btn[dl[di]], bx, by + i * (g_bh + BTN_GAP), bw, ui->zone == 0 && di == ui->dfocus);
-    }
-    if (nd > DL_VIS) {                                              /* barra de rolagem */
-      int tr = DL_VIS * (g_bh + BTN_GAP) - BTN_GAP, sx = DT_PX + DT_PW - 38;
-      gfx_rrect(s, sx, by, 8, tr, 4, C_PANEL2, 255, 0);
-      int bh = tr * DL_VIS / nd; if (bh < 50) bh = 50;
-      int bt = by + (tr - bh) * ui->dscroll / (nd - DL_VIS);
-      gfx_rrect(s, sx, bt, 8, bh, 4, C_ACCENT, 255, 0);
-    }
-  }
-  if (ui->locked) {
-    text_wrap(s, ui->fb, 20, DT_PX + 44, DT_PY + DT_PH - 118, DT_PW - 88, 28, 2,
-              ui->offline ? "Servidor fora do ar: mostrando a última versão salva. Os downloads voltam quando ele voltar." : "Downloads bloqueados: ative seu plano para baixar. Vídeos, tutoriais e descrições continuam liberados.", C_FOCUS, 255);
-  } else if (note && note[0]) {
-    gfx_rrect(s, DT_PX + 30, DT_PY + DT_PH - 68, DT_PW - 60, 58, 14, C_FOCUS, 36, 0);
-    gfx_rrect(s, DT_PX + 30, DT_PY + DT_PH - 68, DT_PW - 60, 58, 14, C_FOCUS, 200, 2);
-    text_wrap(s, ui->fb, 18, DT_PX + 46, DT_PY + DT_PH - 44, DT_PW - 92, 26, 2, note, C_FOCUS, 255);
+  /* --- painel(is) da direita: downloads (modo dividido: APPs verde + PLUGINS amarelo) */
+  if (split) {
+    int pw2 = 550, ax = 698, bx2 = ax + pw2 + 24;
+    draw_dl_panel(ui, g, dl, 0, na, ax, pw2, "APPS", C_ACCENT, ui->dscroll, 0);
+    draw_dl_panel(ui, g, dl, na, nd, bx2, pw2, "PLUGINS", C_FOCUS, ui->dscroll2, 1);
   } else
-  text_wrap(s, ui->f, 18, DT_PX + 44, DT_PY + DT_PH - 52, DT_PW - 88, 26, 2,
-            "Antes de instalar: confira a versão de cada arquivo. O jogo base precisa estar instalado antes do update. "
-            "A instalação é feita pelo PS4; acompanhe em Notificações.", C_MUTED, 200);
+    draw_dl_panel(ui, g, dl, 0, nd, DT_PX, DT_PW, "DOWNLOADS", 0, ui->dscroll, 1);
 }
 
 static void draw_spinner(UI *ui, int cx, int cy) {
