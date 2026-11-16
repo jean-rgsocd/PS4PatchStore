@@ -11,3 +11,4 @@ Para mudar a tela do painel: edite painel_fonte/painel.html e rode
 Publicar: o Cloudflare publica sozinho a cada push que mexe nesta pasta
 (Workers & Pages > jkpatchs > Settings > Builds, "Root directory" = worker).
 Mexer so aqui NAO gera PKG novo (o workflow build-pkg ignora a pasta worker/).
+Conectado ao Cloudflare (deploy automatico) em 16/11/2026.
