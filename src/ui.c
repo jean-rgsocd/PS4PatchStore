@@ -288,8 +288,42 @@ static void free_thumbs(UI *ui, int i) {
   if (ui->fbgc[i]) { img_free(ui->fbgc[i]); ui->fbgc[i] = NULL; }
 }
 
+/* Cache rapido: a miniatura grande (340x573) guardada em pixels crus ao lado do PNG. Ler isso e muito mais leve que decodificar o PNG de 744x1254. */
+static void raw_path(const char *png, char *out, size_t n) { snprintf(out, n, "%s.th1", png); }
+
+static int thumbs_from_raw(UI *ui, int i, const char *rp) {
+  FILE *f = fopen(rp, "rb");
+  if (!f) return 0;
+  int hd[2] = {0, 0};
+  if (fread(hd, sizeof(int), 2, f) != 2 || hd[0] != TH_W[0] || hd[1] != TH_H[0]) { fclose(f); return 0; }
+  Image *t[NTH]; for (int k = 0; k < NTH; k++) t[k] = NULL;
+  t[0] = img_new(TH_W[0], TH_H[0]);
+  int ok = t[0] != NULL;
+  if (ok) {
+    size_t n = (size_t)TH_W[0] * TH_H[0];
+    ok = fread(t[0]->px, sizeof(uint32_t), n, f) == n;
+  }
+  fclose(f);
+  for (int k = 1; ok && k < NTH; k++) { t[k] = img_scale_cover(t[0], TH_W[k], TH_H[k]); if (!t[k]) ok = 0; }
+  if (!ok) { for (int k = 0; k < NTH; k++) if (t[k]) img_free(t[k]); return 0; }
+  free_thumbs(ui, i);
+  for (int k = 0; k < NTH; k++) ui->th[i][k] = t[k];
+  return 1;
+}
+
+static void raw_save(const Image *t0, const char *rp) {
+  char tmp[340]; snprintf(tmp, sizeof(tmp), "%s.tmp", rp);
+  FILE *f = fopen(tmp, "wb");
+  if (!f) return;
+  int hd[2] = {t0->w, t0->h};
+  size_t n = (size_t)t0->w * t0->h;
+  int ok = fwrite(hd, sizeof(int), 2, f) == 2 && fwrite(t0->px, sizeof(uint32_t), n, f) == n;
+  fclose(f);
+  if (ok) rename(tmp, rp); else remove(tmp);
+}
+
 /* Carrega a capa do arquivo e gera os 4 tamanhos. Retorna 1 se deu certo. */
-static int thumbs_from_file(UI *ui, int i, const char *path) {
+static int thumbs_from_file(UI *ui, int i, const char *path, const char *rawp) {
   Image *raw = img_load(path);
   if (!raw) return 0;
   Image *t[NTH];
@@ -299,6 +333,7 @@ static int thumbs_from_file(UI *ui, int i, const char *path) {
   if (!ok) { for (int k = 0; k < NTH; k++) if (t[k]) img_free(t[k]); return 0; }
   free_thumbs(ui, i);
   for (int k = 0; k < NTH; k++) ui->th[i][k] = t[k];
+  if (rawp && t[0]->w == TH_W[0] && t[0]->h == TH_H[0]) raw_save(t[0], rawp);
   return 1;
 }
 
@@ -353,14 +388,19 @@ static void load_thumbs(UI *ui) {
     if (is_remote_cover(cv)) {
       if (!ui->cover_fetch || !ui->cover_dir[0]) continue;
       cover_cache_path(ui, cv, path, sizeof(path));
-      FILE *cf = fopen(path, "rb");                             /* ja baixada antes? So marca: a decodificacao fica para depois da abertura */
-      if (cf) { fclose(cf); ui->th_todo[i] = 1; }
+      FILE *cf = fopen(path, "rb");                             /* ja baixada antes? So marca: 2 = tem cache rapido (leve), 1 = precisa decodificar o PNG (depois da abertura) */
+      if (cf) {
+        fclose(cf);
+        char rp[340]; raw_path(path, rp, sizeof(rp));
+        FILE *rf = fopen(rp, "rb");
+        if (rf) { fclose(rf); ui->th_todo[i] = 2; } else ui->th_todo[i] = 1;
+      }
       else {
         const char *base = strrchr(cv, '/'); base = base ? base + 1 : cv;       /* capa de reserva dentro do app, se tiver */
         char nm[96]; snprintf(nm, sizeof(nm), "%s", base);
         char *q = strchr(nm, '?'); if (q) *q = 0;
         char bp[512]; snprintf(bp, sizeof(bp), "%s/images/%s", ui->assets, nm);
-        thumbs_from_file(ui, i, bp);
+        thumbs_from_file(ui, i, bp, NULL);
         if (!J) { J = (CoverJobs *)calloc(1, sizeof(CoverJobs)); if (J) { J->ui = ui; J->gen = gen; } }
         if (J && J->n < CAT_MAX_GAMES) {
           snprintf(J->url[J->n], sizeof(J->url[0]), "%s", cv);
@@ -388,29 +428,47 @@ static void cover_poll(UI *ui) {
     if (ready[i] && i < ui->cat->ngame) ui->th_todo[i] = 1;
 }
 
-/* Decodifica UMA capa por quadro, a mais perto da selecionada primeiro, e so depois da animacao de abertura.
- * Antes, todas as capas eram decodificadas de uma vez quando o catalogo chegava, e a abertura travava varios segundos. */
-static void th_step(UI *ui) {
-  if (!ui->cat || ui->splash < SPLASH_END) return;
+/* Capas com cache rapido (todas, a partir da 2a abertura) carregam ja durante a abertura, 3 por quadro, e ficam prontas
+ * quando o catalogo aparece. As que precisam decodificar PNG (so na 1a vez ou capa nova) ficam 1 por quadro, depois da abertura. */
+static int th_pick(UI *ui, int want) {
   int cur = (ui->nfilt > 0) ? ui->filt[ui->sel] : 0, best = -1, bd = 1 << 30;
   for (int i = 0; i < ui->cat->ngame && i < CAT_MAX_GAMES; i++) {
-    if (!ui->th_todo[i]) continue;
+    if (ui->th_todo[i] != want) continue;
     int d = i > cur ? i - cur : cur - i;
     if (d < bd) { bd = d; best = i; }
   }
-  if (best < 0) return;
-  int i = best;
+  return best;
+}
+
+static void th_one(UI *ui, int i) {
+  int mode = ui->th_todo[i];
   ui->th_todo[i] = 0;
   const char *cv = ui->cat->game[i].cover;
-  char path[320];
-  if (is_remote_cover(cv)) cover_cache_path(ui, cv, path, sizeof(path));
+  char path[320], rp[340];
+  int remote = is_remote_cover(cv);
+  if (remote) cover_cache_path(ui, cv, path, sizeof(path));
   else snprintf(path, sizeof(path), "%s/images/%s", ui->assets, cv);
-  if (thumbs_from_file(ui, i, path)) {
+  if (remote) raw_path(path, rp, sizeof(rp));
+  int ok = 0;
+  if (mode == 2 && remote) ok = thumbs_from_raw(ui, i, rp);
+  if (!ok) {
+    if (mode == 2) { ui->th_todo[i] = 1; return; }           /* cache ruim: cai para o PNG, depois da abertura */
+    ok = thumbs_from_file(ui, i, path, remote ? rp : NULL);
+  }
+  if (ok) {
     ui->dirty = 1;
     if (ui->nfilt > 0 && ui->filt[ui->sel] == i) rebuild_fbg(ui);
-  } else if (is_remote_cover(cv)) {
+  } else if (remote) {
     remove(path);                                               /* arquivo ruim: apaga para baixar de novo na proxima abertura */
   }
+}
+
+static void th_step(UI *ui) {
+  if (!ui->cat) return;
+  for (int n = 0; n < 3; n++) { int b = th_pick(ui, 2); if (b < 0) break; th_one(ui, b); }
+  if (ui->splash < SPLASH_END) return;
+  int b = th_pick(ui, 1);
+  if (b >= 0) th_one(ui, b);
 }
 
 void ui_set_cover_fetcher(UI *ui, UiCoverFetchFn fn, const char *dir, void *ud) {
