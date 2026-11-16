@@ -2,9 +2,10 @@
 """Gera image0/catalog.dat (catalogo do app nativo) a partir de image0/index.html.
 
 O index.html continua sendo a unica fonte: cards (.game-card), capas, textos, categorias
-(<select id="category">) e botoes (a.download-button com data-pkg, data-size, data-type; links de video/imagem/arquivos tambem sao aceitos). Rode tools/pkg_info.py ANTES para preencher ID/tamanho/tipo.
+(<select id="category">) e botoes (a.download-button com data-pkg, data-name, data-content-id,
+data-size, data-type). Rode tools/pkg_info.py ANTES para preencher ID/tamanho/tipo.
 
-Botoes com URL http(s) sao exportados; PKG, video, imagem e download de arquivo sao identificados automaticamente ou por data-action.
+Botoes (pkg, video, image e download) sem link http(s) em data-pkg (placeholders) sao ignorados.
 Uso: python3 tools/make_catalog.py [index.html] [catalog.dat]
 """
 import os
@@ -58,23 +59,19 @@ class Parser(HTMLParser):
         elif tag == "p" and "card-description" in cls:
             self.cap = ["desc", ""]
         elif tag == "a" and "download-button" in cls:
-            pkg_url = (a.get("data-pkg") or "").strip()
-            video_url = (a.get("data-video-url") or "").strip()
-            href = (a.get("href") or "").strip()
-            action = (a.get("data-action") or "").strip().lower()
-            if pkg_url:
-                url, action = pkg_url, "pkg"
-            elif video_url:
-                url, action = video_url, "video"
+            action = (a.get("data-action") or "").strip()
+            vurl = (a.get("data-video-url") or "").strip()
+            if vurl:
+                action, url = "video", vurl
+            elif action in ("image", "download"):
+                url = (a.get("href") or "").strip()
             else:
-                url = href
-                if not action:
-                    ext = url.split("?", 1)[0].lower()
-                    action = "image" if ext.endswith((".png", ".jpg", ".jpeg", ".webp")) else "download"
+                action, url = "pkg", a.get("data-pkg", "").strip()
             self.btn = {"url": url, "name": a.get("data-name", ""),
                         "id": a.get("data-content-id", ""), "size": a.get("data-size", "0"),
-                        "type": a.get("data-type", ""), "action": action, "dest": (a.get("data-dest") or "").strip(), "extra": (a.get("data-extra") or "").strip(),
-                        "base": "base-download-button" in cls, "label": ""}
+                        "type": a.get("data-type", ""), "base": "base-download-button" in cls,
+                        "action": action, "dest": a.get("data-dest", ""), "extra": a.get("data-extra", ""),
+                        "label": ""}
             self.cap = ["label", ""]
 
     def handle_data(self, data):
@@ -96,8 +93,7 @@ class Parser(HTMLParser):
             if ended:
                 text = clean(text)
                 if field == "label":
-                    text = re.sub("[\U0001F000-\U0001FFFF\uFE0F\u200D]", "", text)   # emoji: a fonte do app nao tem
-                    text = clean(re.sub(r"[↓⬇▼]+\s*$", "", clean(text)))   # a seta e desenhada pelo app
+                    text = clean(re.sub(r"[↓⬇▼]+\s*$", "", text))   # a seta e desenhada pelo app
                     self.btn["label"] = text
                     self.game["btns"].append(self.btn)
                     self.btn = None
@@ -143,22 +139,12 @@ def main():
         for b in g["btns"]:
             if not re.match(r"https?://", b["url"]):
                 skipped += 1
-                print("AVISO: botao '%s' (%s) sem link http(s): ignorado" % (b["label"], g["title"]))
+                print("AVISO: botao '%s' (%s) sem link http(s) em data-pkg: ignorado" % (b["label"], g["title"]))
                 continue
-            action = b.get("action", "pkg")
-            if action not in ("pkg", "download", "video", "image"):
-                print("AVISO: data-action '%s' invalido no botao '%s'; usando download" % (action, b["label"]))
-                action = "download"
-            if action == "pkg" and not b["id"]:
-                print("AVISO: PKG '%s' sem data-content-id; sera mantido no catalogo, mas nao instalara" % b["label"])
             size = re.sub(r"\D", "", b["size"]) or "0"
-            dest = b.get("dest", "")
-            if dest and (not dest.startswith("/data/") or ".." in dest):
-                print("AVISO: data-dest '%s' invalido (precisa comecar com /data/); usando a pasta padrao" % dest)
-                dest = ""
             lines.append("BTN\t%s\t%s\t%s\t%s\t%s\t%s\t%d\t%s\t%s\t%s" % (
                 b["label"], clean(b["name"]) or g["title"], b["url"], b["id"], size,
-                b["type"], 1 if b["base"] else 0, action, dest, b.get("extra", "") if action == "download" else ""))
+                b["type"], 1 if b["base"] else 0, b["action"], b["dest"], b["extra"]))
             total_btn += 1
 
     with open(out, "w", encoding="utf-8", newline="\n") as fh:
