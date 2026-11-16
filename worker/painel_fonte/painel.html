@@ -89,7 +89,7 @@ textarea.raw{width:100%;height:calc(100vh - 220px);font:12px/1.4 Consolas,monosp
 
 <div id="app" hidden>
  <div class="top">
-  <img src="%%LOGO%%" alt=""><b>JK PATCHS</b> <span class="mut" style="font-size:11px">painel v9</span>
+  <img src="%%LOGO%%" alt=""><b>JK PATCHS</b> <span class="mut" style="font-size:11px">painel v10</span>
   <div class="tabs" id="tabs"></div>
   <span id="dirtyTag" class="warn" hidden>● alterações não salvas</span>
   <button class="s" onclick="sair()">Sair</button>
@@ -201,7 +201,7 @@ function desenharCat(){
   var v=$("v_cat");
   if(!M){v.innerHTML="<p class='mut'>Carregando...</p>";return}
   var bar="<div class='bar'><h2 style='margin:0'>Catálogo do app</h2><span class='mut'>"+M.games.length+" cards · "+M.games.reduce(function(a,g){return a+g.btns.length},0)+" botões</span><span class='sp'></span>"+
-   "<button onclick='validarCat()'>Validar</button><button onclick='sincTam()'>Sincronizar tamanhos</button><button onclick='histCat()'>Histórico</button><button onclick='toggleRaw()'>"+(RAW?"Voltar ao editor":"Modo texto")+"</button>"+
+   "<button onclick='validarCat()'>Validar</button><button onclick='sincTam()'>Sincronizar tamanhos</button><button onclick='histCat()'>Histórico</button><button onclick='appAbrir()'>Atualização do app</button><button onclick='toggleRaw()'>"+(RAW?"Voltar ao editor":"Modo texto")+"</button>"+
    "<button onclick='descartar()' "+(DIRTY?"":"disabled")+">Descartar</button><button class='p' onclick='salvarCat()' "+(DIRTY?"":"disabled")+">Salvar catálogo</button></div>";
   if(RAW){v.innerHTML=bar+"<textarea class='raw' id='rawta' spellcheck='false'></textarea><p class='mut'>Edite o texto e clique em &quot;Voltar ao editor&quot; para aplicar.</p>";$("rawta").value=serCat(M);return}
   v.innerHTML=bar+"<div class='ed'><div class='l' id='lcol'></div><div class='r' id='cardR'></div></div>";
@@ -375,6 +375,7 @@ async function pkAbrir(pref){
 function pickUrl(i){PK={t:"btn",i:i};abrir("Escolher arquivo do R2","");pkAbrir("")}
 function pickCover(){PK={t:"cover"};abrir("Escolher capa do R2","");pkAbrir("COVERS/")}
 function pkEsc(key){
+  if(PK.t==="app"){appAbrir();if(APPV){$("ap1").value=APPV.a;$("ap5").value=APPV.b;$("ap3").value=APPV.c;$("ap4").value=APPV.d}$("ap2").value=urlOf(key);if(ALL&&ALL[key])$("ap4").value=String(ALL[key].s);return}
   var g=M.games[SEL];
   if(PK.t==="cover"){g.f[1]=urlOf(key)}
   else{var b=g.btns[PK.i];b.f[2]=urlOf(key);if((b.f[7]||"pkg")==="pkg"&&ALL&&ALL[key])b.f[4]=String(ALL[key].s)}
@@ -666,6 +667,37 @@ function jkvEnviar(){
     }else jkSt("Erro: "+(j.erro||("erro "+x.status)),"bad")};
   x.onerror=function(){jkSt("Erro: falha de rede","bad")};
   jkSt("Enviando...");x.send(JKB);
+}
+
+/* ---------- linha de atualizacao do app (APP versao url content_id tamanho tipo) ---------- */
+function appIdx(){for(var i=0;i<M.tail.length;i++)if(M.tail[i].indexOf("APP\t")===0)return i;return -1}
+function appAbrir(){
+  var i=appIdx(),f=i>=0?M.tail[i].split("\t"):["APP","","","IV0000-PSTR00002_00-PS4PATCHSTORE000","0","PS4GD"];
+  while(f.length<6)f.push("");
+  abrir("Atualização do app (versão nova do JK Patchs)",
+   "<p class='mut'>Quando você lançar um app novo: suba o PKG no R2 (aba Arquivos), preencha aqui a versão e o link, e salve o catálogo. Os apps com versão menor passam a baixar a atualização sozinhos. "+(i<0?"<b class='warn'>O catálogo não tem essa linha hoje: ela será criada.</b>":"")+"</p>"+
+   "<div class='fg'><div><label>Versão (formato N.NN, ex.: 1.19)</label><input id='ap1' value='"+esc(f[1])+"'></div>"+
+   "<div><label>Tipo</label><input id='ap5' value='"+esc(f[5]||"PS4GD")+"'></div>"+
+   "<div class='w'><label>Link do PKG no R2 <button class='s' onclick='appEscolher()'>escolher do R2</button></label><input id='ap2' value='"+esc(f[2])+"'></div>"+
+   "<div><label>content_id</label><input id='ap3' value='"+esc(f[3])+"'></div>"+
+   "<div><label>Tamanho (bytes) <button class='s' onclick='appTam()'>pegar do R2</button></label><input id='ap4' value='"+esc(f[4])+"'></div></div>"+
+   "<p style='margin-top:12px'><button class='p' onclick='appAplicar()'>Aplicar no catálogo</button> <span class='mut'>depois clique em Salvar catálogo</span></p><p id='aps' class='bad'></p>");
+}
+var APPV=null;
+function appEscolher(){APPV={a:$("ap1").value,b:$("ap5").value,c:$("ap3").value,d:$("ap4").value};PK={t:"app"};abrir("Escolher o PKG do app","");pkAbrir("APP-PS4/")}
+function appTam(){var k=keyOf($("ap2").value);if(k&&ALL&&ALL[k]){$("ap4").value=String(ALL[k].s)}else $("aps").textContent="Esse link não está no R2 (ou a lista do R2 não carregou)."}
+function appAplicar(){
+  var v=$("ap1").value.trim(),u=$("ap2").value.trim(),c=$("ap3").value.trim(),z=$("ap4").value.trim(),t=$("ap5").value.trim()||"PS4GD",e=$("aps");
+  if(!/^\d+\.\d\d$/.test(v)){e.textContent="Versão deve ser no formato N.NN (ex.: 1.19).";return}
+  if(!/^https:\/\//.test(u)){e.textContent="O link do PKG precisa começar com https://";return}
+  if(!/^[A-Z0-9_-]{20,40}$/i.test(c)){e.textContent="content_id inválido.";return}
+  if(!/^\d+$/.test(z)||+z<1000000){e.textContent="Tamanho inválido (use o botão pegar do R2).";return}
+  var k=keyOf(u);
+  if(ALL&&k&&!ALL[k]){e.textContent="Esse PKG ainda não existe no R2. Suba o arquivo antes.";return}
+  if(ALL&&k&&ALL[k]&&String(ALL[k].s)!==z){e.textContent="O tamanho informado é diferente do arquivo no R2 ("+ALL[k].s+"). Use o botão pegar do R2.";return}
+  var ln=["APP",v,u,c,z,t].join("\t"),i=appIdx();
+  if(i>=0)M.tail[i]=ln;else M.tail.push(ln);
+  sujo();fechar();alert("Linha do app atualizada (versão "+v+"). Falta clicar em Salvar catálogo.");
 }
 
 /* ---------- inicio ---------- */
