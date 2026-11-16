@@ -23,8 +23,9 @@ NATIVE_SRC  := ps4_main ui gfx catalog install auth auth_proto vplayer qrcode
 NATIVE_OBJS := $(addprefix build/native/,$(addsuffix .o,$(NATIVE_SRC)))
 NATIVE_LIBS := -lc -lkernel -lSceVideoOut -lScePad -lSceUserService -lSceSystemService \
   -lSceNet -lSceSsl -lSceHttp -lSceSysmodule -lSceAudioOut
+NATIVE_EXTRA ?=
 NATIVE_CFLAGS := --target=x86_64-pc-freebsd12-elf -fPIC -funwind-tables -c -O2 -fno-math-errno -Isrc \
-  -isysroot $(TC) -isystem $(TC)/include
+  -isysroot $(TC) -isystem $(TC)/include $(NATIVE_EXTRA)
 
 native: native0/eboot.bin
 
@@ -38,6 +39,17 @@ build/native/eboot.elf: $(NATIVE_OBJS)
 native0/eboot.bin: build/native/eboot.elf
 > mkdir -p native0
 > $(TC)/bin/linux/create-fself -in=build/native/eboot.elf --out=build/native/eboot.oelf --eboot native0/eboot.bin --paid 0x3800000000000011
+
+# ---------------------------------------------------------------- modulo de TESTE (.prx), so para o teste de carregamento
+build/jkmod/jkmod_test.o: src/jkmod_test.c
+> mkdir -p build/jkmod
+> clang --target=x86_64-pc-freebsd12-elf -fPIC -funwind-tables -c -O2 -isysroot $(TC) -isystem $(TC)/include -o $@ $<
+
+build/jkmod/jkmod_test.elf: build/jkmod/jkmod_test.o
+> ld.lld build/jkmod/jkmod_test.o -o $@ -m elf_x86_64 -pie --script $(TC)/link.x --eh-frame-hdr -L$(TC)/lib $(TC)/lib/crtlib.o
+
+build/jkmod_test.prx: build/jkmod/jkmod_test.elf
+> $(TC)/bin/linux/create-fself -in=build/jkmod/jkmod_test.elf --out=build/jkmod/jkmod_test.oelf --lib=build/jkmod_test.prx --paid 0x3800000000000011
 
 clean:
 > rm -rf build image0/eboot.bin native0 out

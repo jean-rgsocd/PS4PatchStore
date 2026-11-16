@@ -126,6 +126,9 @@ done
 cp -r image0/sce_sys/. native0/sce_sys/
 cp -r image0/sce_module/. native0/sce_module/
 
+# Teste de modulo (.prx): so quando JKMOD_TEST=1 (workflow build-mod-teste); o app de verdade nao muda.
+if [ -n "${JKMOD_TEST:-}" ] && [ -f build/jkmod_test.prx ]; then cp build/jkmod_test.prx native0/jkmod_test.prx; fi
+
 APP=native python3 tools/make_sfo.py
 MODE=native python3 tools/make_gp4.py
 cp project.gp4 out/project-native.gp4

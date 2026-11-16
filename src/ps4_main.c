@@ -627,9 +627,43 @@ static void check_auth(UI *ui) {
   free(ev.text);
 }
 
+/* ------------------------------------------------------------------ teste de modulo (so no build de teste: -DJK_MODTEST) */
+#ifdef JK_MODTEST
+extern int jk_load_start_module(const char *name, size_t argc, const void *argv, unsigned flags, void *opt, int *res) __asm__("sceKernelLoadStartModule");
+extern int jk_dlsym(int handle, const char *sym, void **addr) __asm__("sceKernelDlsym");
+
+static void modtest_one(const char *path) {
+  char b[300];
+  struct stat st;
+  if (stat(path, &st) != 0) { snprintf(b, sizeof(b), "MODTESTE: %s nao existe", path); install_log(b); return; }
+  snprintf(b, sizeof(b), "MODTESTE: %s existe (%lld bytes)", path, (long long)st.st_size); install_log(b);
+  int res = 0;
+  int h = jk_load_start_module(path, 0, NULL, 0, NULL, &res);
+  snprintf(b, sizeof(b), "MODTESTE: LoadStartModule -> 0x%08x (res=%d)", (unsigned)h, res); install_log(b);
+  if (h < 0) return;
+  void *fn = NULL;
+  int r = jk_dlsym(h, "jkmod_entry", &fn);
+  snprintf(b, sizeof(b), "MODTESTE: Dlsym jkmod_entry -> 0x%08x ptr=%p", (unsigned)r, fn); install_log(b);
+  if (r == 0 && fn) {
+    int v = ((int (*)(int))fn)(41);
+    snprintf(b, sizeof(b), "MODTESTE: jkmod_entry(41) = %d (esperado 42)", v); install_log(b);
+  }
+}
+
+static void modtest(void) {
+  install_log("MODTESTE: iniciando");
+  modtest_one("/app0/jkmod_test.prx");
+  modtest_one("/data/jk/jkmod_test.prx");
+  install_log("MODTESTE: fim");
+}
+#endif
+
 /* ------------------------------------------------------------------ main */
 int main(void) {
   install_log("=== JK PATCHS (nativo) v" APP_VERSION " ===");
+#ifdef JK_MODTEST
+  modtest();
+#endif
   sceSystemServiceHideSplashScreen();
 
   if (video_init() != 0) return 1;

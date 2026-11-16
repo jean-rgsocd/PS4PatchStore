@@ -1,0 +1,74 @@
+name: build-mod-teste
+# Teste: o PS4 deixa o app carregar um modulo (.prx) de fora do pacote? So roda quando voce clicar em "Run workflow".
+# Gera o app de TESTE (JK Patchs TESTE, PSTR00003) com um carregador de teste + o modulo jkmod_test.prx.
+# Nao mexe no app de verdade (PSTR00002) nem no workflow build-pkg.
+on:
+  workflow_dispatch:
+jobs:
+  modulo:
+    runs-on: ubuntu-22.04
+    steps:
+      - uses: actions/checkout@v4
+      - name: Dependencias
+        run: sudo apt-get update && sudo apt-get install -y clang lld jq python3 unzip libicu-dev
+      - name: Baixar OpenOrbis Toolchain
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -e
+          curl -fsSL -H "Authorization: Bearer $GH_TOKEN" https://api.github.com/repos/OpenOrbis/OpenOrbis-PS4-Toolchain/releases/latest -o rel.json
+          echo "Arquivos da release:"; jq -r '.assets[].name' rel.json
+          KIND=tar
+          URL=$(jq -r '[.assets[] | select(.name | test("\\.(tar\\.gz|tgz)$"))][0].browser_download_url // empty' rel.json)
+          if [ -z "$URL" ]; then
+            KIND=zip
+            URL=$(jq -r '[.assets[] | select(.name | test("\\.zip$"))][0].browser_download_url // empty' rel.json)
+          fi
+          if [ -z "$URL" ]; then echo "ERRO: nenhum .tar.gz ou .zip na release"; exit 1; fi
+          echo "Baixando $URL"
+          curl -fL "$URL" -o toolchain.bin
+          mkdir -p oo
+          if [ "$KIND" = tar ]; then tar xzf toolchain.bin -C oo; else unzip -q toolchain.bin -d oo; fi
+          LX=$(find oo -name link.x | head -1)
+          if [ -z "$LX" ]; then echo "ERRO: link.x nao encontrado"; find oo -maxdepth 3; exit 1; fi
+          TC=$(dirname "$LX")
+          echo "OO_PS4_TOOLCHAIN=$GITHUB_WORKSPACE/$TC" >> "$GITHUB_ENV"
+          chmod -R +x "$TC/bin/linux" || true
+      - name: Diagnostico do toolchain
+        continue-on-error: true
+        run: |
+          {
+            echo "== lib/ do toolchain =="; ls -la "$OO_PS4_TOOLCHAIN/lib" | head -80
+            echo "== bin/linux =="; ls -la "$OO_PS4_TOOLCHAIN/bin/linux" | head -30
+            echo "== crtlib =="; find "$OO_PS4_TOOLCHAIN" -iname 'crt*' | head
+            echo "== samples com prx/lib =="; find "$OO_PS4_TOOLCHAIN" -maxdepth 3 -iname '*lib*' -type d | head -20
+          } > diag_toolchain.log 2>&1 || true
+          cat diag_toolchain.log
+      - name: Compilar o modulo de teste (PRX)
+        run: |
+          set -e
+          make build/jkmod_test.prx 2>&1 | tee build_prx.log
+          ls -la build/jkmod_test.prx
+      - name: Gerar o app de teste com carregador
+        env:
+          DOTNET_ROLL_FORWARD: Major
+          TESTAPP: "1"
+          JKMOD_TEST: "1"
+          NATIVE_EXTRA: "-DJK_MODTEST"
+        run: |
+          set -e
+          mkdir -p teste
+          bash build.sh > build_app.log 2>&1 || { tail -n 40 build_app.log; exit 1; }
+          cp out/native/*.pkg teste/TESTE_MODULO.pkg
+          cp build/jkmod_test.prx teste/jkmod_test.prx
+          ls -la teste
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: teste-modulo
+          path: |
+            teste/TESTE_MODULO.pkg
+            teste/jkmod_test.prx
+            diag_toolchain.log
+            build_prx.log
+            build_app.log
