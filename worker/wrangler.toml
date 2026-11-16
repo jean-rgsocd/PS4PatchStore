@@ -1,4 +1,4 @@
-﻿# Configuracao do Worker "jkpatchs" (o Cloudflare publica sozinho a cada push na pasta worker/).
+# Configuracao do Worker "jkpatchs" (o Cloudflare publica sozinho a cada push na pasta worker/).
 name = "jkpatchs"
 main = "worker.js"
 compatibility_date = "2025-01-01"
