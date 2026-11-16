@@ -140,7 +140,7 @@ struct UI {
 
 /* ------------------------------------------------------------------ utilidades */
 /* Pastas: categorias que so aparecem ao abrir o card-pasta (tag "PASTA") de mesmo nome. "plugins" e "jkmod" (v1.16). */
-static int is_folder_cat(const char *id) { return !strcmp(id, "plugins") || !strcmp(id, "jkmod"); }
+static int is_folder_cat(const char *id) { return !strcmp(id, "plugins") || !strncmp(id, "jkmod", 5); }   /* jkmod_mega, jkmod_bras (v1.17) */
 
 static void refilter(UI *ui) {
   ui->nfilt = 0;
@@ -1089,13 +1089,14 @@ void ui_key(UI *ui, int key) {
       break;
     }
     case UI_BACK:
-      if (ui->cat_idx != 0 && !strcmp(ui->cat->cat[ui->cat_idx].id, "jkmod")) {      /* dentro da pasta JK-MOD: volta para a pasta Plugins & Mods (card JK-MOD) */
+      if (ui->cat_idx != 0 && !strncmp(ui->cat->cat[ui->cat_idx].id, "jkmod", 5)) {      /* dentro da pasta JK-MOD: volta para a pasta Plugins & Mods (card JK-MOD) */
         int back = 0;
+        char from[64]; snprintf(from, sizeof from, "%s", ui->cat->cat[ui->cat_idx].label);   /* pasta de onde saimos */
         for (int k = 1; k < ui->cat->ncat; k++) if (!strcmp(ui->cat->cat[k].id, "plugins")) { ui->cat_idx = k; back = 1; break; }
         if (back) {
           int pos = 0;
           refilter(ui);
-          for (int k = 0; k < ui->nfilt; k++) { const CatGame *q = &ui->cat->game[ui->filt[k]]; if (!strcmp(q->tag, "PASTA") && !strcmp(q->title, "JK-MOD")) { pos = k; break; } }
+          for (int k = 0; k < ui->nfilt; k++) { const CatGame *q = &ui->cat->game[ui->filt[k]]; if (!strcmp(q->tag, "PASTA") && !strcmp(q->title, from)) { pos = k; break; } }
           select_game(ui, pos);
         }
       } else if (ui->cat_idx != 0 && !strcmp(ui->cat->cat[ui->cat_idx].id, "plugins")) {   /* dentro da pasta: volta para o card "Plugins & Mods" */
