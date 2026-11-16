@@ -27,6 +27,15 @@ if os.environ.get("APP") == "native":
     # O PS4 espera "NN.NN" (ex.: 01.03), como nos patches reais.
     VERSION = "%02d.%s" % (int(VERSION.split(".")[0]), VERSION.split(".")[1])
 
+    # TESTAPP=1: app de TESTE (outro TITLE_ID/CONTENT_ID), instala ao lado do app de verdade sem tocar nele.
+    if os.environ.get("TESTAPP") == "1":
+        TITLE = "JK Patchs TESTE"
+        TITLE_ID = "PSTR00003"
+        CONTENT_ID = "IV0000-PSTR00003_00-PS4PATCHSTORE000"
+    # SFO_VERSION=01.00: forca a versao do SFO (usado para gerar a BASE do teste de patch).
+    if os.environ.get("SFO_VERSION"):
+        VERSION = os.environ["SFO_VERSION"]
+
 
 
 def s(value, maxsize):

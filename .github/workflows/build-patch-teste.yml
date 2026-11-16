@@ -1,0 +1,70 @@
+name: build-patch-teste
+# Teste de atualizacao por PATCH. So roda quando voce clicar em "Run workflow" (Actions > build-patch-teste).
+# Gera um app de TESTE (JK Patchs TESTE, PSTR00003) em duas partes: BASE (01.00) e PATCH (versao de src/version.h).
+# Nao mexe no app de verdade (PSTR00002) nem no workflow build-pkg.
+on:
+  workflow_dispatch:
+jobs:
+  patch:
+    runs-on: ubuntu-22.04
+    steps:
+      - uses: actions/checkout@v4
+      - name: Dependencias
+        run: sudo apt-get update && sudo apt-get install -y clang lld jq python3 unzip libicu-dev
+      - name: Baixar OpenOrbis Toolchain
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -e
+          curl -fsSL -H "Authorization: Bearer $GH_TOKEN" https://api.github.com/repos/OpenOrbis/OpenOrbis-PS4-Toolchain/releases/latest -o rel.json
+          echo "Arquivos da release:"; jq -r '.assets[].name' rel.json
+          KIND=tar
+          URL=$(jq -r '[.assets[] | select(.name | test("\\.(tar\\.gz|tgz)$"))][0].browser_download_url // empty' rel.json)
+          if [ -z "$URL" ]; then
+            KIND=zip
+            URL=$(jq -r '[.assets[] | select(.name | test("\\.zip$"))][0].browser_download_url // empty' rel.json)
+          fi
+          if [ -z "$URL" ]; then echo "ERRO: nenhum .tar.gz ou .zip na release"; exit 1; fi
+          echo "Baixando $URL"
+          curl -fL "$URL" -o toolchain.bin
+          mkdir -p oo
+          if [ "$KIND" = tar ]; then tar xzf toolchain.bin -C oo; else unzip -q toolchain.bin -d oo; fi
+          LX=$(find oo -name link.x | head -1)
+          if [ -z "$LX" ]; then echo "ERRO: link.x nao encontrado"; find oo -maxdepth 3; exit 1; fi
+          TC=$(dirname "$LX")
+          echo "OO_PS4_TOOLCHAIN=$GITHUB_WORKSPACE/$TC" >> "$GITHUB_ENV"
+          chmod -R +x "$TC/bin/linux" || true
+      - name: Gerar BASE de teste (01.00) e PATCH de teste
+        env:
+          DOTNET_ROLL_FORWARD: Major
+          TESTAPP: "1"
+        run: |
+          set -e
+          mkdir -p teste/BASE teste/PATCH
+          SFO_VERSION=01.00 bash build.sh > build_base.log 2>&1 || { tail -n 40 build_base.log; exit 1; }
+          cp out/native/*.pkg teste/BASE/
+          PATCH=1 bash build.sh > build_patch.log 2>&1 || { tail -n 40 build_patch.log; exit 1; }
+          cp out/native/*.pkg teste/PATCH/
+          cp out/project-native.gp4 teste/project-patch.gp4
+          echo "== BASE =="; ls -la teste/BASE; echo "== PATCH =="; ls -la teste/PATCH
+      - name: Conferir os pacotes
+        continue-on-error: true
+        env:
+          DOTNET_ROLL_FORWARD: Major
+          DOTNET_SYSTEM_GLOBALIZATION_INVARIANT: "1"
+        run: |
+          DLL=$(find "$OO_PS4_TOOLCHAIN/bin" -name 'PkgTool.Core.dll' | head -1)
+          for P in teste/BASE/*.pkg teste/PATCH/*.pkg; do
+            echo "=== $P ==="; dotnet "$DLL" pkg_listentries "$P" | head -20 || true
+            dotnet "$DLL" pkg_extractfile "$P" sce_sys/param.sfo /tmp/p.sfo >/dev/null 2>&1 && dotnet "$DLL" sfo_listentries /tmp/p.sfo || true
+          done
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: teste-patch
+          path: |
+            teste/BASE/*.pkg
+            teste/PATCH/*.pkg
+            teste/project-patch.gp4
+            build_base.log
+            build_patch.log
