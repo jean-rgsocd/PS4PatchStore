@@ -1,7 +1,13 @@
 
 name: build-pkg
 
-on: [workflow_dispatch, push]
+on:
+  workflow_dispatch:
+  push:
+    paths-ignore:
+      - 'worker/**'
+      - '**.md'
+      - '**.txt'
 
 permissions:
   contents: write
