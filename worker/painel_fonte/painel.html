@@ -89,7 +89,7 @@ textarea.raw{width:100%;height:calc(100vh - 220px);font:12px/1.4 Consolas,monosp
 
 <div id="app" hidden>
  <div class="top">
-  <img src="%%LOGO%%" alt=""><b>JK PATCHS</b> <span class="mut" style="font-size:11px">painel v13</span>
+  <img src="%%LOGO%%" alt=""><b>JK PATCHS</b> <span class="mut" style="font-size:11px">painel v14</span>
   <div class="tabs" id="tabs"></div>
   <span id="dirtyTag" class="warn" hidden>● alterações não salvas</span>
   <button class="s" onclick="sair()">Sair</button>
@@ -420,12 +420,14 @@ function r2Upload(){
    "<div class='fg'><div class='w'><label>Pasta de destino</label><input id='upd' value='"+esc(R2P)+"'></div><div class='w'><label>Arquivo</label><input type='file' id='upf'></div><div class='w'><label>Nome no R2 (deixe vazio para manter)</label><input id='upn'></div></div>"+
    "<p><button class='p' onclick='r2Enviar()'>Enviar</button> <span id='ups' class='mut'></span></p>");
 }
-function r2Enviar(){
+async function r2Enviar(forcar){
   var f=$("upf").files[0];if(!f){alert("Escolha um arquivo.");return}
+  if(!ALL){$("ups").textContent="conferindo arquivos...";try{await carregarAll()}catch(e){}}
   var pasta=$("upd").value.trim().replace(/^\/+/,"");if(pasta&&pasta.slice(-1)!=="/")pasta+="/";
   var nome=($("upn").value.trim()||f.name),key=pasta+nome;
   var sobre="";
-  if(ALL&&ALL[key]){
+  if(forcar===true){sobre="&overwrite=1"}
+  else if(ALL&&ALL[key]){
     if(!confirm("Já existe "+key+" ("+(ALL[key].s/1048576).toFixed(1)+" MB).\nSubstituir pelo novo arquivo ("+(f.size/1048576).toFixed(1)+" MB)?\nO antigo será perdido."))return;
     sobre="&overwrite=1";
   }
@@ -435,6 +437,10 @@ function r2Enviar(){
   x.upload.onprogress=function(e){if(e.lengthComputable)$("ups").textContent=Math.round(e.loaded*100/e.total)+"%"};
   x.onload=function(){var j={};try{j=JSON.parse(x.responseText)}catch(e){}
     if(x.status===200){$("ups").innerHTML="<span class='ok'>Enviado: "+esc(key)+"</span>";ALL=null;carregarAll().then(function(){r2Abrir(R2P)})}
+    else if(x.status===409&&!sobre){   /* a lista local estava desatualizada: o servidor avisou que ja existe */
+      $("ups").textContent="";
+      if(confirm("Já existe "+key+" no R2.\nSubstituir pelo novo arquivo ("+(f.size/1048576).toFixed(1)+" MB)?\nO antigo será perdido."))r2Enviar(true);
+    }
     else $("ups").innerHTML="<span class='bad'>"+esc(j.erro||("erro "+x.status))+"</span>"};
   x.onerror=function(){$("ups").innerHTML="<span class='bad'>falha de rede</span>"};
   $("ups").textContent="enviando...";x.send(f);
