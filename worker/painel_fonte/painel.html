@@ -89,7 +89,7 @@ textarea.raw{width:100%;height:calc(100vh - 220px);font:12px/1.4 Consolas,monosp
 
 <div id="app" hidden>
  <div class="top">
-  <img src="%%LOGO%%" alt=""><b>JK PATCHS</b> <span class="mut" style="font-size:11px">painel v14</span>
+  <img src="%%LOGO%%" alt=""><b>JK PATCHS</b> <span class="mut" style="font-size:11px">painel v15</span>
   <div class="tabs" id="tabs"></div>
   <span id="dirtyTag" class="warn" hidden>● alterações não salvas</span>
   <button class="s" onclick="sair()">Sair</button>
@@ -290,9 +290,9 @@ function btnHtml(g,b,i){
    "<select onchange='moverBtn("+i+",this.value)'><option value=''>mover para…</option>"+M.games.map(function(x,j){return j===SEL?"":"<option value='"+j+"'>"+esc(x.f[4])+"</option>"}).join("")+"</select>"+
    "</div><div>"+pills+"</div><div class='r2' style='margin-top:6px'>"+
    "<div class='w4'><small>Descrição (aparece no app)</small><input value='"+esc(f[1])+"' oninput='setB("+i+",1,this.value)'></div>"+
-   "<div class='w4'><small>URL do arquivo <button class='s' onclick='pickUrl("+i+")'>escolher do R2</button>"+(a==="video"?" <button class='s' onclick='jkvAbrir("+i+")'>gerar vídeo</button>":"")+"</small><input value='"+esc(f[2])+"' oninput='setB("+i+",2,this.value,3)'></div>";
+   "<div class='w4'><small>URL do arquivo <button class='s' onclick='pickUrl("+i+")'>escolher do R2</button>"+(a==="video"?" <button class='s' onclick='jkvAbrir("+i+")'>gerar vídeo</button>":"")+"</small><input value='"+esc(f[2])+"' oninput='setB("+i+",2,this.value,3)' onchange='autoPkg("+i+")'></div>";
   if(a==="pkg"){
-    h+="<div class='w2'><small>content_id</small><input value='"+esc(f[3])+"' oninput='setB("+i+",3,this.value,3)'></div>"+
+    h+="<div class='w2'><small>content_id <button class='s' onclick='lerPkg("+i+")'>ler do PKG</button></small><input value='"+esc(f[3])+"' oninput='setB("+i+",3,this.value,3)'></div>"+
        "<div><small>tamanho (bytes)</small><input value='"+esc(f[4])+"' oninput='setB("+i+",4,this.value,3)'></div>"+
        "<div><small>tipo</small><select onchange='setB("+i+",5,this.value)'>"+["PS4GD","PS4GP","PS4AC","PS4AL",""].map(function(x){return "<option value='"+x+"'"+(x===f[5]?" selected":"")+">"+(x||"(vazio)")+"</option>"}).join("")+"</select></div>"+
        "<div><small>jogo base?</small><select onchange='setB("+i+",6,this.value)'><option value='0'"+(f[6]!=="1"?" selected":"")+">não</option><option value='1'"+(f[6]==="1"?" selected":"")+">sim</option></select></div>";
@@ -378,9 +378,19 @@ function pkEsc(key){
   if(PK.t==="app"){appAbrir();if(APPV){$("ap1").value=APPV.a;$("ap5").value=APPV.b;$("ap3").value=APPV.c;$("ap4").value=APPV.d}$("ap2").value=urlOf(key);if(ALL&&ALL[key])$("ap4").value=String(ALL[key].s);return}
   var g=M.games[SEL];
   if(PK.t==="cover"){g.f[1]=urlOf(key)}
-  else{var b=g.btns[PK.i];b.f[2]=urlOf(key);if((b.f[7]||"pkg")==="pkg"&&ALL&&ALL[key])b.f[4]=String(ALL[key].s)}
+  var bi=-1;
+  if(PK.t!=="cover"){bi=PK.i;var b=g.btns[bi];b.f[2]=urlOf(key);if((b.f[7]||"pkg")==="pkg"&&ALL&&ALL[key])b.f[4]=String(ALL[key].s)}
   sujo();fechar();desenharCat();
+  if(bi>=0&&(g.btns[bi].f[7]||"pkg")==="pkg")lerPkg(bi,true);
 }
+async function lerPkg(i,quiet){
+  var b=M.games[SEL].btns[i],k=keyOf(b.f[2]);
+  if(!k){if(!quiet)alert("O link precisa ser de um arquivo do seu R2.");return}
+  try{var j=await api("r2/pkginfo?key="+encodeURIComponent(k));
+    b.f[3]=j.content_id;b.f[4]=String(j.size);b.f[5]=j.type;sujo();desenharCat()}
+  catch(e){if(!quiet)alert("Não consegui ler o PKG: "+e.message)}
+}
+function autoPkg(i){var b=M.games[SEL].btns[i];if((b.f[7]||"pkg")==="pkg"&&/\.pkg$/i.test(keyOf(b.f[2])||""))lerPkg(i,true)}
 function crumb(pref,fn){
   var parts=pref.split("/").filter(Boolean),acc="",h="<a onclick='"+fn+"(\"\")'>raiz</a>";
   parts.forEach(function(p){acc+=p+"/";h+=" / <a onclick='"+fn+"(\""+esc(acc).replace(/'/g,"&#39;")+"\")'>"+esc(p)+"</a>"});
