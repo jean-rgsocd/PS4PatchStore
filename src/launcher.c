@@ -23,7 +23,7 @@ extern int jk_dlsym(int handle, const char *sym, void **addr) __asm__("sceKernel
 #define MOD_BAD DIR_JK "/jkui.prx.bad"
 #define PEND    DIR_JK "/boot.pending"
 #define MOD_APP "/app0/jkui.prx"
-#define LAUNCHER_VERSION "2.0"
+#define LAUNCHER_VERSION "2.1"
 
 static void lg(const char *m) {
   FILE *f = fopen("/data/ps4store.log", "a");
@@ -37,11 +37,13 @@ static int exists(const char *p) { struct stat st; return stat(p, &st) == 0; }
 static int try_run(const char *path, int guard) {
   char b[320];
   if (!exists(path)) return -1;
+  chmod(path, 0777);                         /* arquivo criado pelo app nasce sem permissao de execucao */
   if (guard) { FILE *f = fopen(PEND, "w"); if (f) { fputs("1", f); fclose(f); } }
   int res = 0;
   int h = jk_load_start_module(path, 0, NULL, 0, NULL, &res);
   if (h < 0) {
-    snprintf(b, sizeof(b), "LAUNCHER: falha ao carregar %s (0x%08x)", path, (unsigned)h); lg(b);
+    struct stat st; unsigned md = stat(path, &st) == 0 ? (unsigned)st.st_mode : 0;
+    snprintf(b, sizeof(b), "LAUNCHER: falha ao carregar %s (0x%08x) modo=%o tam=%lld", path, (unsigned)h, md, (long long)st.st_size); lg(b);
     if (guard) unlink(PEND);
     return -1;
   }

@@ -578,6 +578,7 @@ static void *mod_thread(void *arg) {
   unlink(tmp);
   snprintf(m, sizeof(m), "modulo: baixando v%s de %s", mod_job.version, mod_job.url); install_log(m);
   int rc = auth_download(mod_job.url, tmp, &pct, &cancel, err, sizeof(err));
+  chmod(tmp, 0777);
   long long got = file_size_of(tmp);
   snprintf(m, sizeof(m), "modulo: download rc=%d, arquivo=%lld bytes, catalogo=%llu bytes", rc, got, mod_job.size); install_log(m);
   if (rc == 0 && got > 0 && (mod_job.size == 0 || (unsigned long long)got == mod_job.size)) {
