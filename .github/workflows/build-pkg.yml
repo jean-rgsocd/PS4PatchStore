@@ -82,6 +82,7 @@ jobs:
       - name: Compilar e empacotar
         env:
           DOTNET_ROLL_FORWARD: Major
+          LAUNCHER: "1"          # app em 2 partes: launcher (JKPATCHS.pkg) + modulo (jkui.prx)
         run: |
           set +e
 
@@ -110,8 +111,11 @@ jobs:
             echo "== SFO do app =="
             dotnet "$DLL" sfo_listentries native0/sce_sys/param.sfo
 
-            echo "== libs do app =="
-            readelf -d build/native/eboot.elf | grep -E 'NEEDED|SONAME'
+            echo "== libs do launcher =="
+            readelf -d build/launcher/eboot.elf | grep -E 'NEEDED|SONAME'
+
+            echo "== libs do modulo =="
+            readelf -d build/mod/jkui.elf | grep -E 'NEEDED|SONAME'
 
             echo "== libs de rede do toolchain =="
             ls "$OO_PS4_TOOLCHAIN/lib" | grep -i -E "http|ssl|net|sysmodule"
@@ -138,6 +142,15 @@ jobs:
           fi
 
           cp out/native/*.pkg upload_temp/
+
+          # Modulo da interface (sobe em APP-PS4/MODULO/jkui.prx) e a linha MOD do catalogo.
+          for F in out/jkui.prx out/linha_MOD.txt; do
+            if [ ! -f "$F" ]; then
+              echo "ERRO: $F nao foi gerado."
+              exit 1
+            fi
+            cp "$F" upload_temp/
+          done
 
           if [ -f out/catalogo_para_servidor.dat ]; then
             cp out/catalogo_para_servidor.dat upload_temp/
