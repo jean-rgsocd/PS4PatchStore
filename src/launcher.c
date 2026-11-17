@@ -16,7 +16,10 @@ uint64_t sceLibcHeapSize = 256ull * 1024 * 1024;
 extern int jk_load_start_module(const char *name, size_t argc, const void *argv, unsigned flags, void *opt, int *res) __asm__("sceKernelLoadStartModule");
 extern int jk_dlsym(int handle, const char *sym, void **addr) __asm__("sceKernelDlsym");
 
-#define DIR_JK  "/data/jk"
+#ifndef JK_DIR
+#define JK_DIR "/data/jk"      /* o app de teste do rollback usa outra pasta (/data/jkt) para nao mexer no app real */
+#endif
+#define DIR_JK  JK_DIR
 #define MOD     DIR_JK "/jkui.prx"
 #define MOD_NEW DIR_JK "/jkui.prx.new"
 #define MOD_BAK DIR_JK "/jkui.prx.bak"

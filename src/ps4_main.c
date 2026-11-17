@@ -32,6 +32,10 @@
 #include "version.h"
 #include "vplayer.h"
 
+#ifndef JK_DIR
+#define JK_DIR "/data/jk"
+#endif
+
 /* Heap do libc: a UI usa ~60 MB (tela, fundo, capas, JPEG decodificado). */
 #ifndef JK_MODULE
 uint64_t sceLibcHeapSize = 256ull * 1024 * 1024;   /* no modo launcher+modulo, quem define e o launcher */
@@ -573,8 +577,8 @@ static void *mod_thread(void *arg) {
   (void)arg;
   char err[160] = "", m[300];
   volatile int pct = 0, cancel = 0;
-  const char *tmp = "/data/jk/jkui.prx.dl", *fin = "/data/jk/jkui.prx.new";
-  mkdir("/data/jk", 0777);
+  const char *tmp = JK_DIR "/jkui.prx.dl", *fin = JK_DIR "/jkui.prx.new";
+  mkdir(JK_DIR, 0777);
   unlink(tmp);
   snprintf(m, sizeof(m), "modulo: baixando v%s de %s", mod_job.version, mod_job.url); install_log(m);
   int rc = auth_download(mod_job.url, tmp, &pct, &cancel, err, sizeof(err));
@@ -594,10 +598,10 @@ static void *mod_thread(void *arg) {
 static void mod_update_check(const Catalog *c) {
   if (!c->mod.url[0] || mod_state) return;
   if (catalog_version_num(c->mod.version) <= catalog_version_num(APP_VERSION)) {
-    unlink("/data/jk/jkui.prx.new");
+    unlink(JK_DIR "/jkui.prx.new");
     return;
   }
-  long long have = file_size_of("/data/jk/jkui.prx.new");
+  long long have = file_size_of(JK_DIR "/jkui.prx.new");
   if (have > 0 && (c->mod.size == 0 || (unsigned long long)have == c->mod.size)) { mod_state = 2; return; }   /* ja baixado */
   mod_job = c->mod;
   mod_state = 1;
@@ -725,6 +729,10 @@ int __attribute__((visibility("default"))) jkui_main(void) {
 int main(void) {
 #endif
   install_log("=== JK PATCHS (nativo) v" APP_VERSION " ===");
+#ifdef JK_BADMOD                       /* so no teste do rollback: modulo que TRAVA de proposito antes de subir */
+  install_log("MODULO RUIM: travando de proposito.");
+  { volatile int *bad = (volatile int *)0; *bad = 1; }
+#endif
 #ifdef JK_MODTEST
   modtest();
 #endif
@@ -760,7 +768,7 @@ int main(void) {
   present(screen);
   ui_take_dirty(ui);
 #ifdef JK_MODULE
-  unlink("/data/jk/boot.pending");   /* subiu sem travar: o launcher pode confiar neste modulo */
+  unlink(JK_DIR "/boot.pending");   /* subiu sem travar: o launcher pode confiar neste modulo */
 #endif
 
   for (;;) {
