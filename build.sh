@@ -108,7 +108,7 @@ mkdir -p out
 # ---------------------------------------------------------------------------
 echo "=== App nativo ==="
 
-make native
+if [ -n "${LAUNCHER:-}" ]; then make launcher; else make native; fi
 
 rm -rf native0/assets native0/sce_sys native0/sce_module
 mkdir -p native0/assets/fonts native0/assets/images native0/sce_sys native0/sce_module

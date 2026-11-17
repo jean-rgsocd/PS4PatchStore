@@ -51,5 +51,30 @@ build/jkmod/jkmod_test.elf: build/jkmod/jkmod_test.o
 build/jkmod_test.prx: build/jkmod/jkmod_test.elf
 > $(TC)/bin/linux/create-fself -in=build/jkmod/jkmod_test.elf --out=build/jkmod/jkmod_test.oelf --lib=build/jkmod_test.prx --paid 0x3800000000000011
 
+# ---------------------------------------------------------------- launcher + modulo (jkui.prx): app atualizavel sem reinstalar
+MOD_OBJS := $(addprefix build/mod/,$(addsuffix .o,$(NATIVE_SRC)))
+
+build/mod/%.o: src/%.c
+> mkdir -p build/mod
+> clang $(NATIVE_CFLAGS) -DJK_MODULE -o $@ $<
+
+build/mod/jkui.elf: $(MOD_OBJS)
+> ld.lld $(MOD_OBJS) -o $@ -m elf_x86_64 -pie --script $(TC)/link.x --eh-frame-hdr -L$(TC)/lib $(NATIVE_LIBS) $(TC)/lib/crtlib.o
+
+build/jkui.prx: build/mod/jkui.elf
+> $(TC)/bin/linux/create-fself -in=build/mod/jkui.elf --out=build/mod/jkui.oelf --lib=build/jkui.prx --paid 0x3800000000000011
+
+build/launcher/launcher.o: src/launcher.c
+> mkdir -p build/launcher
+> clang $(NATIVE_CFLAGS) -o $@ $<
+
+build/launcher/eboot.elf: build/launcher/launcher.o
+> ld.lld build/launcher/launcher.o -o $@ -m elf_x86_64 -pie --script $(TC)/link.x --eh-frame-hdr -L$(TC)/lib $(NATIVE_LIBS) $(TC)/lib/crt1.o
+
+launcher: build/launcher/eboot.elf build/jkui.prx
+> mkdir -p native0
+> $(TC)/bin/linux/create-fself -in=build/launcher/eboot.elf --out=build/launcher/eboot.oelf --eboot native0/eboot.bin --paid 0x3800000000000011
+> cp build/jkui.prx native0/jkui.prx
+
 clean:
 > rm -rf build image0/eboot.bin native0 out

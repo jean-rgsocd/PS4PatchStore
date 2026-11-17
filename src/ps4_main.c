@@ -33,7 +33,9 @@
 #include "vplayer.h"
 
 /* Heap do libc: a UI usa ~60 MB (tela, fundo, capas, JPEG decodificado). */
-uint64_t sceLibcHeapSize = 256ull * 1024 * 1024;
+#ifndef JK_MODULE
+uint64_t sceLibcHeapSize = 256ull * 1024 * 1024;   /* no modo launcher+modulo, quem define e o launcher */
+#endif
 
 #define FW        1920
 #define FH        1080
@@ -659,7 +661,11 @@ static void modtest(void) {
 #endif
 
 /* ------------------------------------------------------------------ main */
+#ifdef JK_MODULE
+int __attribute__((visibility("default"))) jkui_main(void) {
+#else
 int main(void) {
+#endif
   install_log("=== JK PATCHS (nativo) v" APP_VERSION " ===");
 #ifdef JK_MODTEST
   modtest();
@@ -695,6 +701,9 @@ int main(void) {
   ui_draw(ui);
   present(screen);
   ui_take_dirty(ui);
+#ifdef JK_MODULE
+  unlink("/data/jk/boot.pending");   /* subiu sem travar: o launcher pode confiar neste modulo */
+#endif
 
   for (;;) {
     poll_input(ui);
@@ -710,3 +719,7 @@ int main(void) {
   }
   return 0;
 }
+
+#ifdef JK_MODULE
+const char * __attribute__((visibility("default"))) jkui_version(void) { return APP_VERSION; }
+#endif
