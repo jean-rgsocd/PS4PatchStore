@@ -1,0 +1,17 @@
+COMO ATUALIZAR O APP (launcher + modulo)
+
+O app tem 2 partes:
+  - JKPATCHS.pkg  = launcher (quase nunca muda). O cliente so reinstala quando ELE muda.
+  - jkui.prx      = modulo com a interface e a logica. Atualiza SOZINHO, sem reinstalar.
+
+ATUALIZAR SO O MODULO (o dia a dia):
+  1. Aumente a versao em src/version.h (ex.: 1.23), commit e push.
+  2. GitHub > Actions > build-release > Run workflow. Baixe o artifact "jkpatchs-release".
+  3. Painel: suba jkui.prx como APP-PS4/MODULO/jkui.prx (substitui o antigo).
+  4. Catalogo: troque a linha MOD pela de linha_MOD.txt (mesma ideia, versao e tamanho novos). Salve.
+  NAO mexa na linha APP.
+
+ATUALIZAR O LAUNCHER (raro; o cliente apaga e reinstala uma vez):
+  1. Aumente launcher.ver (ex.: 1.30) e src/version.h. Build como acima.
+  2. Painel: suba JKPATCHS.pkg como APP-PS4/JKPATCHS.pkg.
+  3. Catalogo: troque as linhas APP e MOD pelas de catalogo_com_APP_e_MOD.txt.

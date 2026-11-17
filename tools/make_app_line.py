@@ -11,6 +11,8 @@ from pkg_info import pkg_info
 def main():
     pkg, url_file, cat = sys.argv[1:4]
     ver = re.search(r'APP_VERSION\s+"([0-9]+\.[0-9]{2})"', open("src/version.h").read()).group(1)
+    if os.environ.get("APP_LINE_VERSION"):   # modo launcher: a linha APP e a versao do PKG (launcher), nao a do modulo
+        ver = os.environ["APP_LINE_VERSION"]
     info = pkg_info(pkg)
     info["size"] = os.path.getsize(pkg)
     url = ""

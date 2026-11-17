@@ -140,8 +140,17 @@ run_pkgtool pkg_build project.gp4 out/native
 echo "=== Linha de atualizacao do app ==="
 APKG=$(ls out/native/*.pkg 2>/dev/null | head -1 || true)
 if [ -n "$APKG" ]; then
+  if [ -n "${LAUNCHER:-}" ] && [ -f launcher.ver ]; then export APP_LINE_VERSION=$(head -1 launcher.ver | tr -d '\r '); fi
   python3 tools/make_app_line.py "$APKG" app.url out/catalogo_para_servidor.dat \
     || echo "AVISO: nao foi possivel gerar a linha APP"
+fi
+
+# Modo launcher: copia o modulo para out/ e gera a linha MOD do catalogo.
+if [ -n "${LAUNCHER:-}" ] && [ -f build/jkui.prx ]; then
+  echo "=== Modulo (jkui.prx) e linha MOD ==="
+  cp build/jkui.prx out/jkui.prx
+  python3 tools/make_mod_line.py out/jkui.prx app.url out/catalogo_para_servidor.dat out/linha_MOD.txt \
+    || echo "AVISO: nao foi possivel gerar a linha MOD"
 fi
 
 # Listar resultados
