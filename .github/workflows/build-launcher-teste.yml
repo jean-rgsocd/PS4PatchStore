@@ -53,6 +53,13 @@ jobs:
           bash build.sh > build_app.log 2>&1 || { tail -n 60 build_app.log; exit 1; }
           cp out/native/*.pkg teste/TESTE_LAUNCHER.pkg
           cp build/jkui.prx teste/jkui.prx
+          # Modulo de teste marcado como v1.22: serve para ver o app se atualizar sozinho (sem reinstalar).
+          rm -rf build/mod build/jkui.prx
+          make build/jkui.prx NATIVE_EXTRA='-DAPP_VERSION=\"1.22\"' > build_mod122.log 2>&1 || { tail -n 40 build_mod122.log; exit 1; }
+          cp build/jkui.prx teste/jkui_v1.22.prx
+          SZ=$(stat -c %s teste/jkui_v1.22.prx)
+          printf 'MOD\t1.22\thttps://pub-c6518eb1477949a58d959f5a769703d1.r2.dev/APP-PS4/MODULO/jkui.prx\t%s\n' "$SZ" > teste/linha_MOD.txt
+          cat teste/linha_MOD.txt
           ls -la teste
       - uses: actions/upload-artifact@v4
         if: always()
@@ -61,5 +68,7 @@ jobs:
           path: |
             teste/TESTE_LAUNCHER.pkg
             teste/jkui.prx
+            teste/jkui_v1.22.prx
+            teste/linha_MOD.txt
             diag_toolchain.log
             build_app.log

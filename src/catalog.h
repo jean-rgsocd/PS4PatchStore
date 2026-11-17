@@ -42,9 +42,17 @@ typedef struct {
   char type[8];
 } CatApp;
 
+/* Linha "MOD": versao mais recente do modulo da interface (jkui.prx), baixado em /data/jk sem reinstalar o app. */
+typedef struct {
+  char version[16];
+  char url[1024];
+  unsigned long long size;
+} CatMod;
+
 typedef struct {
   int locked;              /* 1 = catalogo "so olhar" (visitante / plano vencido ou pendente): sem links de download */
   CatApp app;
+  CatMod mod;
   int ncat;
   CatCategory cat[CAT_MAX_CATS];   /* cat[0] e sempre "all" */
   int ngame;

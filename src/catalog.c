@@ -62,6 +62,10 @@ int catalog_parse(Catalog *c, char *text) {
       copy(c->app.content_id, sizeof(c->app.content_id), f[3]);
       c->app.size = strtoull(f[4], NULL, 10);
       copy(c->app.type, sizeof(c->app.type), f[5]);
+    } else if (!strcmp(f[0], "MOD") && n >= 4) {
+      copy(c->mod.version, sizeof(c->mod.version), f[1]);
+      copy(c->mod.url, sizeof(c->mod.url), f[2]);
+      c->mod.size = strtoull(f[3], NULL, 10);
     } else if (!strcmp(f[0], "CAT") && n >= 3) {
       if (!strcmp(f[1], "all")) {                       /* so renomeia o "todas" */
         copy(c->cat[0].label, sizeof(c->cat[0].label), f[2]);

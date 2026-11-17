@@ -564,6 +564,62 @@ static void support_reminder(UI *ui, const AuthEvent *ev) {
   install_log("Lembrete de apoio mostrado (prazo de 30 dias vencido).");
 }
 
+/* ------------------------------------------------------------------ atualizacao do modulo (so no modo launcher+modulo) */
+#ifdef JK_MODULE
+static volatile int mod_state = 0;          /* 0 = nada, 1 = baixando, 2 = pronto (reabrir o app), 3 = falhou */
+static CatMod mod_job;
+
+static void *mod_thread(void *arg) {
+  (void)arg;
+  char err[160] = "", m[300];
+  volatile int pct = 0, cancel = 0;
+  const char *tmp = "/data/jk/jkui.prx.dl", *fin = "/data/jk/jkui.prx.new";
+  mkdir("/data/jk", 0777);
+  unlink(tmp);
+  snprintf(m, sizeof(m), "modulo: baixando v%s de %s", mod_job.version, mod_job.url); install_log(m);
+  int rc = auth_download(mod_job.url, tmp, &pct, &cancel, err, sizeof(err));
+  long long got = file_size_of(tmp);
+  snprintf(m, sizeof(m), "modulo: download rc=%d, arquivo=%lld bytes, catalogo=%llu bytes", rc, got, mod_job.size); install_log(m);
+  if (rc == 0 && got > 0 && (mod_job.size == 0 || (unsigned long long)got == mod_job.size)) {
+    unlink(fin);
+    if (rename(tmp, fin) == 0) { install_log("modulo: novo modulo pronto; sera aplicado na proxima abertura."); mod_state = 2; return NULL; }
+  }
+  unlink(tmp);
+  install_log("modulo: atualizacao falhou (tamanho diferente ou erro de rede).");
+  mod_state = 3;
+  return NULL;
+}
+
+static void mod_update_check(const Catalog *c) {
+  if (!c->mod.url[0] || mod_state) return;
+  if (catalog_version_num(c->mod.version) <= catalog_version_num(APP_VERSION)) {
+    unlink("/data/jk/jkui.prx.new");
+    return;
+  }
+  long long have = file_size_of("/data/jk/jkui.prx.new");
+  if (have > 0 && (c->mod.size == 0 || (unsigned long long)have == c->mod.size)) { mod_state = 2; return; }   /* ja baixado */
+  mod_job = c->mod;
+  mod_state = 1;
+  pthread_t t; pthread_attr_t a;
+  pthread_attr_init(&a);
+  pthread_attr_setstacksize(&a, 256 * 1024);
+  pthread_attr_setdetachstate(&a, PTHREAD_CREATE_DETACHED);
+  if (pthread_create(&t, &a, mod_thread, NULL) != 0) mod_state = 3;
+  pthread_attr_destroy(&a);
+}
+
+static void mod_update_poll(UI *ui) {
+  static int shown = 0;
+  if (mod_state == 2 && shown != 2) {
+    shown = 2;
+    ui_toast(ui, "Atualização do app baixada. Feche e abra o app para aplicar.", UI_TOAST_INFO);
+  }
+}
+#else
+static void mod_update_check(const Catalog *c) { (void)c; }
+static void mod_update_poll(UI *ui) { (void)ui; }
+#endif
+
 static void check_auth(UI *ui) {
   AuthEvent ev;
   if (!auth_poll(&ev)) return;
@@ -598,6 +654,7 @@ static void check_auth(UI *ui) {
         }
         ui_set_catalog(ui, &cat);
         install_log("Catalogo recebido do servidor.");
+        mod_update_check(&cat);
         if (ev.registered && ev.user[0]) ui_open_shop(ui);       /* conta nova: mostra os planos (o teste gratis ja esta valendo) */
         if (!ev.offline) support_reminder(ui, &ev);
         if (cat.app.url[0] && catalog_version_num(cat.app.version) <= catalog_version_num(APP_VERSION)) {
@@ -710,6 +767,7 @@ int main(void) {
     check_install_result(ui);
     check_download_progress(ui);
     check_auth(ui);
+    mod_update_poll(ui);
     ui_tick(ui);
     if (ui_take_dirty(ui)) {
       ui_draw(ui);
