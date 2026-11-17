@@ -730,10 +730,12 @@ int main(void) {
 #endif
   install_log("=== JK PATCHS (nativo) v" APP_VERSION " ===");
 #ifdef JK_CRASHFLAG                    /* so no teste do rollback: se existir crash.flag, apaga e TRAVA de proposito (uma vez) */
-  if (access(JK_DIR "/crash.flag", F_OK) == 0) {
+  int cf = open(JK_DIR "/crash.flag", O_RDONLY);   /* open(), nao access(): access nao funciona direito neste ambiente */
+  if (cf >= 0) {
+    close(cf);
     unlink(JK_DIR "/crash.flag");
     install_log("MODULO DE TESTE: travando de proposito.");
-    { volatile int *bad = (volatile int *)0; *bad = 1; }
+    __builtin_trap();            /* ud2: derruba o app sempre (escrever no endereco 0 nao derruba neste PS4) */
   }
 #endif
 #ifdef JK_MODTEST
