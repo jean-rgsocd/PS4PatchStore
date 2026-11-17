@@ -161,15 +161,23 @@ static const CatGame *cur_game(UI *ui) {
  * (indice nbtn). dl[] e md[] guardam o indice do botao dentro de g->btn. */
 static int is_media(const CatButton *b) { return !strcmp(b->action, "video") || !strcmp(b->action, "image"); }
 /* Modo dividido (card "APPs e Plugins", tag APPS): detalhe em 3 colunas = info | APPs (PKG, verde) | PLUGINS (arquivos, amarelo). */
-static int split_mode(const CatGame *g) { return g && !strcmp(g->tag, "APPS"); }
+static int split_mode(const CatGame *g) { return g && (!strcmp(g->tag, "APPS") || !strcmp(g->tag, "PLACARES")); }
 static int is_pkg_btn(const CatButton *b) { return !is_media(b) && !strcmp(b->action, "pkg"); }
-static int split_na(const CatGame *g) { int n = 0; if (!split_mode(g)) return 0; for (int i = 0; i < g->nbtn; i++) if (is_pkg_btn(&g->btn[i])) n++; return n; }
+/* Coluna da esquerda no modo dividido: tag APPS = botoes pkg; tag PLACARES (JK-MOD Demisan) = botoes com tipo "COL1" (placares), o resto = narracoes. */
+static int left_btn(const CatGame *g, const CatButton *b) {
+  if (is_media(b)) return 0;
+  if (!strcmp(g->tag, "PLACARES")) return !strcmp(b->type, "COL1");
+  return is_pkg_btn(b);
+}
+static const char *split_t1(const CatGame *g) { return !strcmp(g->tag, "PLACARES") ? "PLACARES" : "APPS"; }
+static const char *split_t2(const CatGame *g) { return !strcmp(g->tag, "PLACARES") ? "NARRAÇÕES" : "PLUGINS"; }
+static int split_na(const CatGame *g) { int n = 0; if (!split_mode(g)) return 0; for (int i = 0; i < g->nbtn; i++) if (left_btn(g, &g->btn[i])) n++; return n; }
 static void lists(const CatGame *g, int *dl, int *nd, int *md, int *nm) {
   *nd = 0; *nm = 0;
   if (!g) return;
   if (split_mode(g)) {                                            /* PKGs primeiro, depois os demais downloads */
-    for (int i = 0; i < g->nbtn; i++) if (is_pkg_btn(&g->btn[i])) dl[(*nd)++] = i;
-    for (int i = 0; i < g->nbtn; i++) if (!is_media(&g->btn[i]) && !is_pkg_btn(&g->btn[i])) dl[(*nd)++] = i;
+    for (int i = 0; i < g->nbtn; i++) if (left_btn(g, &g->btn[i])) dl[(*nd)++] = i;
+    for (int i = 0; i < g->nbtn; i++) if (!is_media(&g->btn[i]) && !left_btn(g, &g->btn[i])) dl[(*nd)++] = i;
     for (int i = 0; i < g->nbtn; i++) if (is_media(&g->btn[i])) md[(*nm)++] = i;
   } else
   for (int i = 0; i < g->nbtn; i++) {
@@ -1774,8 +1782,8 @@ static void draw_detail(UI *ui) {
   /* --- painel(is) da direita: downloads (modo dividido: APPs verde + PLUGINS amarelo) */
   if (split) {
     int pw2 = 550, ax = 698, bx2 = ax + pw2 + 24;
-    draw_dl_panel(ui, g, dl, 0, na, ax, pw2, "APPS", C_ACCENT, ui->dscroll, 0);
-    draw_dl_panel(ui, g, dl, na, nd, bx2, pw2, "PLUGINS", C_FOCUS, ui->dscroll2, 1);
+    draw_dl_panel(ui, g, dl, 0, na, ax, pw2, split_t1(g), C_ACCENT, ui->dscroll, 0);
+    draw_dl_panel(ui, g, dl, na, nd, bx2, pw2, split_t2(g), C_FOCUS, ui->dscroll2, 1);
   } else
     draw_dl_panel(ui, g, dl, 0, nd, DT_PX, DT_PW, "DOWNLOADS", 0, ui->dscroll, 1);
 }

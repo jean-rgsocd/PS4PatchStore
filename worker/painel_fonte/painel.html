@@ -89,7 +89,7 @@ textarea.raw{width:100%;height:calc(100vh - 220px);font:12px/1.4 Consolas,monosp
 
 <div id="app" hidden>
  <div class="top">
-  <img src="%%LOGO%%" alt=""><b>JK PATCHS</b> <span class="mut" style="font-size:11px">painel v15</span>
+  <img src="%%LOGO%%" alt=""><b>JK PATCHS</b> <span class="mut" style="font-size:11px">painel v16</span>
   <div class="tabs" id="tabs"></div>
   <span id="dirtyTag" class="warn" hidden>● alterações não salvas</span>
   <button class="s" onclick="sair()">Sair</button>
@@ -240,7 +240,7 @@ function desenharLista(){
     if(!c)h+="<p class='mut'>Nenhum card encontrado.</p>";
   }else{
     var tr=["Início"];PATH.forEach(function(id){tr.push(catLabel(id))});
-    h+="<div class='bar' style='margin-bottom:8px'>"+(PATH.length?"<button class='s' onclick='voltarPasta()'>← Voltar</button>":"")+"<span class='mut' style='flex:1'>"+esc(tr.join(" › "))+"</span><button class='s' onclick='novoCard()'>+ Novo card"+(PATH.length?" aqui":"")+"</button></div>";
+    h+="<div class='bar' style='margin-bottom:8px'>"+(PATH.length?"<button class='s' onclick='voltarPasta()'>← Voltar</button>":"")+"<span class='mut' style='flex:1'>"+esc(tr.join(" › "))+"</span><button class='s' onclick='novoCard()'>+ Novo card"+(PATH.length?" aqui":"")+"</button><button class='s' onclick='novaPasta()'>+ Pasta</button></div>";
     var l=nivelCards();
     l.forEach(function(i){h+=cardRow(M.games[i],i)});
     if(!l.length)h+="<p class='mut'>Nada aqui ainda. Use &quot;+ Novo card&quot;.</p>";
@@ -294,7 +294,7 @@ function btnHtml(g,b,i){
   if(a==="pkg"){
     h+="<div class='w2'><small>content_id <button class='s' onclick='lerPkg("+i+")'>ler do PKG</button></small><input value='"+esc(f[3])+"' oninput='setB("+i+",3,this.value,3)'></div>"+
        "<div><small>tamanho (bytes)</small><input value='"+esc(f[4])+"' oninput='setB("+i+",4,this.value,3)'></div>"+
-       "<div><small>tipo</small><select onchange='setB("+i+",5,this.value)'>"+["PS4GD","PS4GP","PS4AC","PS4AL",""].map(function(x){return "<option value='"+x+"'"+(x===f[5]?" selected":"")+">"+(x||"(vazio)")+"</option>"}).join("")+"</select></div>"+
+       "<div><small>tipo</small><select onchange='setB("+i+",5,this.value)'>"+["PS4GD","PS4GP","PS4AC","PS4AL","COL1",""].map(function(x){return "<option value='"+x+"'"+(x===f[5]?" selected":"")+">"+(x==="COL1"?"COL1 (coluna da esquerda: placares)":(x||"(vazio)"))+"</option>"}).join("")+"</select></div>"+
        "<div><small>jogo base?</small><select onchange='setB("+i+",6,this.value)'><option value='0'"+(f[6]!=="1"?" selected":"")+">não</option><option value='1'"+(f[6]==="1"?" selected":"")+">sim</option></select></div>";
   }
   if(a==="download"){
@@ -307,6 +307,21 @@ function sujo(){marcar(true);var d=$("dirtyTag");if(d)d.hidden=false;fixBar()}
 function setG(i,v,nr){M.games[SEL].f[i]=v;if(i===0&&!SQ)PATH=childSet()[v]?[v]:[];sujo();if(!nr)desenharCat();else{var cdv=document.querySelectorAll(".cd");if(cdv[SEL]){var t=cdv[SEL].querySelector("b");if(t&&i===4)t.textContent=v;if(i===1)cdv[SEL].querySelector("img").src=v}}fixBar()}
 function setB(i,j,v,mode){var b=M.games[SEL].btns[i];b.f[j]=v;sujo();if(mode===2){if(v==="video"||v==="image"){b.f[3]="";b.f[4]="0";b.f[5]="";b.f[6]="0"}if(v==="pkg"){b.f[5]=b.f[5]||"PS4GD"}desenharCat()}else if(mode===3){}fixBar()}
 function fixBar(){var bs=document.querySelectorAll("#v_cat .bar button");bs.forEach(function(b){if(b.textContent==="Salvar catálogo"||b.textContent==="Descartar")b.disabled=!DIRTY})}
+function novaPasta(){
+  var nome=prompt("Nome da nova pasta (ex.: JK-MOD DEMISAN). Ela vira uma categoria e um card-pasta aqui dentro.");
+  if(nome===null)return;nome=nome.trim();if(!nome)return;
+  var slug=norm(nome).replace(/ /g,"_");if(!slug){alert("Nome inválido.");return}
+  var id=/^jk mod/.test(norm(nome))?"jkmod_"+norm(nome).replace(/^jk mod ?/,"").replace(/ /g,"_"):slug;
+  if(id==="jkmod_")id="jkmod_"+Date.now();
+  if(M.cats.some(function(c){return c[0]===id||norm(c[1])===norm(nome)})){alert("Já existe uma categoria com esse nome ou id ("+id+").");return}
+  var aqui=PATH.length?PATH[PATH.length-1]:"plugins";
+  var mod=null;M.games.forEach(function(g){if(!mod&&g.f[2]==="PASTA"&&g.f[0]===aqui)mod=g});
+  var f=mod?mod.f.slice():[aqui,"","PASTA","","","",""];
+  f=padTo(f,7);f[0]=aqui;f[2]="PASTA";f[4]=nome.toUpperCase();
+  M.cats.push([id,nome]);
+  M.games.push({f:f,btns:[]});SEL=M.games.length-1;sujo();desenharCat();
+  alert("Pasta criada: id "+id+". Agora abra a pasta (clique no card) e use '+ Novo card aqui'. Salve o catálogo no fim.");
+}
 function novoCard(){var cat=PATH.length?PATH[PATH.length-1]:"patch";M.games.push({f:padTo([cat,"","","","Novo card","",""],7),btns:[]});SEL=M.games.length-1;sujo();desenharCat()}
 function moveCard(d){var c=M.games[SEL].f[0],j=SEL+d;while(j>=0&&j<M.games.length&&M.games[j].f[0]!==c)j+=d;if(j<0||j>=M.games.length)return;var t=M.games[SEL];M.games[SEL]=M.games[j];M.games[j]=t;SEL=j;sujo();desenharCat()}
 function novoBtn(a){var f=["NOVO BOTÃO","","","","0","","0",a,"",""];if(a==="pkg"){f[5]="PS4GD"}M.games[SEL].btns.push({f:f,n:10});sujo();desenharCat()}
