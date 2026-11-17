@@ -9,6 +9,7 @@
 #include <stdint.h>
 #include <unistd.h>
 #include <sys/stat.h>
+#include <fcntl.h>
 #include <orbis/libkernel.h>
 
 uint64_t sceLibcHeapSize = 256ull * 1024 * 1024;
@@ -26,7 +27,7 @@ extern int jk_dlsym(int handle, const char *sym, void **addr) __asm__("sceKernel
 #define MOD_BAD DIR_JK "/jkui.prx.bad"
 #define PEND    DIR_JK "/boot.pending"
 #define MOD_APP "/app0/jkui.prx"
-#define LAUNCHER_VERSION "2.1"
+#define LAUNCHER_VERSION "2.2"
 
 static void lg(const char *m) {
   FILE *f = fopen("/data/ps4store.log", "a");
@@ -45,8 +46,9 @@ static int try_run(const char *path, int guard) {
   int res = 0;
   int h = jk_load_start_module(path, 0, NULL, 0, NULL, &res);
   if (h < 0) {
-    struct stat st; unsigned md = stat(path, &st) == 0 ? (unsigned)st.st_mode : 0;
-    snprintf(b, sizeof(b), "LAUNCHER: falha ao carregar %s (0x%08x) modo=%o tam=%lld", path, (unsigned)h, md, (long long)st.st_size); lg(b);
+    long long tam = -1; int fd = open(path, O_RDONLY);
+    if (fd >= 0) { tam = (long long)lseek(fd, 0, SEEK_END); close(fd); }
+    snprintf(b, sizeof(b), "LAUNCHER: falha ao carregar %s (0x%08x) tam=%lld", path, (unsigned)h, tam); lg(b);
     if (guard) unlink(PEND);
     return -1;
   }
@@ -84,6 +86,7 @@ int main(void) {
   }
 
   int rc = try_run(MOD, 1);
+  if (rc == -1 && exists(MOD)) { unlink(MOD_BAD); rename(MOD, MOD_BAD); }   /* modulo que nao carrega: poe de lado (nao tenta de novo) */
   if (rc == -1) rc = try_run(MOD_APP, 0);
   if (rc == -1) lg("LAUNCHER: nenhum modulo pode ser carregado.");
   return rc == -1 ? 1 : rc;

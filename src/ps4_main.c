@@ -729,9 +729,12 @@ int __attribute__((visibility("default"))) jkui_main(void) {
 int main(void) {
 #endif
   install_log("=== JK PATCHS (nativo) v" APP_VERSION " ===");
-#ifdef JK_BADMOD                       /* so no teste do rollback: modulo que TRAVA de proposito antes de subir */
-  install_log("MODULO RUIM: travando de proposito.");
-  { volatile int *bad = (volatile int *)0; *bad = 1; }
+#ifdef JK_CRASHFLAG                    /* so no teste do rollback: se existir crash.flag, apaga e TRAVA de proposito (uma vez) */
+  if (access(JK_DIR "/crash.flag", F_OK) == 0) {
+    unlink(JK_DIR "/crash.flag");
+    install_log("MODULO DE TESTE: travando de proposito.");
+    { volatile int *bad = (volatile int *)0; *bad = 1; }
+  }
 #endif
 #ifdef JK_MODTEST
   modtest();
