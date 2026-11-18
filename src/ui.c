@@ -160,17 +160,19 @@ static const CatGame *cur_game(UI *ui) {
 /* Itens do detalhe: "downloads" = botoes pkg/download; "midias" = botoes video/image e, por ultimo, o video do card
  * (indice nbtn). dl[] e md[] guardam o indice do botao dentro de g->btn. */
 static int is_media(const CatButton *b) { return !strcmp(b->action, "video") || !strcmp(b->action, "image"); }
+/* v1.27: botao com tipo "MID" (download) fica na faixa de midias, ao lado de "Ver instrucoes", e nao nas colunas */
+static int is_strip(const CatButton *b) { return is_media(b) || !strcmp(b->type, "MID"); }
 /* Modo dividido (card "APPs e Plugins", tag APPS): detalhe em 3 colunas = info | APPs (PKG, verde) | PLUGINS (arquivos, amarelo). */
 static int split_mode(const CatGame *g) { return g && (!strcmp(g->tag, "APPS") || !strcmp(g->tag, "PLACARES")); }
 static int is_pkg_btn(const CatButton *b) { return !is_media(b) && !strcmp(b->action, "pkg"); }
 /* Coluna da esquerda no modo dividido: tag APPS = botoes pkg; tag PLACARES (JK-MOD Demisan) = botoes com tipo "COL1" (placares), o resto = narracoes. */
 static int left_btn(const CatGame *g, const CatButton *b) {
-  if (is_media(b)) return 0;
+  if (is_strip(b)) return 0;
   if (!strcmp(g->tag, "PLACARES")) return !strcmp(b->type, "COL1");
   return is_pkg_btn(b);
 }
 /* v1.24: 3a coluna no card JK-MOD Demisan (tag PLACARES): botoes com tipo "COL3" (narracoes com voz chilena). Sem COL3 = 2 colunas como antes. */
-static int right_btn(const CatGame *g, const CatButton *b) { return !is_media(b) && !strcmp(g->tag, "PLACARES") && !strcmp(b->type, "COL3"); }
+static int right_btn(const CatGame *g, const CatButton *b) { return !is_strip(b) && !strcmp(g->tag, "PLACARES") && !strcmp(b->type, "COL3"); }
 static const char *split_t1(const CatGame *g) { return !strcmp(g->tag, "PLACARES") ? "PLACARES" : "APPS"; }
 static int split_na(const CatGame *g);
 static int split_nc(const CatGame *g) { int n = 0; if (!split_mode(g)) return 0; for (int i = 0; i < g->nbtn; i++) if (right_btn(g, &g->btn[i])) n++; return n; }
@@ -197,12 +199,12 @@ static void lists(const CatGame *g, int *dl, int *nd, int *md, int *nm) {
   if (!g) return;
   if (split_mode(g)) {                                            /* PKGs primeiro, depois os demais downloads */
     for (int i = 0; i < g->nbtn; i++) if (left_btn(g, &g->btn[i])) dl[(*nd)++] = i;
-    for (int i = 0; i < g->nbtn; i++) if (!is_media(&g->btn[i]) && !left_btn(g, &g->btn[i]) && !right_btn(g, &g->btn[i])) dl[(*nd)++] = i;
+    for (int i = 0; i < g->nbtn; i++) if (!is_strip(&g->btn[i]) && !left_btn(g, &g->btn[i]) && !right_btn(g, &g->btn[i])) dl[(*nd)++] = i;
     for (int i = 0; i < g->nbtn; i++) if (right_btn(g, &g->btn[i])) dl[(*nd)++] = i;
-    for (int i = 0; i < g->nbtn; i++) if (is_media(&g->btn[i])) md[(*nm)++] = i;
+    for (int i = 0; i < g->nbtn; i++) if (is_strip(&g->btn[i])) md[(*nm)++] = i;
   } else
   for (int i = 0; i < g->nbtn; i++) {
-    if (is_media(&g->btn[i])) md[(*nm)++] = i;
+    if (is_strip(&g->btn[i])) md[(*nm)++] = i;
     else dl[(*nd)++] = i;
   }
   if (g->video[0]) md[(*nm)++] = g->nbtn;
@@ -1549,7 +1551,12 @@ static void draw_media_card(UI *ui, int x, int y, int w, int h, const char *labe
   gfx_rrect(s, x, y, w, h, 16, C_WHITE, 36, 2);
   int cx = x + w / 2, cy = y + th / 2;
   gfx_circle(s, cx, cy, 30, C_ACCENT, focused ? 255 : 150);
-  if (!is_image) text_draw_in(s, ui->fb, 30, cx - 30, 60, cy + 10, "▶", C_DARKTXT, 255, 0, 1);
+  if (is_image == 2) {                                           /* download: seta para baixo */
+    gfx_rrect(s, cx - 5, cy - 16, 10, 18, 3, C_DARKTXT, 255, 0);
+    gfx_rrect(s, cx - 14, cy - 2, 28, 5, 2, C_DARKTXT, 255, 0);
+    gfx_rrect(s, cx - 9, cy + 3, 18, 5, 2, C_DARKTXT, 255, 0);
+    gfx_rrect(s, cx - 4, cy + 8, 8, 5, 2, C_DARKTXT, 255, 0);
+  } else if (!is_image) text_draw_in(s, ui->fb, 30, cx - 30, 60, cy + 10, "▶", C_DARKTXT, 255, 0, 1);
   else {
     gfx_rrect(s, cx - 18, cy - 13, 36, 26, 5, C_DARKTXT, 255, 3);
     gfx_circle(s, cx + 7, cy - 4, 4, C_DARKTXT, 255);
@@ -1685,7 +1692,7 @@ static void draw_faq(UI *ui, const CatGame *g) {
       int mi = ui->mscroll + i;
       if (mi >= nm) break;
       int bi = md[mi];
-      const char *label = g->btn[bi].label; int is_img = !strcmp(g->btn[bi].action, "image");
+      const char *label = g->btn[bi].label; int is_img = !strcmp(g->btn[bi].action, "image") ? 1 : (!strcmp(g->btn[bi].action, "download") ? 2 : 0);
       draw_media_card(ui, bx + 40 + i * (cw2 + 20), by + 62, cw2, 112, label, is_img, ui->zone == 1 && mi == ui->mfocus);
     }
     if (ui->mscroll > 0) T(ui, 1, 24, bx + 8, by + 120, "◀", C_ACCENT, 255, 0);
@@ -1801,7 +1808,7 @@ static void draw_detail(UI *ui) {
       if (mi >= nm) break;
       int bi = md[mi];
       const char *label; int is_img = 0;
-      if (bi < g->nbtn) { label = g->btn[bi].label; is_img = !strcmp(g->btn[bi].action, "image"); }
+      if (bi < g->nbtn) { label = g->btn[bi].label; is_img = !strcmp(g->btn[bi].action, "image") ? 1 : (!strcmp(g->btn[bi].action, "download") ? 2 : 0); }
       else label = "Vídeo do patch";
       draw_media_card(ui, DT_X + i * (cw2 + 24), my + 24, cw2, 132, label, is_img, ui->zone == 1 && mi == ui->mfocus);
     }
