@@ -363,7 +363,7 @@ async function salvarCat(){
   if(p.er.length){abrir("Não dá para salvar",
     "<p class='bad'>Corrija antes de salvar:</p><ul>"+p.er.map(function(x){return "<li>"+esc(x)+"</li>"}).join("")+"</ul>");return}
   if(p.av.length&&!confirm("Há "+p.av.length+" aviso(s) (arquivos que não existem no R2 ou tamanhos diferentes). Salvar mesmo assim?"))return;
-  try{var txt=serCat(M);var j=await api("catalog","PUT",{catalog:txt});ORIG=txt;marcar(false);desenharCat();alert("Catálogo salvo. O app já usa a versão nova (a anterior ficou no Histórico).")}catch(e){alert("Erro ao salvar: "+e.message)}
+  try{var txt=serCat(M);var j;try{j=await api("catalog","PUT",{catalog:txt})}catch(e0){if(String(e0.message).indexOf("remoções em massa")<0)throw e0;if(!confirm(e0.message+"\n\nO catálogo anterior fica salvo no Histórico. Salvar mesmo assim?"))return;j=await api("catalog","PUT",{catalog:txt,force:true})}ORIG=txt;marcar(false);desenharCat();alert("Catálogo salvo. O app já usa a versão nova (a anterior ficou no Histórico).")}catch(e){alert("Erro ao salvar: "+e.message)}
 }
 async function histCat(){
   try{var j=await api("catalog/history");
