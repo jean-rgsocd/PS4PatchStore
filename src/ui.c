@@ -172,13 +172,13 @@ static int left_btn(const CatGame *g, const CatButton *b) {
   return is_pkg_btn(b);
 }
 /* v1.24: 3a coluna no card JK-MOD Demisan (tag PLACARES): botoes com tipo "COL3" (narracoes com voz chilena). Sem COL3 = 2 colunas como antes. */
-static int right_btn(const CatGame *g, const CatButton *b) { return !is_strip(b) && !strcmp(g->tag, "PLACARES") && !strcmp(b->type, "COL3"); }
+static int right_btn(const CatGame *g, const CatButton *b) { return !is_strip(b) && (!strcmp(g->tag, "PLACARES") || !strcmp(g->tag, "APPS")) && !strcmp(b->type, "COL3"); }
 static const char *split_t1(const CatGame *g) { return !strcmp(g->tag, "PLACARES") ? "PLACARES" : "APPS"; }
 static int split_na(const CatGame *g);
 static int split_nc(const CatGame *g) { int n = 0; if (!split_mode(g)) return 0; for (int i = 0; i < g->nbtn; i++) if (right_btn(g, &g->btn[i])) n++; return n; }
 static int split3(const CatGame *g) { return split_mode(g) && split_na(g) > 0 && split_nc(g) > 0; }
 static const char *split_t2(const CatGame *g) { return !strcmp(g->tag, "PLACARES") ? ((split_nc(g) > 0 && strstr(g->title, "DEMISAN")) ? "NARRAÇÕES MILTON" : "NARRAÇÕES") : "PLUGINS"; }
-static const char *split_t3(const CatGame *g) { return strstr(g->title, "MEGAPATCH") ? "NARRADOR ESTRANGEIRO" : "NARRAÇÕES CHILENO"; }
+static const char *split_t3(const CatGame *g) { if (!strcmp(g->tag, "APPS")) return "DESBLOQUEIO"; return strstr(g->title, "MEGAPATCH") ? "NARRADOR ESTRANGEIRO" : "NARRAÇÕES CHILENO"; }
 /* limites [lo,hi) da coluna (0..2) da lista dl[]; ncols = 1, 2 ou 3 */
 static int ncols_of(const CatGame *g) { return split_na(g) > 0 ? (split_nc(g) > 0 ? 3 : 2) : 1; }
 static void col_range(const CatGame *g, int nd, int c, int *lo, int *hi) {
@@ -234,6 +234,7 @@ static void info_text(const CatButton *b, char *out, int cap) {
   if (!strcmp(b->action, "download")) { snprintf(out, cap, "ARQUIVO"); return; }
   if (!strcmp(b->action, "video")) { snprintf(out, cap, "VÍDEO"); return; }
   if (!strcmp(b->action, "image")) { snprintf(out, cap, "IMAGEM"); return; }
+  if (!strcmp(b->action, "site")) { snprintf(out, cap, "NAVEGADOR"); return; }
   char t[16] = "";
   type_label(b->type, t, sizeof(t));
   char sz[32] = "";
@@ -935,6 +936,10 @@ static void trigger_install(UI *ui) {
   }
   if (!strcmp(action, "image")) {
     guide_open(ui, b->name[0] ? b->name : g->title, b->url);       /* visualizador dentro do app */
+    return;
+  }
+  if (!strcmp(action, "site")) {                                    /* v1.29: abre o link no navegador do PS4 (coluna DESBLOQUEIO) */
+    if (ui->open_fn) { ui_toast(ui, "Abrindo no navegador do PS4...", UI_TOAST_INFO); ui->open_fn(b->url, ui->open_ud); }
     return;
   }
   if (ui->busy) { ui_toast(ui, "Já existe um pedido em andamento. Aguarde.", UI_TOAST_INFO); return; }
@@ -1818,7 +1823,7 @@ static void draw_detail(UI *ui) {
 
   /* --- painel(is) da direita: downloads (modo dividido: APPs verde + PLUGINS amarelo) */
   if (split) {
-    if (tri) {                                                    /* 3 colunas: PLACARES | NARRAÇÕES MILTON | NARRAÇÕES CHILENO */
+    if (tri) {                                                    /* 3 colunas: PLACARES | NARRAÇÕES MILTON | NARRAÇÕES CHILENO (ou APPS | PLUGINS | DESBLOQUEIO) */
       int gap = 18, ax = DT_X + LW + 30, pw3 = (W - MARGIN - ax - 2 * gap) / 3;
       g_pad = 26; g_t3 = 1;
       draw_dl_panel(ui, g, dl, 0, na, ax, pw3, split_t1(g), C_ACCENT, ui->dscroll, 0);
