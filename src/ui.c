@@ -106,7 +106,7 @@ struct UI {
   Image *qr_small;                     /* QR pequeno da tela de login */
   int detail;                          /* 0 = vitrine de capas, 1 = detalhe do jogo (downloads + videos) */
   int zone;                            /* detalhe: 0 = downloads, 1 = videos/imagens */
-  int dfocus, dscroll, dscroll2, mfocus, mscroll;   /* dscroll2: rolagem da 2a coluna (plugins) no modo dividido */
+  int dfocus, dscroll, dscroll2, dscroll3, mfocus, mscroll;   /* dscroll2: rolagem da 2a coluna (plugins) no modo dividido */
   Image *fbgc[CAT_MAX_GAMES];          /* fundos prontos (1 por capa): trocar de card so copia a imagem, sem refazer o desfoque */
   int idle;                            /* quadros desde o ultimo botao (so prepara os fundos quando o usuario para) */
   int fbg_due;                         /* 1 = refazer o fundo borrado assim que a animacao de troca de capa terminar */
@@ -169,15 +169,36 @@ static int left_btn(const CatGame *g, const CatButton *b) {
   if (!strcmp(g->tag, "PLACARES")) return !strcmp(b->type, "COL1");
   return is_pkg_btn(b);
 }
+/* v1.24: 3a coluna no card JK-MOD Demisan (tag PLACARES): botoes com tipo "COL3" (narracoes com voz chilena). Sem COL3 = 2 colunas como antes. */
+static int right_btn(const CatGame *g, const CatButton *b) { return !is_media(b) && !strcmp(g->tag, "PLACARES") && !strcmp(b->type, "COL3"); }
 static const char *split_t1(const CatGame *g) { return !strcmp(g->tag, "PLACARES") ? "PLACARES" : "APPS"; }
-static const char *split_t2(const CatGame *g) { return !strcmp(g->tag, "PLACARES") ? "NARRAÇÕES" : "PLUGINS"; }
+static int split_na(const CatGame *g);
+static int split_nc(const CatGame *g) { int n = 0; if (!split_mode(g)) return 0; for (int i = 0; i < g->nbtn; i++) if (right_btn(g, &g->btn[i])) n++; return n; }
+static int split3(const CatGame *g) { return split_mode(g) && split_na(g) > 0 && split_nc(g) > 0; }
+static const char *split_t2(const CatGame *g) { return !strcmp(g->tag, "PLACARES") ? (split_nc(g) > 0 ? "NARRAÇÕES MILTON" : "NARRAÇÕES") : "PLUGINS"; }
+static const char *split_t3(const CatGame *g) { (void)g; return "NARRAÇÕES CHILENO"; }
+/* limites [lo,hi) da coluna (0..2) da lista dl[]; ncols = 1, 2 ou 3 */
+static int ncols_of(const CatGame *g) { return split_na(g) > 0 ? (split_nc(g) > 0 ? 3 : 2) : 1; }
+static void col_range(const CatGame *g, int nd, int c, int *lo, int *hi) {
+  int na = split_na(g), nc = split_nc(g);
+  if (na <= 0) { *lo = 0; *hi = nd; return; }
+  if (c == 0) { *lo = 0; *hi = na; }
+  else if (c == 1) { *lo = na; *hi = nd - nc; }
+  else { *lo = nd - nc; *hi = nd; }
+}
+static int col_of(const CatGame *g, int nd, int f) {
+  int nc = ncols_of(g);
+  for (int c = 0; c < nc; c++) { int lo, hi; col_range(g, nd, c, &lo, &hi); if (f >= lo && f < hi) return c; }
+  return 0;
+}
 static int split_na(const CatGame *g) { int n = 0; if (!split_mode(g)) return 0; for (int i = 0; i < g->nbtn; i++) if (left_btn(g, &g->btn[i])) n++; return n; }
 static void lists(const CatGame *g, int *dl, int *nd, int *md, int *nm) {
   *nd = 0; *nm = 0;
   if (!g) return;
   if (split_mode(g)) {                                            /* PKGs primeiro, depois os demais downloads */
     for (int i = 0; i < g->nbtn; i++) if (left_btn(g, &g->btn[i])) dl[(*nd)++] = i;
-    for (int i = 0; i < g->nbtn; i++) if (!is_media(&g->btn[i]) && !left_btn(g, &g->btn[i])) dl[(*nd)++] = i;
+    for (int i = 0; i < g->nbtn; i++) if (!is_media(&g->btn[i]) && !left_btn(g, &g->btn[i]) && !right_btn(g, &g->btn[i])) dl[(*nd)++] = i;
+    for (int i = 0; i < g->nbtn; i++) if (right_btn(g, &g->btn[i])) dl[(*nd)++] = i;
     for (int i = 0; i < g->nbtn; i++) if (is_media(&g->btn[i])) md[(*nm)++] = i;
   } else
   for (int i = 0; i < g->nbtn; i++) {
@@ -1183,14 +1204,15 @@ void ui_key(UI *ui, int key) {
     int dl[CAT_MAX_BTNS], md[CAT_MAX_BTNS + 1], nd, nm;
     lists(g, dl, &nd, md, &nm);
     switch (key) {
-      case UI_UP:    { int na = split_na(g), lo = (na && ui->dfocus >= na) ? na : 0;
+      case UI_UP:    { int c = col_of(g, nd, ui->dfocus), lo, hi; col_range(g, nd, c, &lo, &hi);
                        if (ui->zone == 0 && ui->dfocus > lo) { ui->dfocus--; ui->dirty = 1; } } break;
-      case UI_DOWN:  { int na = split_na(g), hi = (na && ui->dfocus < na) ? na : nd;
+      case UI_DOWN:  { int c = col_of(g, nd, ui->dfocus), lo, hi; col_range(g, nd, c, &lo, &hi);
                        if (ui->zone == 0 && ui->dfocus + 1 < hi) { ui->dfocus++; ui->dirty = 1; } } break;
       case UI_LEFT:
         if (ui->zone == 0) {
-          int na = split_na(g);
-          if (na && ui->dfocus >= na) { int r = ui->dfocus - na; ui->dfocus = r < na ? r : na - 1; ui->dirty = 1; }   /* plugins -> apps */
+          int c = col_of(g, nd, ui->dfocus);
+          if (c > 0) { int lo, hi, plo, phi; col_range(g, nd, c, &lo, &hi); col_range(g, nd, c - 1, &plo, &phi);
+                       int r = ui->dfocus - lo, len = phi - plo; ui->dfocus = plo + (r < len ? r : len - 1); ui->dirty = 1; }   /* coluna anterior */
           else if (nm > 0) { ui->zone = 1; ui->dirty = 1; }
         }
         else if (ui->mfocus > 0) { ui->mfocus--; ui->dirty = 1; }
@@ -1201,8 +1223,9 @@ void ui_key(UI *ui, int key) {
           else if (nd > 0) ui->zone = 0;
           ui->dirty = 1;
         } else {
-          int na = split_na(g);
-          if (na && ui->dfocus < na && nd > na) { int r = ui->dfocus; ui->dfocus = na + (r < nd - na ? r : nd - na - 1); ui->dirty = 1; }   /* apps -> plugins */
+          int c = col_of(g, nd, ui->dfocus);
+          if (c + 1 < ncols_of(g)) { int lo, hi, nlo, nhi; col_range(g, nd, c, &lo, &hi); col_range(g, nd, c + 1, &nlo, &nhi);
+                       if (nhi > nlo) { int r = ui->dfocus - lo, len = nhi - nlo; ui->dfocus = nlo + (r < len ? r : len - 1); ui->dirty = 1; } }   /* proxima coluna */
         }
         break;
       case UI_BACK:  ui->detail = 0; ui->dirty = 1; rebuild_fbg(ui); break;
@@ -1213,17 +1236,21 @@ void ui_key(UI *ui, int key) {
         trigger_install(ui);
         break;
       case UI_SQUARE: trigger_update(ui); break;
+      case UI_L1: case UI_R1: {                                       /* v1.24: L1 = instrucoes (imagem), R1 = video, sem sair da lista */
+        int pick = -1;
+        for (int i = 0; i < nm && pick < 0; i++) {
+          if (md[i] >= g->nbtn) { if (key == UI_R1) pick = i; }
+          else if (!strcmp(g->btn[md[i]].action, key == UI_L1 ? "image" : "video")) pick = i;
+        }
+        if (pick >= 0) { ui->focus = md[pick]; trigger_install(ui); }
+      } break;
       default: break;
     }
-    { int na = split_na(g);
-      if (na && ui->dfocus >= na) {                                   /* modo dividido: coluna de plugins com rolagem propria */
-        int r = ui->dfocus - na;
-        if (r < ui->dscroll2) ui->dscroll2 = r;
-        if (r >= ui->dscroll2 + DL_VIS) ui->dscroll2 = r - DL_VIS + 1;
-      } else {
-        if (ui->dfocus < ui->dscroll) ui->dscroll = ui->dfocus;
-        if (ui->dfocus >= ui->dscroll + DL_VIS) ui->dscroll = ui->dfocus - DL_VIS + 1;
-      } }
+    { int c = col_of(g, nd, ui->dfocus), lo, hi; col_range(g, nd, c, &lo, &hi);
+      int *sc = c == 0 ? &ui->dscroll : (c == 1 ? &ui->dscroll2 : &ui->dscroll3);
+      int r = ui->dfocus - lo;
+      if (r < *sc) *sc = r;
+      if (r >= *sc + DL_VIS) *sc = r - DL_VIS + 1; }
     if (ui->mfocus < ui->mscroll) ui->mscroll = ui->mfocus;
     { int vis = !strcmp(g->category, "duvidas") ? 4 : MD_VIS;
       if (ui->mfocus >= ui->mscroll + vis) ui->mscroll = ui->mfocus - vis + 1; }
@@ -1272,7 +1299,7 @@ void ui_key(UI *ui, int key) {
         int dl[CAT_MAX_BTNS], md[CAT_MAX_BTNS + 1], nd, nm;
         lists(g, dl, &nd, md, &nm);
         ui->detail = 1; ui->zone = nd > 0 ? 0 : 1;
-        ui->dfocus = ui->dscroll = ui->dscroll2 = ui->mfocus = ui->mscroll = 0;
+        ui->dfocus = ui->dscroll = ui->dscroll2 = ui->dscroll3 = ui->mfocus = ui->mscroll = 0;
         ui->dirty = 1;
       }
       break;
@@ -1407,7 +1434,9 @@ static void draw_lock(Image *s, int cx, int cy, uint32_t col) {         /* cadea
 }
 
 static uint32_t g_btn_col = 0;
-static int g_btn_compact = 0;                                    /* 1 = botao estreito (modo dividido): sem texto de info e letra menor */                                    /* 0 = verde padrao; senao cor do botao (plugins = amarelo) */
+static int g_btn_compact = 0;
+static int g_pad = 44;                                           /* v1.24: margem interna do painel (3 colunas = menor) */
+static int g_t3 = 0;                                             /* 1 = 3 colunas: titulos e botoes com letra menor */                                    /* 1 = botao estreito (modo dividido): sem texto de info e letra menor */                                    /* 0 = verde padrao; senao cor do botao (plugins = amarelo) */
 static void draw_button(UI *ui, const CatButton *b, int x, int y, int w, int focused) {
   Image *s = ui->s;
   int r = 20;
@@ -1417,7 +1446,7 @@ static void draw_button(UI *ui, const CatButton *b, int x, int y, int w, int foc
     char info[48];
     info_text(b, info, sizeof(info));
     if (g_btn_compact) info[0] = 0;
-    int fs0 = g_btn_compact ? 23 : 27;
+    int fs0 = g_btn_compact ? (g_t3 ? 20 : 23) : 27;
     int iw = info[0] ? TW(ui, 0, 20, info, 0) : 0;
     int avail = w - 40 - 70 - (iw ? iw + 24 : 0);
     char lab[128];
@@ -1438,7 +1467,7 @@ static void draw_button(UI *ui, const CatButton *b, int x, int y, int w, int foc
   char info[48];
   info_text(b, info, sizeof(info));
   if (g_btn_compact) info[0] = 0;
-  int fs1 = g_btn_compact ? 23 : 27;
+  int fs1 = g_btn_compact ? (g_t3 ? 20 : 23) : 27;
   int iw = info[0] ? TW(ui, 0, 20, info, 0) : 0;
   int arrow_w = 56;
   int avail = w - 40 - arrow_w - (iw ? iw + 24 : 0);
@@ -1670,19 +1699,19 @@ static void draw_dl_panel(UI *ui, const CatGame *g, const int *dl, int lo, int h
   gfx_rrect(s, px, DT_PY, pw, DT_PH, 26, C_PANEL, 235, 0);
   gfx_rrect(s, px, DT_PY, pw, DT_PH, 26, C_WHITE, 26, 2);
   if (col) gfx_rrect(s, px + 30, DT_PY + 14, pw - 60, 6, 3, col, 255, 0);       /* faixa colorida do topo (modo dividido) */
-  T(ui, 1, 26, px + 44, DT_PY + 58, title, col ? col : C_TEXT, 255, 3);
+  T(ui, 1, g_t3 ? 19 : 26, px + g_pad, DT_PY + 58, title, col ? col : C_TEXT, 255, g_t3 ? 1 : 3);
   char ct[48];
   int fr = ui->dfocus - lo;
   if (n && fr >= 0 && fr < n) snprintf(ct, sizeof(ct), "%d / %d", fr + 1, n); else snprintf(ct, sizeof(ct), "%d", n);
-  int cw3 = TW(ui, 0, 22, ct, 0);
-  T(ui, 0, 22, px + pw - 44 - cw3, DT_PY + 58, ct, C_MUTED, 255, 0);
+  int cw3 = TW(ui, 0, g_t3 ? 20 : 22, ct, 0);
+  T(ui, 0, g_t3 ? 20 : 22, px + pw - g_pad - cw3, DT_PY + 58, ct, C_MUTED, 255, 0);
   gfx_fill(s, px + 30, DT_PY + 82, pw - 60, 1, C_WHITE, 26);
   if (n == 0) {
     text_draw_in(s, ui->f, 26, px, pw, DT_PY + 200, "Nenhum item ainda.", C_MUTED, 255, 0, 1);
   } else {
     g_bh = BTN_H;
     g_btn_col = col; g_btn_compact = notes >= 0 && ui->dfocus >= 0 && split_mode(g);
-    int by = DT_PY + 104, bx = px + 44, bw = pw - 88 - 18;
+    int by = DT_PY + 104, bx = px + g_pad, bw = pw - 2 * g_pad - (g_t3 ? 16 : 18);
     for (int i = 0; i < DL_VIS; i++) {
       int di = scroll + i;
       if (di >= n) break;
@@ -1690,7 +1719,7 @@ static void draw_dl_panel(UI *ui, const CatGame *g, const int *dl, int lo, int h
     }
     g_btn_col = 0; g_btn_compact = 0;
     if (n > DL_VIS) {                                               /* barra de rolagem */
-      int tr = DL_VIS * (g_bh + BTN_GAP) - BTN_GAP, sx = px + pw - 38;
+      int tr = DL_VIS * (g_bh + BTN_GAP) - BTN_GAP, sx = px + pw - (g_t3 ? 26 : 38);
       gfx_rrect(s, sx, by, 8, tr, 4, C_PANEL2, 255, 0);
       int bh = tr * DL_VIS / n; if (bh < 50) bh = 50;
       int bt = by + (tr - bh) * scroll / (n - DL_VIS);
@@ -1722,8 +1751,8 @@ static void draw_detail(UI *ui) {
   int gi = ui->filt[ui->sel];
   int dl[CAT_MAX_BTNS], md[CAT_MAX_BTNS + 1], nd, nm;
   lists(g, dl, &nd, md, &nm);
-  int na = split_na(g), split = split_mode(g);
-  int LW = split ? 560 : DT_W;                                    /* largura da coluna de info (modo dividido: 3 colunas) */
+  int na = split_na(g), split = split_mode(g), nc = split_nc(g), tri = split3(g);
+  int LW = tri ? 470 : (split ? 560 : DT_W);                                    /* largura da coluna de info (modo dividido: 3 colunas) */
 
   /* --- coluna da esquerda: capa + titulo, descricao, videos */
   int cx = DT_X, cy = 140, cw = TH_W[2], chh = TH_H[2];
@@ -1742,7 +1771,8 @@ static void draw_detail(UI *ui) {
   char info[96];
   snprintf(info, sizeof(info), "%d download%s  ·  %d vídeo%s/guia%s", nd, nd == 1 ? "" : "s",
            nm, nm == 1 ? "" : "s", nm == 1 ? "" : "s");
-  T(ui, 0, 20, tx, ky + 40, info, C_MUTED, 255, 0);
+  if (tri) snprintf(info, sizeof(info), "%d downloads  ·  %d vídeo%s", nd, nm, nm == 1 ? "" : "s");
+  { char ib[128]; int ifs = tri ? 18 : 20; text_fit(ui->f, ifs, info, tw, ib, sizeof(ib)); T(ui, 0, ifs, tx, ky + 40, ib, C_MUTED, 255, 0); }
   if (g->tag[0]) {
     int bw = TW(ui, 1, 18, g->tag, 2) + 30;
     gfx_rrect(s, tx, ky + 68, bw, 36, 18, C_PANEL2, 255, 0);
@@ -1781,9 +1811,18 @@ static void draw_detail(UI *ui) {
 
   /* --- painel(is) da direita: downloads (modo dividido: APPs verde + PLUGINS amarelo) */
   if (split) {
+    if (tri) {                                                    /* 3 colunas: PLACARES | NARRAÇÕES MILTON | NARRAÇÕES CHILENO */
+      int gap = 18, ax = DT_X + LW + 30, pw3 = (W - MARGIN - ax - 2 * gap) / 3;
+      g_pad = 26; g_t3 = 1;
+      draw_dl_panel(ui, g, dl, 0, na, ax, pw3, split_t1(g), C_ACCENT, ui->dscroll, 0);
+      draw_dl_panel(ui, g, dl, na, nd - nc, ax + pw3 + gap, pw3, split_t2(g), C_FOCUS, ui->dscroll2, 0);
+      draw_dl_panel(ui, g, dl, nd - nc, nd, ax + 2 * (pw3 + gap), pw3, split_t3(g), RGB(0x7d, 0xb4, 0xff), ui->dscroll3, 1);
+      g_pad = 44; g_t3 = 0;
+    } else {
     int pw2 = 550, ax = 698, bx2 = ax + pw2 + 24;
     draw_dl_panel(ui, g, dl, 0, na, ax, pw2, split_t1(g), C_ACCENT, ui->dscroll, 0);
     draw_dl_panel(ui, g, dl, na, nd, bx2, pw2, split_t2(g), C_FOCUS, ui->dscroll2, 1);
+    }
   } else
     draw_dl_panel(ui, g, dl, 0, nd, DT_PX, DT_PW, "DOWNLOADS", 0, ui->dscroll, 1);
 }
@@ -1870,6 +1909,13 @@ static void draw_footer(UI *ui) {
     x = hint(ui, x, "\xE2\x97\x80 \xE2\x96\xB2 \xE2\x96\xBC \xE2\x96\xB6", "Mover");
     x = hint(ui, x, "X", ui->zone == 0 ? (ui->locked ? "Bloqueado" : "Baixar") : "Assistir / ver");
     x = hint(ui, x, "O", "Voltar");
+    { const CatGame *fg = cur_game(ui);
+      if (fg && split3(fg)) {                                      /* atalhos L1/R1 (v1.24) so quando existe imagem/video para abrir */
+        int has_img = 0, has_vid = fg->video[0] != 0;
+        for (int i = 0; i < fg->nbtn; i++) { if (!strcmp(fg->btn[i].action, "image")) has_img = 1; if (!strcmp(fg->btn[i].action, "video")) has_vid = 1; }
+        if (has_img) x = hint(ui, x, "L1", "Instruções");
+        if (has_vid) x = hint(ui, x, "R1", "Vídeo");
+      } }
     if (update_available(ui)) x = hint(ui, x, "\xE2\x96\xA1", "Atualizar app");
   } else if (ui->mode == MODE_CATALOG) {
     x = hint(ui, x, "\xE2\x97\x80 \xE2\x96\xB6", "Coleções");
