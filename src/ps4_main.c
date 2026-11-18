@@ -382,9 +382,10 @@ static void *install_thread(void *arg) {
       {                                                /* "?once" na URL = so baixa se o arquivo ainda nao existir (nao troca o que o usuario ja escolheu) */
         char *q = strstr(it_url[u], "?once");
         if (q) {
+          long long want_once = (q[5] == '=') ? atoll(q + 6) : 0;   /* "?once=TAMANHO": so mantem se o arquivo tiver exatamente esse tamanho (refaz download interrompido) */
           *q = 0;                                      /* tira o marcador: o servidor recebe a URL limpa */
           struct stat st_once;
-          if (stat(path, &st_once) == 0 && st_once.st_size > 0) {
+          if (stat(path, &st_once) == 0 && st_once.st_size > 0 && (want_once <= 0 || (long long)st_once.st_size == want_once)) {
             char lm0[1200];
             snprintf(lm0, sizeof(lm0), "Item %d/%d ja existe, mantido (?once): %s", u + 1, nit, path);
             install_log(lm0);
