@@ -385,10 +385,8 @@ static void *install_thread(void *arg) {
           long long want_once = 0;                     /* "?once=TAMANHO": so mantem se o arquivo tiver exatamente esse tamanho (refaz download interrompido) */
           if (q[5] == '=') for (const char *dg = q + 6; *dg >= '0' && *dg <= '9'; dg++) want_once = want_once * 10 + (*dg - '0');   /* sem atoll: nao depende do libc */
           *q = 0;                                      /* tira o marcador: o servidor recebe a URL limpa */
-          struct stat st_once;
-          int st_ok = (stat(path, &st_once) == 0);
-          long long have_once = st_ok ? (long long)st_once.st_size : -1;
-          if (st_ok && have_once > 0 && (want_once <= 0 || have_once == want_once)) {
+          long long have_once = file_size_of(path);    /* open/lseek: o stat() do SDK devolve o campo errado (blocos de 512 bytes em vez do tamanho) */
+          if (have_once > 0 && (want_once <= 0 || have_once == want_once)) {
             char lm0[1200];
             snprintf(lm0, sizeof(lm0), "Item %d/%d ja existe, mantido (?once): %s", u + 1, nit, path);
             install_log(lm0);
