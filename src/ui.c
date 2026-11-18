@@ -1455,6 +1455,26 @@ static uint32_t g_btn_col = 0;
 static int g_btn_compact = 0;
 static int g_pad = 44;                                           /* v1.24: margem interna do painel (3 colunas = menor) */
 static int g_t3 = 0;                                             /* 1 = 3 colunas: titulos e botoes com letra menor */                                    /* 1 = botao estreito (modo dividido): sem texto de info e letra menor */                                    /* 0 = verde padrao; senao cor do botao (plugins = amarelo) */
+/* v1.33: rotulo "LINHA 1|LINHA 2" -> duas linhas empilhadas (letra menor); sem '|' fica como sempre */
+static void draw_btn_label(UI *ui, const char *label, int x, int y, int avail, int fs, uint32_t fg, int alpha) {
+  const char *l = strip_num(label);
+  const char *bar = strchr(l, '|');
+  char a[128], b2[128], lab[128];
+  if (!bar) {
+    text_fit(ui->fb, fs, l, avail, lab, sizeof(lab));
+    T(ui, 1, fs, x, y + g_bh / 2 + 10, lab, fg, alpha, 0);
+    return;
+  }
+  int n = (int)(bar - l); if (n > 127) n = 127;
+  memcpy(a, l, n); a[n] = 0;
+  snprintf(b2, sizeof(b2), "%s", bar + 1);
+  int f1 = fs - 5, f2 = fs - 8; if (f1 < 16) f1 = 16; if (f2 < 14) f2 = 14;
+  text_fit(ui->fb, f1, a, avail, lab, sizeof(lab));
+  T(ui, 1, f1, x, y + 30, lab, fg, alpha, 0);
+  text_fit(ui->fb, f2, b2, avail, lab, sizeof(lab));
+  T(ui, 0, f2, x, y + 56, lab, fg, alpha * 85 / 100, 0);
+}
+
 static void draw_button(UI *ui, const CatButton *b, int x, int y, int w, int focused) {
   Image *s = ui->s;
   int r = 20;
@@ -1467,9 +1487,7 @@ static void draw_button(UI *ui, const CatButton *b, int x, int y, int w, int foc
     int fs0 = g_btn_compact ? (g_t3 ? 20 : 23) : 27;
     int iw = info[0] ? TW(ui, 0, 20, info, 0) : 0;
     int avail = w - 40 - 70 - (iw ? iw + 24 : 0);
-    char lab[128];
-    text_fit(ui->fb, fs0, strip_num(b->label), avail, lab, sizeof(lab));
-    T(ui, 1, fs0, x + 32, y + g_bh / 2 + 10, lab, C_MUTED, 255, 0);
+    draw_btn_label(ui, b->label, x + 32, y, avail, fs0, C_MUTED, 255);
     if (info[0]) T(ui, 0, 20, x + w - 70 - 12 - iw, y + g_bh / 2 + 7, info, C_MUTED, 170, 0);
     draw_lock(s, x + w - 38, y + g_bh / 2 - 1, C_MUTED);
     if (focused) gfx_rrect(s, x - 8, y - 8, w + 16, g_bh + 16, r + 8, C_FOCUS, 255, 4);
@@ -1489,9 +1507,7 @@ static void draw_button(UI *ui, const CatButton *b, int x, int y, int w, int foc
   int iw = info[0] ? TW(ui, 0, 20, info, 0) : 0;
   int arrow_w = 56;
   int avail = w - 40 - arrow_w - (iw ? iw + 24 : 0);
-  char lab[128];
-  text_fit(ui->fb, fs1, strip_num(b->label), avail, lab, sizeof(lab));
-  T(ui, 1, fs1, x + 32, y + g_bh / 2 + 10, lab, fg, 255, 0);
+  draw_btn_label(ui, b->label, x + 32, y, avail, fs1, fg, 255);
   if (info[0]) T(ui, 0, 20, x + w - arrow_w - 12 - iw, y + g_bh / 2 + 7, info, fg, 190, 0);
   text_draw_in(s, ui->fb, 30, x + w - arrow_w - 4, arrow_w, y + g_bh / 2 + 11, "\xE2\x86\x93", fg, 255, 0, 1);
   if (!focused) gfx_rrect(s, x, y, w, g_bh, r, C_BG, 70, 0);
