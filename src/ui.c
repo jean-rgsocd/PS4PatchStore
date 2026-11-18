@@ -175,8 +175,8 @@ static const char *split_t1(const CatGame *g) { return !strcmp(g->tag, "PLACARES
 static int split_na(const CatGame *g);
 static int split_nc(const CatGame *g) { int n = 0; if (!split_mode(g)) return 0; for (int i = 0; i < g->nbtn; i++) if (right_btn(g, &g->btn[i])) n++; return n; }
 static int split3(const CatGame *g) { return split_mode(g) && split_na(g) > 0 && split_nc(g) > 0; }
-static const char *split_t2(const CatGame *g) { return !strcmp(g->tag, "PLACARES") ? ((split_nc(g) > 0 && !strstr(g->title, "BRASFOOT")) ? "NARRAÇÕES MILTON" : "NARRAÇÕES") : "PLUGINS"; }
-static const char *split_t3(const CatGame *g) { (void)g; return "NARRAÇÕES CHILENO"; }
+static const char *split_t2(const CatGame *g) { return !strcmp(g->tag, "PLACARES") ? ((split_nc(g) > 0 && strstr(g->title, "DEMISAN")) ? "NARRAÇÕES MILTON" : "NARRAÇÕES") : "PLUGINS"; }
+static const char *split_t3(const CatGame *g) { return strstr(g->title, "MEGAPATCH") ? "NARRADOR ESTRANGEIRO" : "NARRAÇÕES CHILENO"; }
 /* limites [lo,hi) da coluna (0..2) da lista dl[]; ncols = 1, 2 ou 3 */
 static int ncols_of(const CatGame *g) { return split_na(g) > 0 ? (split_nc(g) > 0 ? 3 : 2) : 1; }
 static void col_range(const CatGame *g, int nd, int c, int *lo, int *hi) {
@@ -925,7 +925,7 @@ static void trigger_install(UI *ui) {
     ui_toast(ui, ui->offline ? "Sem conexão com o servidor. Downloads indisponíveis agora." : "Ative seu plano para baixar.", UI_TOAST_ERR);
     return;
   }
-  if (!b->url[0]) { ui_toast(ui, "URL não configurada neste botão.", UI_TOAST_ERR); return; }
+  if (!b->url[0]) { ui_toast(ui, !strcmp(action, "soon") ? "Em breve! Este botão ainda não está disponível." : "URL não configurada neste botão.", UI_TOAST_INFO); return; }
   if (!strcmp(action, "video")) {
     if (is_jkv(b->url)) vid_open_url(ui, b->name[0] ? b->name : g->title, b->url);
     else if (ui->open_fn) { ui_toast(ui, "Abrindo o vídeo no navegador do PS4...", UI_TOAST_INFO); ui->open_fn(b->url, ui->open_ud); }

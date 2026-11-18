@@ -379,6 +379,19 @@ static void *install_thread(void *arg) {
       filename[k] = 0;
       if (!filename[0] || !strcmp(filename, ".") || !strcmp(filename, "..")) snprintf(filename, sizeof(filename), "arquivo_download.bin");
       snprintf(path, sizeof(path), "%s/%s", it_dir[u], filename);
+      {                                                /* "?once" na URL = so baixa se o arquivo ainda nao existir (nao troca o que o usuario ja escolheu) */
+        char *q = strstr(it_url[u], "?once");
+        if (q) {
+          *q = 0;                                      /* tira o marcador: o servidor recebe a URL limpa */
+          struct stat st_once;
+          if (stat(path, &st_once) == 0 && st_once.st_size > 0) {
+            char lm0[1200];
+            snprintf(lm0, sizeof(lm0), "Item %d/%d ja existe, mantido (?once): %s", u + 1, nit, path);
+            install_log(lm0);
+            continue;
+          }
+        }
+      }
       volatile int cancel = 0;
       char lm[1200];
       snprintf(lm, sizeof(lm), "Iniciando download de arquivo pelo app (%d/%d): %s", u + 1, nit, it_url[u]);

@@ -272,7 +272,7 @@ function desenharCard(){
 function btnProb(b){
   var f=b.f,a=f[7]||"pkg",k=keyOf(f[2]),p=[];
   if(!f[0])p.push(["bad","sem texto"]);
-  if(!f[2])p.push(["bad","sem URL"]);
+  if(!f[2]&&f[7]==="soon")p.push(["warn","em breve (sem clique)"]);else if(!f[2])p.push(["bad","sem URL"]);
   if(a==="pkg"&&!f[3])p.push(["bad","PKG sem content_id"]);
   if(a==="pkg"&&f[2]&&(!f[4]||f[4]==="0"))p.push(["warn","tamanho 0"]);
   if(ALL&&k&&!ALL[k])p.push(["bad","arquivo não existe no R2"]);
