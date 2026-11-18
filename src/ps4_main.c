@@ -382,14 +382,22 @@ static void *install_thread(void *arg) {
       {                                                /* "?once" na URL = so baixa se o arquivo ainda nao existir (nao troca o que o usuario ja escolheu) */
         char *q = strstr(it_url[u], "?once");
         if (q) {
-          long long want_once = (q[5] == '=') ? atoll(q + 6) : 0;   /* "?once=TAMANHO": so mantem se o arquivo tiver exatamente esse tamanho (refaz download interrompido) */
+          long long want_once = 0;                     /* "?once=TAMANHO": so mantem se o arquivo tiver exatamente esse tamanho (refaz download interrompido) */
+          if (q[5] == '=') for (const char *dg = q + 6; *dg >= '0' && *dg <= '9'; dg++) want_once = want_once * 10 + (*dg - '0');   /* sem atoll: nao depende do libc */
           *q = 0;                                      /* tira o marcador: o servidor recebe a URL limpa */
           struct stat st_once;
-          if (stat(path, &st_once) == 0 && st_once.st_size > 0 && (want_once <= 0 || (long long)st_once.st_size == want_once)) {
+          int st_ok = (stat(path, &st_once) == 0);
+          long long have_once = st_ok ? (long long)st_once.st_size : -1;
+          if (st_ok && have_once > 0 && (want_once <= 0 || have_once == want_once)) {
             char lm0[1200];
             snprintf(lm0, sizeof(lm0), "Item %d/%d ja existe, mantido (?once): %s", u + 1, nit, path);
             install_log(lm0);
             continue;
+          }
+          {
+            char lm1[1200];
+            snprintf(lm1, sizeof(lm1), "Item %d/%d (?once) vai baixar: arquivo tem %lld bytes, esperado %lld: %s", u + 1, nit, have_once, want_once, path);
+            install_log(lm1);
           }
         }
       }
