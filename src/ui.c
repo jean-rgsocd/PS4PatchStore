@@ -166,19 +166,30 @@ static int is_strip(const CatButton *b) { return is_media(b) || !strcmp(b->type,
 static int split_mode(const CatGame *g) { return g && (!strcmp(g->tag, "APPS") || !strcmp(g->tag, "PLACARES")); }
 static int is_pkg_btn(const CatButton *b) { return !is_media(b) && !strcmp(b->action, "pkg"); }
 /* Coluna da esquerda no modo dividido: tag APPS = botoes pkg; tag PLACARES (JK-MOD Demisan) = botoes com tipo "COL1" (placares), o resto = narracoes. */
+/* v1.29: card APPS com botoes COL3 = 3 colunas DESBLOQUEIO (esq.) | APPS (meio, pkg) | PLUGINS (dir., demais). Sem COL3 = layout antigo. */
+static int apps_new(const CatGame *g) {
+  if (!g || strcmp(g->tag, "APPS")) return 0;
+  for (int i = 0; i < g->nbtn; i++) if (!is_strip(&g->btn[i]) && !strcmp(g->btn[i].type, "COL3")) return 1;
+  return 0;
+}
 static int left_btn(const CatGame *g, const CatButton *b) {
   if (is_strip(b)) return 0;
   if (!strcmp(g->tag, "PLACARES")) return !strcmp(b->type, "COL1");
+  if (apps_new(g)) return !strcmp(b->type, "COL3");
   return is_pkg_btn(b);
 }
 /* v1.24: 3a coluna no card JK-MOD Demisan (tag PLACARES): botoes com tipo "COL3" (narracoes com voz chilena). Sem COL3 = 2 colunas como antes. */
-static int right_btn(const CatGame *g, const CatButton *b) { return !is_strip(b) && (!strcmp(g->tag, "PLACARES") || !strcmp(g->tag, "APPS")) && !strcmp(b->type, "COL3"); }
-static const char *split_t1(const CatGame *g) { return !strcmp(g->tag, "PLACARES") ? "PLACARES" : "APPS"; }
+static int right_btn(const CatGame *g, const CatButton *b) {
+  if (is_strip(b)) return 0;
+  if (apps_new(g)) return strcmp(b->type, "COL3") && !is_pkg_btn(b);
+  return !strcmp(g->tag, "PLACARES") && !strcmp(b->type, "COL3");
+}
+static const char *split_t1(const CatGame *g) { return !strcmp(g->tag, "PLACARES") ? "PLACARES" : (apps_new(g) ? "DESBLOQUEIO" : "APPS"); }
 static int split_na(const CatGame *g);
 static int split_nc(const CatGame *g) { int n = 0; if (!split_mode(g)) return 0; for (int i = 0; i < g->nbtn; i++) if (right_btn(g, &g->btn[i])) n++; return n; }
 static int split3(const CatGame *g) { return split_mode(g) && split_na(g) > 0 && split_nc(g) > 0; }
-static const char *split_t2(const CatGame *g) { return !strcmp(g->tag, "PLACARES") ? ((split_nc(g) > 0 && strstr(g->title, "DEMISAN")) ? "NARRAÇÕES MILTON" : "NARRAÇÕES") : "PLUGINS"; }
-static const char *split_t3(const CatGame *g) { if (!strcmp(g->tag, "APPS")) return "DESBLOQUEIO"; return strstr(g->title, "MEGAPATCH") ? "NARRADOR ESTRANGEIRO" : "NARRAÇÕES CHILENO"; }
+static const char *split_t2(const CatGame *g) { if (apps_new(g)) return "APPS"; return !strcmp(g->tag, "PLACARES") ? ((split_nc(g) > 0 && strstr(g->title, "DEMISAN")) ? "NARRAÇÕES MILTON" : "NARRAÇÕES") : "PLUGINS"; }
+static const char *split_t3(const CatGame *g) { if (apps_new(g)) return "PLUGINS"; return strstr(g->title, "MEGAPATCH") ? "NARRADOR ESTRANGEIRO" : "NARRAÇÕES CHILENO"; }
 /* limites [lo,hi) da coluna (0..2) da lista dl[]; ncols = 1, 2 ou 3 */
 static int ncols_of(const CatGame *g) { return split_na(g) > 0 ? (split_nc(g) > 0 ? 3 : 2) : 1; }
 static void col_range(const CatGame *g, int nd, int c, int *lo, int *hi) {
@@ -1826,9 +1837,10 @@ static void draw_detail(UI *ui) {
     if (tri) {                                                    /* 3 colunas: PLACARES | NARRAÇÕES MILTON | NARRAÇÕES CHILENO (ou APPS | PLUGINS | DESBLOQUEIO) */
       int gap = 18, ax = DT_X + LW + 30, pw3 = (W - MARGIN - ax - 2 * gap) / 3;
       g_pad = 26; g_t3 = 1;
-      draw_dl_panel(ui, g, dl, 0, na, ax, pw3, split_t1(g), C_ACCENT, ui->dscroll, 0);
-      draw_dl_panel(ui, g, dl, na, nd - nc, ax + pw3 + gap, pw3, split_t2(g), C_FOCUS, ui->dscroll2, 0);
-      draw_dl_panel(ui, g, dl, nd - nc, nd, ax + 2 * (pw3 + gap), pw3, split_t3(g), RGB(0x7d, 0xb4, 0xff), ui->dscroll3, 1);
+      int an = apps_new(g);                                       /* APPs e Plugins: DESBLOQUEIO azul | APPS verde | PLUGINS amarelo */
+      draw_dl_panel(ui, g, dl, 0, na, ax, pw3, split_t1(g), an ? RGB(0x7d, 0xb4, 0xff) : C_ACCENT, ui->dscroll, 0);
+      draw_dl_panel(ui, g, dl, na, nd - nc, ax + pw3 + gap, pw3, split_t2(g), an ? C_ACCENT : C_FOCUS, ui->dscroll2, 0);
+      draw_dl_panel(ui, g, dl, nd - nc, nd, ax + 2 * (pw3 + gap), pw3, split_t3(g), an ? C_FOCUS : RGB(0x7d, 0xb4, 0xff), ui->dscroll3, 1);
       g_pad = 44; g_t3 = 0;
     } else {
     int pw2 = 550, ax = 698, bx2 = ax + pw2 + 24;
