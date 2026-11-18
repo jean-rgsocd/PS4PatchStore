@@ -226,7 +226,7 @@ function nivelCards(){
 function cardRow(g,i){
   var n=g.btns.length,ch=childCat(g),sub;
   if(ch){var k=M.games.filter(function(x){return x.f[0]===ch}).length;sub=k+" card(s) dentro";}
-  else sub=esc(g.f[2])+" · "+n+(n>32?" ⚠":"")+" botões";
+  else sub=esc(g.f[2])+" · "+n+(n>48?" ⚠":"")+" botões";
   if(SQ)sub+=" · "+esc(catLabel(g.f[0]));
   return "<div class='cd"+(i===SEL?" on":"")+"' onclick='"+(ch&&!SQ?"abrirPasta("+i+")":"selCard("+i+")")+"'><img src='"+esc(g.f[1])+"' onerror=\"this.style.visibility='hidden'\"><div class='t'><b>"+esc(g.f[4]||"(sem título)")+"</b><span>"+sub+"</span></div>"+(ch?"<div style='margin-left:auto;font-size:22px;color:#8c93a6'>›</div>":"")+"</div>";
 }
@@ -265,7 +265,7 @@ function desenharCard(){
    "<div><label>Subtítulo (kicker)</label><input value='"+esc(g.f[3])+"' oninput='setG(3,this.value,1)'></div>"+
    "<div class='w'><label>Descrição</label><textarea rows='3' oninput='setG(5,this.value,1)'>"+esc(g.f[5])+"</textarea></div>"+
    "<div class='w'><label>Vídeo do card (URL .jkv, opcional) <button class='s' onclick='jkvAbrir(-1)'>gerar vídeo</button></label><input value='"+esc(g.f[6])+"' oninput='setG(6,this.value,1)'></div></div></div>";
-  h+="<div class='bar'><b>Botões ("+g.btns.length+(g.btns.length>32?" — passou do limite de 32!":"")+")</b><span class='sp'></span><button class='s' onclick='novoBtn(\"pkg\")'>+ PKG</button><button class='s' onclick='novoBtn(\"video\")'>+ Vídeo</button><button class='s' onclick='novoBtn(\"image\")'>+ Imagem</button><button class='s' onclick='novoBtn(\"download\")'>+ Arquivo</button></div>";
+  h+="<div class='bar'><b>Botões ("+g.btns.length+(g.btns.length>48?" — passou do limite de 48!":"")+")</b><span class='sp'></span><button class='s' onclick='novoBtn(\"pkg\")'>+ PKG</button><button class='s' onclick='novoBtn(\"video\")'>+ Vídeo</button><button class='s' onclick='novoBtn(\"image\")'>+ Imagem</button><button class='s' onclick='novoBtn(\"download\")'>+ Arquivo</button></div>";
   h+=g.btns.map(function(b,i){return btnHtml(g,b,i)}).join("");
   el.innerHTML=h;
 }
@@ -337,7 +337,7 @@ function problemas(){
   var er=[],av=[];
   M.games.forEach(function(g,gi){
     var n=g.btns.length;
-    if(n>32)er.push("Card \""+g.f[4]+"\" tem "+n+" botões (limite 32).");
+    if(n>48)er.push("Card \""+g.f[4]+"\" tem "+n+" botões (limite 48).");
     if(g.f[1]&&ALL){var k=keyOf(g.f[1]);if(k&&!ALL[k])av.push("Card \""+g.f[4]+"\": capa não existe no R2.")}
     g.btns.forEach(function(b){
       btnProb(b).forEach(function(p){(p[0]==="bad"?er:av).push("Card \""+g.f[4]+"\" › \""+b.f[0]+"\": "+p[1]+".")});
