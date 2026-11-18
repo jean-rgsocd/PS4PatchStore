@@ -1239,7 +1239,7 @@ table{width:100%;border-collapse:collapse;margin-top:8px}td,th{padding:7px;borde
 
 <div id="novo"></div></div>
 
-<div class="row2"><div><h2>Catalogo do app (opcional)</h2><div class="box"><textarea id="cat" rows="7" style="width:100%" placeholder="conteudo do catalog.dat"></textarea><br><button onclick="salvarCat()" style="margin-top:8px;align-self:flex-start">Salvar catalogo</button></div>
+<div class="row2"><div><h2>Ativacao rapida</h2><div class="box"><input id="qk" placeholder="digite o nome do usuario" oninput="rapida()" style="width:100%;box-sizing:border-box"><div class="mut" style="font-size:12px;margin:6px 0">Sem digitar nada, aparecem os pendentes e quem vence em 5 dias.</div><div id="qkl"></div></div>
 
 </div><div><h2>Ultimos acessos</h2><div class="box"><table id="lrec" style="margin:0"></table><button class="sec" onclick="abrirLogs()" style="margin-top:8px">Ver historico completo</button></div>
 
@@ -1307,7 +1307,7 @@ function passa(u){const q=($("busca").value||"").trim().toLowerCase();if(q&&u.us
  function recentes(){api("logins?limit=8").then(function(r){$("lrec").innerHTML="<tr><th>Data</th><th>Usuario</th><th>Resultado</th><th>Pais / IP</th></tr>"+r.items.map(function(l){return "<tr><td>"+fmt(l.t)+"</td><td>"+esc(l.user)+"</td><td class='"+(l.result==="ok"?"ok":(l.result==="cadastro"||l.result==="cadastro-trial"||l.result==="pendente"||l.result==="vencido")?"warn":"bad")+"'>"+esc(l.result)+"</td><td>"+esc(l.country)+" "+esc(l.ip)+"</td></tr>"}).join("")}).catch(function(){})}
  document.addEventListener("click",function(e){var b=e.target.closest("#chips button");if(!b)return;$("filtro").value=b.getAttribute("data-f");var all=document.querySelectorAll("#chips button");for(var i=0;i<all.length;i++)all[i].className="sec"+(all[i]===b?" on":"");desenhar()});
 function desenhar(){
- kpis();
+ kpis();rapida();
 
  const L=US.filter(passa).sort(cmp);
 
@@ -1320,6 +1320,13 @@ function desenhar(){
   const planos=st==="desativado"?bt("reativar","Reativar",""):bt("plan","+ Teste 1h","sec","teste1h")+bt("plan","+ Teste 24h","sec","teste24h")+bt("plan","+ Mensal","pl","mensal")+bt("plan","+ Semestral","pl","semestral")+bt("plan","+ Anual","pl","anual")+bt("plan","Vitalicio","sec","vitalicio")+(on||st==="vencido"?bt("desat","Desativar","sec"):"");
 
   return "<tr class='"+(pend?"pend":st==="vencido"?"venc":"")+"'><td class='mut'>"+(ix+1)+"</td><td>"+q+"</td><td>"+dtc(u.created)+"</td><td>"+planoNome(u)+"</td><td>"+venc(u)+"</td><td>"+fmt(u.last)+"</td><td>"+ipcell(u)+"</td><td>"+(u.dev?"<span class='ok'>preso</span> "+bt("liberar","Liberar","sec"):"<span class='mut'>-</span>")+"</td><td class='"+(on?"ok":pend?"warn":"bad")+"'>"+esc(st)+"</td><td class='act'>"+planos+bt("nova","Nova senha","sec")+bt("apagar","Excluir","sec")+"</td></tr>"}).join("")}
+
+function rapida(){const q=($("qk").value||"").trim().toLowerCase(),lim=Date.now()+5*864e5;
+ const L=q?US.filter(u=>String(u.user).toLowerCase().indexOf(q)>=0).slice(0,6):US.filter(u=>u.state==="pendente"||(u.state==="ativo"&&u.v2&&u.expires&&Date.parse(u.expires)<=lim)).slice(0,8);
+ $("qkl").innerHTML=L.length?L.map(u=>{const st=u.state,e=esc(u.user),bz=BUSY[u.user]?" disabled":"";
+  const bt=(a,l,cls,p)=>"<button class='"+(cls||"")+"' data-a='"+a+"' data-u='"+e+"'"+(p?" data-p='"+p+"'":"")+bz+">"+l+"</button>";
+  const bs=st==="desativado"?bt("reativar","Reativar",""):bt("plan","+ Mensal","pl","mensal")+bt("plan","+ Semestral","pl","semestral")+bt("plan","+ Anual","pl","anual");
+  return "<div style='padding:8px 0;border-bottom:1px solid #23262f'><b>"+e+"</b> <span class='"+(st==="ativo"?"ok":st==="pendente"?"warn":"bad")+"'>"+esc(st)+"</span> <span class='mut'>"+planoNome(u)+"</span> "+venc(u)+"<div style='margin-top:4px'>"+bs+"</div></div>"}).join(""):"<span class='mut'>"+(q?"Nenhum usuario com esse nome.":"Nenhum pendente nem vencendo agora.")+"</span>"}
 
 async function acao(u,fn){if(BUSY[u])return;BUSY[u]=1;desenhar();try{await fn()}catch(e){alert(e.message)}BUSY[u]=0;desenhar()}
 
@@ -1339,7 +1346,7 @@ async function carregar(){
 
  US=await api("users");desenhar();
 
- $("cat").value=(await api("catalog")).catalog;recentes();
+ recentes();
 
 }
 
@@ -1379,7 +1386,7 @@ async function desat(u,d){await api("users/disable","POST",{user:u,disabled:d});
 
 async function apagar(u){if(confirm("Excluir "+u+"?")){await api("users/delete","POST",{user:u});US=US.filter(a=>a.user!==u);desenhar()}}
 
-async function salvarCat(){await api("catalog","PUT",{catalog:$("cat").value});alert("Catalogo salvo")}
+
 
 try{if(window.parent!==window&&window.parent.TK){PTK=window.parent.TK;$("key").hidden=true;api("users").then(function(){$("painel").hidden=false;$("btnAtualizar").hidden=false;carregar()}).catch(function(e){$("msg").textContent=e.message;$("msg").className="bad"})}}catch(e){}
 
