@@ -317,7 +317,7 @@ function btnHtml(g,b,i){
   if(a==="pkg"){
     h+="<div class='w2'><small>content_id <button class='s' onclick='lerPkg("+i+")'>ler do PKG</button></small><input value='"+esc(f[3])+"' oninput='setB("+i+",3,this.value,3)'></div>"+
        "<div><small>tamanho (bytes)</small><input value='"+esc(f[4])+"' oninput='setB("+i+",4,this.value,3)'></div>"+
-       "<div><small>tipo</small><select onchange='setB("+i+",5,this.value)'>"+["PS4GD","PS4GP","PS4AC","PS4AL","COL1",""].map(function(x){return "<option value='"+x+"'"+(x===f[5]?" selected":"")+">"+(x==="COL1"?"COL1 (coluna da esquerda: placares)":(x||"(vazio)"))+"</option>"}).join("")+"</select></div>"+
+       "<div><small>tipo</small><select onchange='setB("+i+",5,this.value)'>"+["PS4GD","PS4GP","PS4AC","PS4AL","COL1","COL3","COL4",""].map(function(x){return "<option value='"+x+"'"+(x===f[5]?" selected":"")+">"+(x==="COL1"?"COL1 (coluna da esquerda: placares)":(x||"(vazio)"))+"</option>"}).join("")+"</select></div>"+
        "<div><small>jogo base?</small><select onchange='setB("+i+",6,this.value)'><option value='0'"+(f[6]!=="1"?" selected":"")+">não</option><option value='1'"+(f[6]==="1"?" selected":"")+">sim</option></select></div>";
   }
   if(a==="download"){

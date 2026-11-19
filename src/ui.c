@@ -106,7 +106,7 @@ struct UI {
   Image *qr_small;                     /* QR pequeno da tela de login */
   int detail;                          /* 0 = vitrine de capas, 1 = detalhe do jogo (downloads + videos) */
   int zone;                            /* detalhe: 0 = downloads, 1 = videos/imagens */
-  int dfocus, dscroll, dscroll2, dscroll3, mfocus, mscroll;   /* dscroll2: rolagem da 2a coluna (plugins) no modo dividido */
+  int dfocus, dscroll, dscroll2, dscroll3, dscroll4, mfocus, mscroll;   /* dscroll2: rolagem da 2a coluna (plugins) no modo dividido */
   Image *fbgc[CAT_MAX_GAMES];          /* fundos prontos (1 por capa): trocar de card so copia a imagem, sem refazer o desfoque */
   int idle;                            /* quadros desde o ultimo botao (so prepara os fundos quando o usuario para) */
   int fbg_due;                         /* 1 = refazer o fundo borrado assim que a animacao de troca de capa terminar */
@@ -162,6 +162,10 @@ static const CatGame *cur_game(UI *ui) {
 static int is_media(const CatButton *b) { return !strcmp(b->action, "video") || !strcmp(b->action, "image"); }
 /* v1.27: botao com tipo "MID" (download) fica na faixa de midias, ao lado de "Ver instrucoes", e nao nas colunas */
 static int is_strip(const CatButton *b) { return is_media(b) || !strcmp(b->type, "MID"); }
+/* v1.34: 4a coluna "MASTER LIGA" nos cards JK-MOD (tag PLACARES): botoes com tipo "COL4". Um botao COL4 com acao "none" e so
+ * marcador (a coluna aparece vazia, sem botoes) e nunca entra nas listas. */
+static int ml_ph(const CatButton *b) { return !strcmp(b->type, "COL4") && !strcmp(b->action, "none"); }
+static int ml_btn(const CatGame *g, const CatButton *b) { return !strcmp(g->tag, "PLACARES") && !strcmp(b->type, "COL4") && !ml_ph(b); }
 /* Modo dividido (card "APPs e Plugins", tag APPS): detalhe em 3 colunas = info | APPs (PKG, verde) | PLUGINS (arquivos, amarelo). */
 static int split_mode(const CatGame *g) { return g && (!strcmp(g->tag, "APPS") || !strcmp(g->tag, "PLACARES")); }
 static int is_pkg_btn(const CatButton *b) { return !is_media(b) && !strcmp(b->action, "pkg"); }
@@ -191,13 +195,20 @@ static int split3(const CatGame *g) { return split_mode(g) && split_na(g) > 0 &&
 static const char *split_t2(const CatGame *g) { if (apps_new(g)) return "APPS"; return !strcmp(g->tag, "PLACARES") ? ((split_nc(g) > 0 && strstr(g->title, "DEMISAN")) ? "NARRAÇÕES MILTON" : "NARRAÇÕES") : "PLUGINS"; }
 static const char *split_t3(const CatGame *g) { if (apps_new(g)) return "PLUGINS"; return strstr(g->title, "MEGAPATCH") ? "NARRADOR ESTRANGEIRO" : "NARRAÇÕES CHILENO"; }
 /* limites [lo,hi) da coluna (0..2) da lista dl[]; ncols = 1, 2 ou 3 */
-static int ncols_of(const CatGame *g) { return split_na(g) > 0 ? (split_nc(g) > 0 ? 3 : 2) : 1; }
+static int split_nm(const CatGame *g) { int n = 0; if (!split_mode(g)) return 0; for (int i = 0; i < g->nbtn; i++) if (ml_btn(g, &g->btn[i])) n++; return n; }
+static int has4(const CatGame *g) {                                /* coluna MASTER LIGA presente (so com as 3 anteriores) */
+  if (!g || !split3(g) || strcmp(g->tag, "PLACARES")) return 0;
+  for (int i = 0; i < g->nbtn; i++) if (!strcmp(g->btn[i].type, "COL4")) return 1;
+  return 0;
+}
+static int ncols_of(const CatGame *g) { return split_na(g) > 0 ? (split_nc(g) > 0 ? (has4(g) ? 4 : 3) : 2) : 1; }
 static void col_range(const CatGame *g, int nd, int c, int *lo, int *hi) {
-  int na = split_na(g), nc = split_nc(g);
+  int na = split_na(g), nc = split_nc(g), nm = split_nm(g);
   if (na <= 0) { *lo = 0; *hi = nd; return; }
   if (c == 0) { *lo = 0; *hi = na; }
-  else if (c == 1) { *lo = na; *hi = nd - nc; }
-  else { *lo = nd - nc; *hi = nd; }
+  else if (c == 1) { *lo = na; *hi = nd - nc - nm; }
+  else if (c == 2) { *lo = nd - nc - nm; *hi = nd - nm; }
+  else { *lo = nd - nm; *hi = nd; }
 }
 static int col_of(const CatGame *g, int nd, int f) {
   int nc = ncols_of(g);
@@ -210,8 +221,9 @@ static void lists(const CatGame *g, int *dl, int *nd, int *md, int *nm) {
   if (!g) return;
   if (split_mode(g)) {                                            /* PKGs primeiro, depois os demais downloads */
     for (int i = 0; i < g->nbtn; i++) if (left_btn(g, &g->btn[i])) dl[(*nd)++] = i;
-    for (int i = 0; i < g->nbtn; i++) if (!is_strip(&g->btn[i]) && !left_btn(g, &g->btn[i]) && !right_btn(g, &g->btn[i])) dl[(*nd)++] = i;
+    for (int i = 0; i < g->nbtn; i++) if (!is_strip(&g->btn[i]) && !ml_ph(&g->btn[i]) && !left_btn(g, &g->btn[i]) && !right_btn(g, &g->btn[i]) && !ml_btn(g, &g->btn[i])) dl[(*nd)++] = i;
     for (int i = 0; i < g->nbtn; i++) if (right_btn(g, &g->btn[i])) dl[(*nd)++] = i;
+    for (int i = 0; i < g->nbtn; i++) if (ml_btn(g, &g->btn[i])) dl[(*nd)++] = i;
     for (int i = 0; i < g->nbtn; i++) if (is_strip(&g->btn[i])) md[(*nm)++] = i;
   } else
   for (int i = 0; i < g->nbtn; i++) {
@@ -1265,7 +1277,7 @@ void ui_key(UI *ui, int key) {
       default: break;
     }
     { int c = col_of(g, nd, ui->dfocus), lo, hi; col_range(g, nd, c, &lo, &hi);
-      int *sc = c == 0 ? &ui->dscroll : (c == 1 ? &ui->dscroll2 : &ui->dscroll3);
+      int *sc = c == 0 ? &ui->dscroll : (c == 1 ? &ui->dscroll2 : (c == 2 ? &ui->dscroll3 : &ui->dscroll4));
       int r = ui->dfocus - lo;
       if (r < *sc) *sc = r;
       if (r >= *sc + DL_VIS) *sc = r - DL_VIS + 1; }
@@ -1317,7 +1329,7 @@ void ui_key(UI *ui, int key) {
         int dl[CAT_MAX_BTNS], md[CAT_MAX_BTNS + 1], nd, nm;
         lists(g, dl, &nd, md, &nm);
         ui->detail = 1; ui->zone = nd > 0 ? 0 : 1;
-        ui->dfocus = ui->dscroll = ui->dscroll2 = ui->dscroll3 = ui->mfocus = ui->mscroll = 0;
+        ui->dfocus = ui->dscroll = ui->dscroll2 = ui->dscroll3 = ui->dscroll4 = ui->mfocus = ui->mscroll = 0;
         ui->dirty = 1;
       }
       break;
@@ -1791,7 +1803,8 @@ static void draw_detail(UI *ui) {
   int dl[CAT_MAX_BTNS], md[CAT_MAX_BTNS + 1], nd, nm;
   lists(g, dl, &nd, md, &nm);
   int na = split_na(g), split = split_mode(g), nc = split_nc(g), tri = split3(g);
-  int LW = tri ? 470 : (split ? 560 : DT_W);                                    /* largura da coluna de info (modo dividido: 3 colunas) */
+  int c4 = tri && has4(g), nm4 = split_nm(g);
+  int LW = c4 ? 400 : (tri ? 470 : (split ? 560 : DT_W));                                    /* largura da coluna de info (modo dividido: 3 colunas) */
 
   /* --- coluna da esquerda: capa + titulo, descricao, videos */
   int cx = DT_X, cy = 140, cw = TH_W[2], chh = TH_H[2];
@@ -1851,12 +1864,13 @@ static void draw_detail(UI *ui) {
   /* --- painel(is) da direita: downloads (modo dividido: APPs verde + PLUGINS amarelo) */
   if (split) {
     if (tri) {                                                    /* 3 colunas: PLACARES | NARRAÇÕES MILTON | NARRAÇÕES CHILENO (ou APPS | PLUGINS | DESBLOQUEIO) */
-      int gap = 18, ax = DT_X + LW + 30, pw3 = (W - MARGIN - ax - 2 * gap) / 3;
+      int gap = c4 ? 14 : 18, ax = DT_X + LW + 30, pw3 = (W - MARGIN - ax - (c4 ? 3 : 2) * gap) / (c4 ? 4 : 3);
       g_pad = 26; g_t3 = 1;
       int an = apps_new(g);                                       /* APPs e Plugins: DESBLOQUEIO azul | APPS verde | PLUGINS amarelo */
       draw_dl_panel(ui, g, dl, 0, na, ax, pw3, split_t1(g), an ? RGB(0x7d, 0xb4, 0xff) : C_ACCENT, ui->dscroll, 0);
-      draw_dl_panel(ui, g, dl, na, nd - nc, ax + pw3 + gap, pw3, split_t2(g), an ? C_ACCENT : C_FOCUS, ui->dscroll2, 0);
-      draw_dl_panel(ui, g, dl, nd - nc, nd, ax + 2 * (pw3 + gap), pw3, split_t3(g), an ? C_FOCUS : RGB(0x7d, 0xb4, 0xff), ui->dscroll3, 1);
+      draw_dl_panel(ui, g, dl, na, nd - nc - nm4, ax + pw3 + gap, pw3, split_t2(g), an ? C_ACCENT : C_FOCUS, ui->dscroll2, 0);
+      draw_dl_panel(ui, g, dl, nd - nc - nm4, nd - nm4, ax + 2 * (pw3 + gap), pw3, split_t3(g), an ? C_FOCUS : RGB(0x7d, 0xb4, 0xff), ui->dscroll3, c4 ? 0 : 1);
+      if (c4) draw_dl_panel(ui, g, dl, nd - nm4, nd, ax + 3 * (pw3 + gap), pw3, "MASTER LIGA", RGB(0xff, 0xc8, 0x3c), ui->dscroll4, 1);
       g_pad = 44; g_t3 = 0;
     } else {
     int pw2 = 550, ax = 698, bx2 = ax + pw2 + 24;
