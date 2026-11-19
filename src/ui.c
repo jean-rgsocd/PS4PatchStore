@@ -1496,7 +1496,7 @@ static void draw_button(UI *ui, const CatButton *b, int x, int y, int w, int foc
     char info[48];
     info_text(b, info, sizeof(info));
     if (g_btn_compact) info[0] = 0;
-    int fs0 = g_btn_compact ? (g_t3 ? 20 : 23) : 27;
+    int fs0 = g_btn_compact ? (g_t3 == 2 ? 17 : (g_t3 ? 20 : 23)) : 27;
     int iw = info[0] ? TW(ui, 0, 20, info, 0) : 0;
     int avail = w - 40 - 70 - (iw ? iw + 24 : 0);
     draw_btn_label(ui, b->label, x + 32, y, avail, fs0, C_MUTED, 255);
@@ -1515,11 +1515,11 @@ static void draw_button(UI *ui, const CatButton *b, int x, int y, int w, int foc
   char info[48];
   info_text(b, info, sizeof(info));
   if (g_btn_compact) info[0] = 0;
-  int fs1 = g_btn_compact ? (g_t3 ? 20 : 23) : 27;
+  int fs1 = g_btn_compact ? (g_t3 == 2 ? 17 : (g_t3 ? 20 : 23)) : 27;
   int iw = info[0] ? TW(ui, 0, 20, info, 0) : 0;
-  int arrow_w = 56;
-  int avail = w - 40 - arrow_w - (iw ? iw + 24 : 0);
-  draw_btn_label(ui, b->label, x + 32, y, avail, fs1, fg, 255);
+  int arrow_w = g_t3 == 2 ? 44 : 56, lp = g_t3 == 2 ? 18 : 32;
+  int avail = w - lp - 8 - arrow_w - (iw ? iw + 24 : 0);
+  draw_btn_label(ui, b->label, x + lp, y, avail, fs1, fg, 255);
   if (info[0]) T(ui, 0, 20, x + w - arrow_w - 12 - iw, y + g_bh / 2 + 7, info, fg, 190, 0);
   text_draw_in(s, ui->fb, 30, x + w - arrow_w - 4, arrow_w, y + g_bh / 2 + 11, "\xE2\x86\x93", fg, 255, 0, 1);
   if (!focused) gfx_rrect(s, x, y, w, g_bh, r, C_BG, 70, 0);
@@ -1613,10 +1613,11 @@ static void draw_media_card(UI *ui, int x, int y, int w, int h, const char *labe
 
 /* Descricao em topicos: os itens separados por " \xE2\x80\xA2 " (bolinha) viram uma linha cada, com marcador; o primeiro
  * (a atualizacao) fica em destaque. Sem esse separador, desenha como texto corrido (catalogos antigos). Retorna as linhas usadas. */
+static int g_dfs = 23;                                         /* v1.36: fonte da descricao (4 colunas = 18) */
 static int draw_desc(UI *ui, int x, int y, int w, int lh, int max_lines, const char *desc) {
   Image *s = ui->s;
   static const char SEP[] = " \xE2\x80\xA2 ";
-  if (!strstr(desc, SEP)) return text_wrap(s, ui->f, 23, x, y, w, lh, max_lines, desc, C_MUTED, 255);
+  if (!strstr(desc, SEP)) return text_wrap(s, ui->f, g_dfs, x, y, w, lh, max_lines, desc, C_MUTED, 255);
   int used = 0, first = 1;
   const char *p = desc;
   while (*p && used < max_lines) {
@@ -1629,7 +1630,7 @@ static int draw_desc(UI *ui, int x, int y, int w, int lh, int max_lines, const c
     if (item[0]) {
       int ly = y + used * lh;
       gfx_circle(s, x + 7, ly - 8, 5, first ? C_ACCENT : C_MUTED, first ? 255 : 170);
-      int ln = text_wrap(s, first ? ui->fb : ui->f, 23, x + 28, ly, w - 28, lh, max_lines - used, item,
+      int ln = text_wrap(s, first ? ui->fb : ui->f, g_dfs, x + 28, ly, w - 28, lh, max_lines - used, item,
                          first ? C_TEXT : C_MUTED, 255);
       used += ln > 0 ? ln : 1;
     }
@@ -1750,15 +1751,15 @@ static void draw_dl_panel(UI *ui, const CatGame *g, const int *dl, int lo, int h
   gfx_rrect(s, px, DT_PY, pw, DT_PH, 26, C_PANEL, 235, 0);
   gfx_rrect(s, px, DT_PY, pw, DT_PH, 26, C_WHITE, 26, 2);
   if (col) gfx_rrect(s, px + 30, DT_PY + 14, pw - 60, 6, 3, col, 255, 0);       /* faixa colorida do topo (modo dividido) */
-  T(ui, 1, g_t3 ? 19 : 26, px + g_pad, DT_PY + 58, title, col ? col : C_TEXT, 255, g_t3 ? 1 : 3);
+  T(ui, 1, g_t3 == 2 ? 16 : (g_t3 ? 19 : 26), px + g_pad, DT_PY + 58, title, col ? col : C_TEXT, 255, g_t3 ? 1 : 3);
   char ct[48];
   int fr = ui->dfocus - lo;
   if (n && fr >= 0 && fr < n) snprintf(ct, sizeof(ct), "%d / %d", fr + 1, n); else snprintf(ct, sizeof(ct), "%d", n);
-  int cw3 = TW(ui, 0, g_t3 ? 20 : 22, ct, 0);
-  T(ui, 0, g_t3 ? 20 : 22, px + pw - g_pad - cw3, DT_PY + 58, ct, C_MUTED, 255, 0);
+  int cw3 = TW(ui, 0, g_t3 == 2 ? 16 : (g_t3 ? 20 : 22), ct, 0);
+  T(ui, 0, g_t3 == 2 ? 16 : (g_t3 ? 20 : 22), px + pw - g_pad - cw3, DT_PY + 58, ct, C_MUTED, 255, 0);
   gfx_fill(s, px + 30, DT_PY + 82, pw - 60, 1, C_WHITE, 26);
   if (n == 0) {
-    text_draw_in(s, ui->f, 26, px, pw, DT_PY + 200, "Nenhum item ainda.", C_MUTED, 255, 0, 1);
+    text_draw_in(s, ui->f, 26, px, pw, DT_PY + 200, !strcmp(title, "MASTER LIGA") ? "Em breve." : "Nenhum item ainda.", C_MUTED, 255, 0, 1);
   } else {
     g_bh = BTN_H;
     g_btn_col = col; g_btn_compact = notes >= 0 && ui->dfocus >= 0 && split_mode(g);
@@ -1804,22 +1805,25 @@ static void draw_detail(UI *ui) {
   lists(g, dl, &nd, md, &nm);
   int na = split_na(g), split = split_mode(g), nc = split_nc(g), tri = split3(g);
   int c4 = tri && has4(g), nm4 = split_nm(g);
-  int LW = c4 ? 400 : (tri ? 470 : (split ? 560 : DT_W));                                    /* largura da coluna de info (modo dividido: 3 colunas) */
+  int LW = c4 ? 340 : (tri ? 470 : (split ? 560 : DT_W));                                    /* largura da coluna de info (modo dividido: 3 colunas) */
 
-  /* --- coluna da esquerda: capa + titulo, descricao, videos */
+  /* --- coluna da esquerda: capa + titulo, descricao, videos (4 colunas: sem capa, texto menor, descricao ocupa o espaco) */
   int cx = DT_X, cy = 140, cw = TH_W[2], chh = TH_H[2];
-  gfx_rrect(s, cx + 5, cy + 12, cw, chh, 18, C_BLACK, 110, 0);
-  if (ui->th[gi][2]) gfx_blit(s, ui->th[gi][2], cx, cy, 18, 255);
-  else draw_placeholder(ui, cx, cy, cw, chh, g->title);
-  gfx_rrect(s, cx - 4, cy - 4, cw + 8, chh + 8, 21, C_ACCENT, 255, 4);
+  if (!c4) {
+    gfx_rrect(s, cx + 5, cy + 12, cw, chh, 18, C_BLACK, 110, 0);
+    if (ui->th[gi][2]) gfx_blit(s, ui->th[gi][2], cx, cy, 18, 255);
+    else draw_placeholder(ui, cx, cy, cw, chh, g->title);
+    gfx_rrect(s, cx - 4, cy - 4, cw + 8, chh + 8, 21, C_ACCENT, 255, 4);
+  }
 
-  int tx = cx + cw + 36, tw = DT_X + LW - tx;
-  int tl = text_wrap(s, ui->fb, 40, tx, cy + 46, tw, 48, 3, g->title, C_TEXT, 255);
+  int tx = c4 ? cx : cx + cw + 36, tw = DT_X + LW - tx;
+  int tfs = c4 ? 34 : 40, tlh = c4 ? 40 : 48;
+  int tl = text_wrap(s, ui->fb, tfs, tx, cy + 46, tw, tlh, 3, g->title, C_TEXT, 255);
   if (tl < 1) tl = 1;
-  int ky = cy + 46 + (tl - 1) * 48 + 44;
+  int ky = cy + 46 + (tl - 1) * tlh + 44;
   char kb[160];
   text_fit(ui->f, 21, g->kicker, tw, kb, sizeof(kb));
-  T(ui, 0, 21, tx, ky, kb, C_ACCENT, 255, 1);
+  T(ui, 0, c4 ? 19 : 21, tx, ky, kb, C_ACCENT, 255, 1);
   char info[96];
   snprintf(info, sizeof(info), "%d download%s  ·  %d vídeo%s/guia%s", nd, nd == 1 ? "" : "s",
            nm, nm == 1 ? "" : "s", nm == 1 ? "" : "s");
@@ -1831,11 +1835,13 @@ static void draw_detail(UI *ui) {
     text_draw_in(s, ui->fb, 18, tx, bw, ky + 93, g->tag, C_ACCENT, 255, 2, 1);
   }
 
-  int dy = cy + chh + 40;
+  int dy = c4 ? ky + 142 : cy + chh + 40;
   /* aviso amarelo no rodape: o que vier depois de " !! " na descricao nao entra na lista de topicos */
   char dtxt[1200]; const char *note = strstr(g->desc, " !! ");
   if (note) { size_t nn = (size_t)(note - g->desc); if (nn >= sizeof(dtxt)) nn = sizeof(dtxt) - 1; memcpy(dtxt, g->desc, nn); dtxt[nn] = 0; note += 4; }
-  draw_desc(ui, DT_X, dy, LW, 31, 7, note ? dtxt : g->desc);
+  if (c4) g_dfs = 18;
+  draw_desc(ui, DT_X, dy, LW, c4 ? 25 : 31, c4 ? 14 : 7, note ? dtxt : g->desc);
+  g_dfs = 23;
 
   /* videos e guias */
   int my = 742;
@@ -1864,8 +1870,8 @@ static void draw_detail(UI *ui) {
   /* --- painel(is) da direita: downloads (modo dividido: APPs verde + PLUGINS amarelo) */
   if (split) {
     if (tri) {                                                    /* 3 colunas: PLACARES | NARRAÇÕES MILTON | NARRAÇÕES CHILENO (ou APPS | PLUGINS | DESBLOQUEIO) */
-      int gap = c4 ? 14 : 18, ax = DT_X + LW + 30, pw3 = (W - MARGIN - ax - (c4 ? 3 : 2) * gap) / (c4 ? 4 : 3);
-      g_pad = 26; g_t3 = 1;
+      int gap = c4 ? 12 : 18, ax = DT_X + LW + 30, pw3 = (W - MARGIN - ax - (c4 ? 3 : 2) * gap) / (c4 ? 4 : 3);
+      g_pad = c4 ? 18 : 26; g_t3 = c4 ? 2 : 1;
       int an = apps_new(g);                                       /* APPs e Plugins: DESBLOQUEIO azul | APPS verde | PLUGINS amarelo */
       draw_dl_panel(ui, g, dl, 0, na, ax, pw3, split_t1(g), an ? RGB(0x7d, 0xb4, 0xff) : C_ACCENT, ui->dscroll, 0);
       draw_dl_panel(ui, g, dl, na, nd - nc - nm4, ax + pw3 + gap, pw3, split_t2(g), an ? C_ACCENT : C_FOCUS, ui->dscroll2, 0);
