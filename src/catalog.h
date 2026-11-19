@@ -3,8 +3,8 @@
 #define CATALOG_H
 
 #define CAT_MAX_CATS  16
-#define CAT_MAX_GAMES 64
-#define CAT_MAX_BTNS  48
+#define CAT_MAX_GAMES 32
+#define CAT_MAX_BTNS  72
 
 typedef struct { char id[32]; char label[64]; } CatCategory;
 

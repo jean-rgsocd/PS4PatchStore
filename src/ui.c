@@ -162,9 +162,9 @@ static const CatGame *cur_game(UI *ui) {
 static int is_media(const CatButton *b) { return !strcmp(b->action, "video") || !strcmp(b->action, "image"); }
 /* v1.27: botao com tipo "MID" (download) fica na faixa de midias, ao lado de "Ver instrucoes", e nao nas colunas */
 static int is_strip(const CatButton *b) { return is_media(b) || !strcmp(b->type, "MID"); }
-/* v1.34: 4a coluna "MASTER LIGA" nos cards JK-MOD (tag PLACARES): botoes com tipo "COL4". Um botao COL4 com acao "none" e so
+/* v1.34: 4a coluna "MASTER LIGA" nos cards JK-MOD (tag PLACARES): botoes com tipo "COL4". Um botao COL4 com acao "soon" e so
  * marcador (a coluna aparece vazia, sem botoes) e nunca entra nas listas. */
-static int ml_ph(const CatButton *b) { return !strcmp(b->type, "COL4") && !strcmp(b->action, "none"); }
+static int ml_ph(const CatButton *b) { return !strcmp(b->type, "COL4") && !strcmp(b->action, "soon"); }
 static int ml_btn(const CatGame *g, const CatButton *b) { return !strcmp(g->tag, "PLACARES") && !strcmp(b->type, "COL4") && !ml_ph(b); }
 /* Modo dividido (card "APPs e Plugins", tag APPS): detalhe em 3 colunas = info | APPs (PKG, verde) | PLUGINS (arquivos, amarelo). */
 static int split_mode(const CatGame *g) { return g && (!strcmp(g->tag, "APPS") || !strcmp(g->tag, "PLACARES")); }
