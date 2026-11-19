@@ -162,7 +162,7 @@ static const CatGame *cur_game(UI *ui) {
 static int is_media(const CatButton *b) { return !strcmp(b->action, "video") || !strcmp(b->action, "image"); }
 /* v1.27: botao com tipo "MID" (download) fica na faixa de midias, ao lado de "Ver instrucoes", e nao nas colunas */
 static int is_strip(const CatButton *b) { return is_media(b) || !strcmp(b->type, "MID"); }
-/* v1.34: 4a coluna "MASTER LIGA" nos cards JK-MOD (tag PLACARES): botoes com tipo "COL4". Um botao COL4 com acao "soon" e so
+/* v1.34: 4a coluna "MASTER LEAGUE PRO" nos cards JK-MOD (tag PLACARES): botoes com tipo "COL4". Um botao COL4 com acao "soon" e so
  * marcador (a coluna aparece vazia, sem botoes) e nunca entra nas listas. */
 static int ml_ph(const CatButton *b) { return !strcmp(b->type, "COL4") && !strcmp(b->action, "soon"); }
 static int ml_btn(const CatGame *g, const CatButton *b) { return !strcmp(g->tag, "PLACARES") && !strcmp(b->type, "COL4") && !ml_ph(b); }
@@ -1759,7 +1759,7 @@ static void draw_dl_panel(UI *ui, const CatGame *g, const int *dl, int lo, int h
   T(ui, 0, g_t3 == 2 ? 16 : (g_t3 ? 20 : 22), px + pw - g_pad - cw3, DT_PY + 58, ct, C_MUTED, 255, 0);
   gfx_fill(s, px + 30, DT_PY + 82, pw - 60, 1, C_WHITE, 26);
   if (n == 0) {
-    text_draw_in(s, ui->f, 26, px, pw, DT_PY + 200, !strcmp(title, "MASTER LIGA") ? "Em breve." : "Nenhum item ainda.", C_MUTED, 255, 0, 1);
+    text_draw_in(s, ui->f, 26, px, pw, DT_PY + 200, !strcmp(title, "MASTER LEAGUE PRO") ? "Em breve." : "Nenhum item ainda.", C_MUTED, 255, 0, 1);
   } else {
     g_bh = BTN_H;
     g_btn_col = col; g_btn_compact = notes >= 0 && ui->dfocus >= 0 && split_mode(g);
@@ -1876,7 +1876,7 @@ static void draw_detail(UI *ui) {
       draw_dl_panel(ui, g, dl, 0, na, ax, pw3, split_t1(g), an ? RGB(0x7d, 0xb4, 0xff) : C_ACCENT, ui->dscroll, 0);
       draw_dl_panel(ui, g, dl, na, nd - nc - nm4, ax + pw3 + gap, pw3, split_t2(g), an ? C_ACCENT : C_FOCUS, ui->dscroll2, 0);
       draw_dl_panel(ui, g, dl, nd - nc - nm4, nd - nm4, ax + 2 * (pw3 + gap), pw3, split_t3(g), an ? C_FOCUS : RGB(0x7d, 0xb4, 0xff), ui->dscroll3, c4 ? 0 : 1);
-      if (c4) draw_dl_panel(ui, g, dl, nd - nm4, nd, ax + 3 * (pw3 + gap), pw3, "MASTER LIGA", RGB(0xff, 0xc8, 0x3c), ui->dscroll4, 1);
+      if (c4) draw_dl_panel(ui, g, dl, nd - nm4, nd, ax + 3 * (pw3 + gap), pw3, "MASTER LEAGUE PRO", RGB(0xff, 0xc8, 0x3c), ui->dscroll4, 1);
       g_pad = 44; g_t3 = 0;
     } else {
     int pw2 = 550, ax = 698, bx2 = ax + pw2 + 24;
