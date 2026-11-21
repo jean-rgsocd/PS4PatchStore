@@ -13,8 +13,8 @@
 // Admin: GET /admin
 //
 // ACESSO (planos pagos):
-// - Cadastro novo com "dev" (ID do console): conta ativa por 1 HORA (teste), uma vez por console.
-//   Console que ja teve o teste: conta nasce vencida (so ve o catalogo).
+// - Cadastro novo com "dev" (ID do console): sem teste gratis (TRIAL_ON = false): a conta nasce sem plano
+//   (so ve o catalogo) e o app ja abre a janela de planos. Para voltar o teste de 1 hora: TRIAL_ON = true.
 // - Cadastro sem "dev" (app antigo): nasce pendente, ativa manual pelo painel.
 // - Planos: mensal 30d, semestral 180d, anual 365d (painel: botoes "+ Mensal" etc.; somam ao prazo atual).
 // - Vencido ou pendente: catalogo "so olhar" (sem links), igual ao visitante.
@@ -36,6 +36,7 @@ const REG_MAX_PENDING = 200;
 
 const HOUR_MS = 3600 * 1000;
 const DAY_MS = 24 * HOUR_MS;
+const TRIAL_ON = false;            // teste gratis para cadastro novo (desligado em 21/11/2026)
 const TRIAL_MS = HOUR_MS;
 
 // ---------- PLANOS (precos e Pix: edite aqui e publique o worker) ----------
@@ -495,13 +496,13 @@ async function register(request, env) {
     rec.dev = dh;
     trialKey = "trial:" + dh;
 
-    if (!(await env.DB.get(trialKey))) {
+    if (TRIAL_ON && !(await env.DB.get(trialKey))) {
       rec.plan = "trial";
       rec.expires = new Date(now + TRIAL_MS).toISOString();
       estado = "trial";
     } else {
       rec.plan = "";
-      rec.expires = new Date(now - 1000).toISOString();   // este console ja usou o teste
+      rec.expires = new Date(now - 1000).toISOString();   // sem teste (desligado ou este console ja usou)
       estado = "vencido";
     }
   } else {
@@ -620,7 +621,7 @@ async function me(request, env, url) {
 
 // PLANOS (publico): o app monta a janela de assinatura e os QR Codes com estes dados.
 function plans() {
-  const out = ["OK", "WA\t" + WHATSAPP, "TRIAL\t" + Math.round(TRIAL_MS / 60000)];
+  const out = ["OK", "WA\t" + WHATSAPP, "TRIAL\t" + (TRIAL_ON ? Math.round(TRIAL_MS / 60000) : 0)];
   for (const id of Object.keys(PLANOS)) {
     const p = PLANOS[id];
     out.push(["PLAN", id, p.nome, p.preco, p.dias, p.pix].join("\t"));
@@ -2145,7 +2146,7 @@ video{display:block;width:100%;max-width:1200px;margin-top:26px;border:1px solid
     <li>No GoldHEN, deixe <b>Enable Payload Server</b> ativado.</li>
     <li>No navegador do PS4, abra esta p&aacute;gina e toque em <b>INSTALAR DIRETO NO PS4</b>.</li>
     <li>Acompanhe o download em <b>Notifica&ccedil;&otilde;es</b> e aguarde terminar.</li>
-    <li>Abra o <b>JK PATCHS</b>, cadastre-se e use <b>1 hora gr&aacute;tis</b> para testar.</li>
+    <li>Abra o <b>JK PATCHS</b>, cadastre-se e escolha seu plano para baixar.</li>
    </ol>
   </div>
   <div>
