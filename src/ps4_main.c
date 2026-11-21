@@ -371,8 +371,103 @@ static void jkp_fix_dplist(const JkpGame *G) {
   free(o);
 }
 
+/* ------------------------------------------------------------------ v1.42: hinos pos-gol (pes21_hinos_gol.prx)
+ * O plugin e os hinos vao junto com qualquer download do JK-MOD (placar, narracao, Master League).
+ * Depois de todo download: se o plugin esta no console, poe a linha dele no plugins.ini (secoes do Mega/Brasfoot e do
+ * Demisan). Se a linha ja existe (=true, =false ou comentada com ';'), nao mexe: respeita quem desligou. */
+#define JKH_PRX  "/data/GoldHEN/plugins/pes21_hinos_gol.prx"
+#define JKH_LINE "/data/GoldHEN/plugins/pes21_hinos_gol.prx=true"
+static void jkh_fix_ini(void) {
+  static const char *SEC[2] = { "[CUSA18676]", "[CUSA22062]" };
+  if (file_size_of(JKH_PRX) <= 0) return;
+  for (int k = 0; k < 2; k++) {
+    long long n = 0;
+    char *t = read_all(JKP_INI, &n, 256 * 1024);
+    if (!t) return;
+    char *sec = strstr(t, SEC[k]);
+    if (!sec) { free(t); continue; }
+    char *end = strstr(sec + 1, "\n[");                    /* fim da secao (o '\n' antes da proxima) */
+    if (!end) end = t + n;
+    int tem = 0;
+    for (char *p = sec; p < end; p++) {
+      if (p != t && p[-1] != '\n') continue;
+      char *q = p; while (*q == ';' || *q == ' ' || *q == '\t') q++;
+      if (!strncmp(q, JKH_PRX, strlen(JKH_PRX))) { tem = 1; break; }
+    }
+    if (tem) { free(t); continue; }
+    char *at = end;                                         /* depois da ultima linha com texto da secao */
+    char *hdr_end = sec; while (*hdr_end && *hdr_end != '\n') hdr_end++;
+    for (;;) {                                              /* pula linhas vazias e comentarios do fim (ex.: "; Demisan" da proxima) */
+      while (at > hdr_end && (at[-1] == '\n' || at[-1] == '\r' || at[-1] == ' ' || at[-1] == '\t')) at--;
+      char *ls = at; while (ls > hdr_end && ls[-1] != '\n') ls--;
+      if (ls > hdr_end && (*ls == ';' || *ls == '#')) { at = ls; continue; }
+      break;
+    }
+    const char *nl = strstr(t, "\r\n") ? "\r\n" : "\n";
+    size_t pre = (size_t)(at - t), ll = strlen(JKH_LINE), nll = strlen(nl), rest = (size_t)(n - (at - t));
+    char *o = (char *)malloc((size_t)n + ll + 8);
+    if (!o) { free(t); return; }
+    memcpy(o, t, pre);
+    memcpy(o + pre, nl, nll);
+    memcpy(o + pre + nll, JKH_LINE, ll);
+    memcpy(o + pre + nll + ll, at, rest);
+    if (write_all(JKP_INI, o, (long long)(pre + nll + ll + rest)) == 0) {
+      char lm[120];
+      snprintf(lm, sizeof(lm), "Hinos: plugins.ini com pes21_hinos_gol.prx=true em %s", SEC[k]);
+      install_log(lm);
+    }
+    free(o); free(t);
+  }
+}
+
+/* v1.42: item "pasta=https://.../lista.lst?list" do catalogo = baixa a lista (texto, uma URL por linha, ou
+ * "/data/pasta=https://...") e acrescenta cada linha como item do download. Os itens da lista sao opcionais
+ * (se um falhar, o resto da instalacao segue). Use "?once=TAMANHO" nas linhas: o que ja esta no console nao baixa de novo.
+ * App antigo: baixa o .lst como arquivo comum (inofensivo). */
+static int jk_expand_list(const char *url, const char *defdir, char (*iu)[1024], char (*id)[120], char *isoft, int nit, int max) {
+  char u[1024], tmp[] = "/data/PS4PatchStore/jk_lista.tmp", err[200] = "", lm[1200];
+  snprintf(u, sizeof(u), "%s", url);
+  char *q = strstr(u, "?list"); if (q) *q = 0;              /* o servidor recebe a URL limpa */
+  volatile int cancel = 0, pct = 0;
+  int rc = auth_download(u, tmp, &pct, &cancel, err, sizeof(err));
+  long long n = 0;
+  char *t = rc == 0 ? read_all(tmp, &n, 64 * 1024) : NULL;
+  unlink(tmp);
+  if (!t) {
+    snprintf(lm, sizeof(lm), "Lista nao baixou (segue sem ela): %s %s", u, err);
+    install_log(lm);
+    return nit;
+  }
+  int add = 0;
+  for (char *line = t; *line && nit < max;) {
+    char *eol = line; while (*eol && *eol != '\n') eol++;
+    char *nx = *eol ? eol + 1 : eol;
+    *eol = 0;
+    if (eol > line && eol[-1] == '\r') eol[-1] = 0;
+    while (*line == ' ' || *line == '\t') line++;
+    const char *dir = defdir;
+    char *lu = line;
+    if (!strncmp(line, "/data/", 6)) {
+      char *eq = strchr(line, '=');
+      if (eq) { *eq = 0; lu = eq + 1; if (!strstr(line, "..") && strlen(line) < 120) dir = line; }
+    }
+    if (!strncmp(lu, "https://", 8) && !strstr(lu, "?list")) {
+      snprintf(iu[nit], 1024, "%s", lu);
+      snprintf(id[nit], 120, "%s", dir);
+      isoft[nit] = 1;
+      nit++; add++;
+    }
+    line = nx;
+  }
+  free(t);
+  snprintf(lm, sizeof(lm), "Lista %s: %d itens", u, add);
+  install_log(lm);
+  return nit;
+}
+
 static void jk_placares_fixup(void) {
   for (int g = 0; g < 2; g++) { jkp_fix_ini(&JKP_GAMES[g]); jkp_fix_dplist(&JKP_GAMES[g]); }
+  jkh_fix_ini();                                          /* v1.42 */
 }
 
 /* ------------------------------------------------------------------ instalacao (thread) */
@@ -445,10 +540,12 @@ static void *install_thread(void *arg) {
     /* Lista de arquivos do botao: o principal (url/dest) + os "extras" separados por '|'.
      * Cada extra pode ser "https://..." (mesma pasta do principal) ou "/data/pasta=https://..." (outra pasta).
      * Ex.: plugin = .cpk + DpFileList.bin; Comemoracoes = 5 arquivos em 3 pastas. */
-    enum { MAXIT = 33 };   /* 1 principal + ate 32 extras */
-    char it_url[MAXIT][1024];
-    char it_dir[MAXIT][120];
-    char it_soft[MAXIT];                                /* 1 = falha nao derruba a instalacao (ex.: icone) */
+    /* v1.42: 1 principal + ate 40 extras + ate 80 itens vindos de listas "?list" (hinos pos-gol).
+     * Fora da pilha (static): so existe uma instalacao por vez (ui->busy). */
+    enum { MAXIT = 121, MAXEX = 41 };
+    static char it_url[MAXIT][1024];
+    static char it_dir[MAXIT][120];
+    static char it_soft[MAXIT];                         /* 1 = falha nao derruba a instalacao (ex.: icone, hino) */
     int nit = 0;
     snprintf(it_url[0], sizeof(it_url[0]), "%s", j->btn.url);
     snprintf(it_dir[0], sizeof(it_dir[0]), "%s", dir);
@@ -458,7 +555,8 @@ static void *install_thread(void *arg) {
       char ex[8192];
       snprintf(ex, sizeof(ex), "%s", j->btn.extra);
       char *sv = ex;
-      while (*sv && nit < MAXIT) {
+      int nex = 1;                                      /* itens normais (a lista nao conta aqui) */
+      while (*sv && nex < MAXEX && nit < MAXIT) {
         char *tok = sv;
         char *bar = strchr(sv, '|');
         if (bar) { *bar = 0; sv = bar + 1; } else sv += strlen(sv);
@@ -477,10 +575,11 @@ static void *install_thread(void *arg) {
           }
         }
         if (strncmp(u, "https://", 8) != 0) continue;
+        if (strstr(u, "?list")) { nit = jk_expand_list(u, tdir, it_url, it_dir, it_soft, nit, MAXIT); continue; }   /* v1.42 */
         snprintf(it_url[nit], sizeof(it_url[0]), "%s", u);
         snprintf(it_dir[nit], sizeof(it_dir[0]), "%s", tdir);
         it_soft[nit] = (char)soft;
-        nit++;
+        nit++; nex++;
       }
     }
     char lastname[180] = "";
