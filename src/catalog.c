@@ -125,7 +125,7 @@ int catalog_parse(Catalog *c, char *text) {
           memcpy(b->extra + L, f[11], L2 + 1);
         }
       }
-    } else if (!strcmp(f[0], "PLB") && n >= 7) {
+    } else if ((!strcmp(f[0], "PLB") || !strcmp(f[0], "PLB2")) && n >= 7) {   /* PLB2 (v1.38): quadro que o 1.37 nao sabe instalar */
       CatPlBoard *b = pl_board(c, f[1]);
       if (!b && c->nplb < CAT_MAX_PLB) b = &c->plb[c->nplb++];
       if (b) {

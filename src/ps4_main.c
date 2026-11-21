@@ -250,9 +250,13 @@ static int copy_file(const char *src, const char *dst) {
  *     - so se o jk_placares.prx existir no console.
  *  2) DpFileList.bin do Demisan: acrescenta JK_PLACAR_A/B/CDB/LIB.cpk no fim (prioridade maior)
  *     - so se os 4 arquivos existirem na pasta (o jogo trava se a lista citar um CPK que nao existe). */
-#define JKP_DIR   "/data/GoldHEN/AFR/CUSA22062"
-#define JKP_PRX   "/data/GoldHEN/plugins/jk_placares.prx"
 #define JKP_INI   "/data/GoldHEN/plugins.ini"
+/* v1.38: um jogo por linha (Demisan CUSA22062 e Brasfoot CUSA18676) */
+typedef struct { const char *dir, *sec, *prx, *line; } JkpGame;
+static const JkpGame JKP_GAMES[2] = {
+  { "/data/GoldHEN/AFR/CUSA22062", "[CUSA22062]", "/data/GoldHEN/plugins/jk_placares.prx",    "/data/GoldHEN/plugins/jk_placares.prx=true" },
+  { "/data/GoldHEN/AFR/CUSA18676", "[CUSA18676]", "/data/GoldHEN/plugins/jk_placares_bf.prx", "/data/GoldHEN/plugins/jk_placares_bf.prx=true" },
+};
 /* ordem no fim da lista = prioridade (o ultimo manda). Os arquivos gerais (menu, replay, hino) valem do ultimo que tiver:
  * Serie A > Serie B > Copa do Brasil > Libertadores. */
 static const char *JKP_CPK[4] = { "JK_PLACAR_LIB.cpk", "JK_PLACAR_CDB.cpk", "JK_PLACAR_B.cpk", "JK_PLACAR_A.cpk" };
@@ -284,12 +288,12 @@ static int write_all(const char *p, const char *b, long long n) {
   return rc;
 }
 
-static void jkp_fix_ini(void) {
-  if (file_size_of(JKP_PRX) <= 0) return;
+static void jkp_fix_ini(const JkpGame *G) {
+  if (file_size_of(G->prx) <= 0) return;
   long long n = 0;
   char *t = read_all(JKP_INI, &n, 256 * 1024);
   if (!t) return;
-  char *sec = strstr(t, "[CUSA22062]");
+  char *sec = strstr(t, G->sec);
   if (!sec) { free(t); return; }
   char *end = strstr(sec + 11, "\n[");                      /* fim da secao */
   if (!end) end = t + n;
@@ -297,11 +301,11 @@ static void jkp_fix_ini(void) {
   for (char *p = sec; p < end; p++) {
     if (p != t && p[-1] != '\n') continue;
     if (!strncmp(p, "/data/GoldHEN/plugins/pes21_gol_fora.prx", 40) && !gol) gol = p;
-    if (!strncmp(p, "/data/GoldHEN/plugins/jk_placares.prx", 37) && !jk) jk = p;
+    if (!strncmp(p, G->line, strlen(G->line) - 5) && !jk) jk = p;
   }
   if (jk || !gol) { free(t); return; }                       /* ja esta certo (ou nao tem gol fora: nao mexe) */
   char *eol = gol; while (*eol && *eol != '\r' && *eol != '\n') eol++;
-  const char *rep = "/data/GoldHEN/plugins/jk_placares.prx=true";
+  const char *rep = G->line;
   size_t pre = (size_t)(gol - t), rl = strlen(rep);
   char *o = (char *)malloc((size_t)n + rl + 8);
   if (!o) { free(t); return; }
@@ -309,14 +313,14 @@ static void jkp_fix_ini(void) {
   memcpy(o + pre, rep, rl);
   size_t rest = (size_t)(n - (eol - t));
   memcpy(o + pre + rl, eol, rest);
-  if (write_all(JKP_INI, o, (long long)(pre + rl + rest)) == 0) install_log("JK placares: plugins.ini [CUSA22062] usa jk_placares.prx");
+  if (write_all(JKP_INI, o, (long long)(pre + rl + rest)) == 0) install_log("JK placares: plugins.ini ajustado (jk_placares no lugar do pes21_gol_fora)");
   free(o); free(t);
 }
 
-static void jkp_fix_dplist(void) {
+static void jkp_fix_dplist(const JkpGame *G) {
   char p[200];
-  for (int k = 0; k < 4; k++) { snprintf(p, sizeof(p), "%s/%s", JKP_DIR, JKP_CPK[k]); if (file_size_of(p) <= 0) return; }
-  snprintf(p, sizeof(p), "%s/DpFileList.bin", JKP_DIR);
+  for (int k = 0; k < 4; k++) { snprintf(p, sizeof(p), "%s/%s", G->dir, JKP_CPK[k]); if (file_size_of(p) <= 0) return; }
+  snprintf(p, sizeof(p), "%s/DpFileList.bin", G->dir);
   long long n = 0;
   unsigned char *d = (unsigned char *)read_all(p, &n, 64 * 1024);
   if (!d) return;
@@ -329,7 +333,17 @@ static void jkp_fix_dplist(void) {
   for (int k = 0; k < no; k++) {                              /* tira os JK_PLACAR de onde estiverem... */
     int jk = 0;
     for (int j = 0; j < 4; j++) if (!strcmp(old[k], JKP_CPK[j])) jk = 1;
-    if (!jk && m < 236) memcpy(names[m++], old[k], 32);
+    if (!jk && m < 234) memcpy(names[m++], old[k], 32);
+  }
+  {                                                           /* v1.38: VTA e Varzea entram na lista se o arquivo estiver na pasta */
+    static const char *EXTRA[2] = { "VTA.cpk", "EstadioVarzea.cpk" };
+    for (int e = 0; e < 2; e++) {
+      int tem = 0;
+      for (int k = 0; k < m; k++) if (!strcmp(names[k], EXTRA[e])) tem = 1;
+      snprintf(p, sizeof(p), "%s/%s", G->dir, EXTRA[e]);
+      if (!tem && file_size_of(p) > 0 && m < 234) { memset(names[m], 0, 32); snprintf(names[m], 32, "%s", EXTRA[e]); m++; }
+    }
+    snprintf(p, sizeof(p), "%s/DpFileList.bin", G->dir);
   }
   for (int j = 0; j < 4; j++) { memset(names[m], 0, 32); snprintf(names[m], 32, "%s", JKP_CPK[j]); m++; }   /* ...e poe no fim, na ordem certa */
   int add = (m != no);
@@ -350,8 +364,7 @@ static void jkp_fix_dplist(void) {
 }
 
 static void jk_placares_fixup(void) {
-  jkp_fix_ini();
-  jkp_fix_dplist();
+  for (int g = 0; g < 2; g++) { jkp_fix_ini(&JKP_GAMES[g]); jkp_fix_dplist(&JKP_GAMES[g]); }
 }
 
 /* ------------------------------------------------------------------ instalacao (thread) */
