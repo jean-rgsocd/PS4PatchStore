@@ -136,6 +136,13 @@ struct UI {
   volatile int gstate;                 /* resultado do download: 0 em andamento, 1 ok, -1 falhou */
   Image *gimg;                         /* imagem ja ajustada ao tamanho da tela */
   char gtitle[96], gpath[320];
+
+  /* v1.37: tela JK-MOD PLACARES (card PLACARGRID) */
+  int pl_b, pl_sel, pl_ed, pl_row, pl_scanned;
+  int pl_pick[4], pl_inst[4];          /* opcao escolhida no "Monte o seu" / instalada no console (-1 = nenhuma) */
+  int pl_oi[CAT_MAX_PLO], pl_ol[CAT_MAX_PLO];   /* opcao -> indice da imagem / do logo */
+  Image *pl_im[CAT_MAX_PLO * 2][2];    /* [0] = tamanho do card, [1] = tamanho do editor */
+  Image *pl_bg;
 };
 
 /* ------------------------------------------------------------------ utilidades */
@@ -156,6 +163,14 @@ static const CatGame *cur_game(UI *ui) {
   if (!ui->cat || ui->nfilt <= 0) return NULL;
   return &ui->cat->game[ui->filt[ui->sel]];
 }
+
+static int is_plgrid(const CatGame *g);
+static void pl_open(UI *ui);
+static void pl_key(UI *ui, int key);
+static void pl_tick(UI *ui);
+static void pl_draw(UI *ui);
+static void pl_footer(UI *ui, int *px);
+static int pl_active(UI *ui);
 
 /* Itens do detalhe: "downloads" = botoes pkg/download; "midias" = botoes video/image e, por ultimo, o video do card
  * (indice nbtn). dl[] e md[] guardam o indice do botao dentro de g->btn. */
@@ -907,6 +922,7 @@ static void trigger_update(UI *ui) {
 
 void ui_install_done(UI *ui, int code, const char *err) {
   ui_set_busy(ui, 0);
+  ui->pl_scanned = 0;                                         /* v1.37: rele os placares instalados */
   if (ui->updating) {                                         /* terminou o download da atualizacao do app */
     ui->updating = 0;
     if (code == 2) {
@@ -1230,6 +1246,7 @@ void ui_key(UI *ui, int key) {
     return;
   }
   const CatGame *g = cur_game(ui);
+  if (ui->detail && is_plgrid(g)) { pl_key(ui, key); return; }   /* v1.37: tela de placares */
   if (ui->detail && g) {                                          /* ---- detalhe: downloads (direita) e videos (esquerda) */
     int dl[CAT_MAX_BTNS], md[CAT_MAX_BTNS + 1], nd, nm;
     lists(g, dl, &nd, md, &nm);
@@ -1325,6 +1342,9 @@ void ui_key(UI *ui, int key) {
         for (int k = 1; k < ui->cat->ncat; k++) if (!strcmp(ui->cat->cat[k].label, g->title)) {
           ui->cat_idx = k; refilter(ui); select_game(ui, 0); break;
         }
+      } else if (g && is_plgrid(g)) {                              /* v1.37: tela JK-MOD PLACARES */
+        ui->detail = 1;
+        pl_open(ui);
       } else if (g) {                                              /* abre o detalhe do jogo */
         int dl[CAT_MAX_BTNS], md[CAT_MAX_BTNS + 1], nd, nm;
         lists(g, dl, &nd, md, &nm);
@@ -1374,6 +1394,7 @@ void ui_tick(UI *ui) {
   }
   if (ui->pi_on && ui->frame % 120 == 0) plan_refresh(ui);
   cover_poll(ui);
+  pl_tick(ui);
   th_step(ui);
   guide_tick(ui);
   if (ui->vid_mode) vid_tick(ui);
@@ -1547,7 +1568,7 @@ static void draw_tile(UI *ui, int idx, int d, int x, int y) {          /* d = di
   else draw_placeholder(ui, x, y, w, h, g->title);
   if (d > 0) gfx_rrect(s, x, y, w, h, 18, C_BG, 80 + 40 * d, 0);                           /* escurece */
   else gfx_rrect(s, x - 7, y - 7, w + 14, h + 14, 24, C_ACCENT, 255, 5);
-  if (d == 0 && g->tag[0]) {
+  if (d == 0 && g->tag[0] && !is_plgrid(g)) {               /* v1.37: a capa do PLACARGRID ja tem o nome */
     int tw = TW(ui, 1, 18, g->tag, 2);
     gfx_rrect(s, x + 16, y + 16, tw + 30, 36, 18, C_BG, 220, 0);
     text_draw_in(s, ui->fb, 18, x + 16, tw + 30, y + 41, g->tag, C_ACCENT, 255, 2, 1);
@@ -1938,6 +1959,8 @@ static int hint(UI *ui, int x, const char *key, const char *label) {
   return x + kw + 12 + lw + 44;
 }
 
+#include "ui_placar.inc"
+
 static void draw_footer(UI *ui) {
   gfx_fill(ui->s, 0, 990, W, 1, C_WHITE, 26);
   int x = MARGIN;
@@ -1965,6 +1988,8 @@ static void draw_footer(UI *ui) {
     }
   } else if (ui->mode == MODE_CATALOG && ui->upd_help) {
     x = hint(ui, x, "O", "Voltar");
+  } else if (pl_active(ui)) {
+    pl_footer(ui, &x);
   } else if (ui->mode == MODE_CATALOG && ui->detail) {
     x = hint(ui, x, "\xE2\x97\x80 \xE2\x96\xB2 \xE2\x96\xBC \xE2\x96\xB6", "Mover");
     x = hint(ui, x, "X", ui->zone == 0 ? (ui->locked ? "Bloqueado" : "Baixar") : "Assistir / ver");
@@ -2453,6 +2478,13 @@ void ui_skip_splash(UI *ui) { ui->splash = SPLASH_END - 1; ui_tick(ui); ui->dirt
 
 static void draw_scene(UI *ui) {
   if (ui->gmode && ui->mode == MODE_CATALOG) { draw_guide(ui); return; }      /* guia em tela cheia */
+  if (pl_active(ui)) {                                                        /* v1.37: tela JK-MOD PLACARES */
+    pl_draw(ui);
+    if (ui->shop) draw_shop(ui);
+    if (ui->upd_help) draw_upd_help(ui);
+    draw_footer(ui);
+    return;
+  }
   Image *back = (ui->mode == MODE_CATALOG && ui->fbg) ? ui->fbg : ui->bg;
   if (back) gfx_blit_surface(ui->s, back);
   else gfx_fill(ui->s, 0, 0, W, H, C_BG, 255);

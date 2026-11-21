@@ -15,7 +15,7 @@ typedef struct {
   char content_id[48];
   unsigned long long size;
   char type[8];            /* PS4GD, PS4GP, PS4AC... (vazio = padrao) */
-  char extra[3072];        /* arquivos extras do botao, separados por '|' (ate ~28) */
+  char extra[3072];        /* arquivos extras do botao, separados por '|' (ate 32). v1.37: + campo 12 da linha BTN (extras novos; o app antigo ignora) */
   char dest[128];          /* pasta de destino do download (vazio = /data/PS4PatchStore/downloads) */
   char action[12];         /* pkg (padrao), download, video ou image */
   int base;                /* 1 = botao de jogo base (estilo diferente) */
@@ -49,6 +49,26 @@ typedef struct {
   unsigned long long size;
 } CatMod;
 
+/* ---- v1.37: tela "JK-MOD PLACARES" (card com tag PLACARGRID) ----
+ * PLB <quadro> <titulo> <cusa> <pasta destino> <extras comuns> <monte_o_seu 0/1>
+ * PLO <quadro> <id> <competicao A|B|CDB|LIB> <emissora> <url do cpk> <tamanho> <imagem do placar> <logo>
+ * PLP <quadro> <nome do combo> <id A> <id B> <id CDB> <id LIB>
+ * (o app antigo ignora essas linhas) */
+#define CAT_PL_COMPS  4
+#define CAT_MAX_PLB   3
+#define CAT_MAX_PLO   40
+#define CAT_MAX_PLP   16
+typedef struct { char id[32]; int comp; char name[48]; char url[256]; unsigned long long size; char img[256]; char logo[256]; } CatPlOpt;
+typedef struct { char name[64]; int opt[CAT_PL_COMPS]; } CatPlPack;
+typedef struct {
+  char id[24], title[48], cusa[16], dest[128];
+  char extra[3072];
+  int monte;
+  int nopt, npack;
+  CatPlOpt opt[CAT_MAX_PLO];
+  CatPlPack pack[CAT_MAX_PLP];
+} CatPlBoard;
+
 typedef struct {
   int locked;              /* 1 = catalogo "so olhar" (visitante / plano vencido ou pendente): sem links de download */
   CatApp app;
@@ -57,6 +77,8 @@ typedef struct {
   CatCategory cat[CAT_MAX_CATS];   /* cat[0] e sempre "all" */
   int ngame;
   CatGame game[CAT_MAX_GAMES];
+  int nplb;
+  CatPlBoard plb[CAT_MAX_PLB];
 } Catalog;
 
 /* Le o catalogo. Retorna 0 em sucesso, <0 em erro (arquivo ausente/vazio). */
@@ -65,5 +87,7 @@ int catalog_load(Catalog *c, const char *path);
 int catalog_version_num(const char *v);
 /* Mesmo parser sobre texto em memoria (usado pelo simulador e pelos testes). */
 int catalog_parse(Catalog *c, char *text);
+/* "A" "B" "CDB" "LIB" -> 0..3 (-1 se invalido) */
+int catalog_pl_comp(const char *s);
 
 #endif

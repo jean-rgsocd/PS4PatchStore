@@ -243,6 +243,117 @@ static int copy_file(const char *src, const char *dst) {
   return ok;
 }
 
+
+/* ------------------------------------------------------------------ v1.37: JK placares (Demisan)
+ * Roda depois de todo download. Nao baixa nada: so ajusta 2 arquivos que outros botoes podem ter trocado.
+ *  1) plugins.ini: na secao [CUSA22062] troca pes21_gol_fora.prx por jk_placares.prx (o jk_placares ja tem o gol fora)
+ *     - so se o jk_placares.prx existir no console.
+ *  2) DpFileList.bin do Demisan: acrescenta JK_PLACAR_A/B/CDB/LIB.cpk no fim (prioridade maior)
+ *     - so se os 4 arquivos existirem na pasta (o jogo trava se a lista citar um CPK que nao existe). */
+#define JKP_DIR   "/data/GoldHEN/AFR/CUSA22062"
+#define JKP_PRX   "/data/GoldHEN/plugins/jk_placares.prx"
+#define JKP_INI   "/data/GoldHEN/plugins.ini"
+/* ordem no fim da lista = prioridade (o ultimo manda). Os arquivos gerais (menu, replay, hino) valem do ultimo que tiver:
+ * Serie A > Serie B > Copa do Brasil > Libertadores. */
+static const char *JKP_CPK[4] = { "JK_PLACAR_LIB.cpk", "JK_PLACAR_CDB.cpk", "JK_PLACAR_B.cpk", "JK_PLACAR_A.cpk" };
+
+static char *read_all(const char *p, long long *len, long long max) {
+  long long n = file_size_of(p);
+  if (n < 0 || n > max) return NULL;
+  int fd = open(p, O_RDONLY);
+  if (fd < 0) return NULL;
+  char *b = (char *)malloc((size_t)n + 1);
+  long long got = 0;
+  while (b && got < n) { int r = (int)read(fd, b + got, (size_t)(n - got)); if (r <= 0) break; got += r; }
+  close(fd);
+  if (!b || got != n) { free(b); return NULL; }
+  b[n] = 0; *len = n;
+  return b;
+}
+static int write_all(const char *p, const char *b, long long n) {
+  char tmp[160];
+  snprintf(tmp, sizeof(tmp), "%s.jktmp", p);
+  int fd = open(tmp, O_WRONLY | O_CREAT | O_TRUNC, 0666);
+  if (fd < 0) return -1;
+  long long off = 0;
+  while (off < n) { int w = (int)write(fd, b + off, (size_t)(n - off)); if (w <= 0) break; off += w; }
+  close(fd);
+  if (off != n) { unlink(tmp); return -1; }
+  int rc = copy_file(tmp, p);
+  unlink(tmp);
+  return rc;
+}
+
+static void jkp_fix_ini(void) {
+  if (file_size_of(JKP_PRX) <= 0) return;
+  long long n = 0;
+  char *t = read_all(JKP_INI, &n, 256 * 1024);
+  if (!t) return;
+  char *sec = strstr(t, "[CUSA22062]");
+  if (!sec) { free(t); return; }
+  char *end = strstr(sec + 11, "\n[");                      /* fim da secao */
+  if (!end) end = t + n;
+  char *gol = NULL, *jk = NULL;
+  for (char *p = sec; p < end; p++) {
+    if (p != t && p[-1] != '\n') continue;
+    if (!strncmp(p, "/data/GoldHEN/plugins/pes21_gol_fora.prx", 40) && !gol) gol = p;
+    if (!strncmp(p, "/data/GoldHEN/plugins/jk_placares.prx", 37) && !jk) jk = p;
+  }
+  if (jk || !gol) { free(t); return; }                       /* ja esta certo (ou nao tem gol fora: nao mexe) */
+  char *eol = gol; while (*eol && *eol != '\r' && *eol != '\n') eol++;
+  const char *rep = "/data/GoldHEN/plugins/jk_placares.prx=true";
+  size_t pre = (size_t)(gol - t), rl = strlen(rep);
+  char *o = (char *)malloc((size_t)n + rl + 8);
+  if (!o) { free(t); return; }
+  memcpy(o, t, pre);
+  memcpy(o + pre, rep, rl);
+  size_t rest = (size_t)(n - (eol - t));
+  memcpy(o + pre + rl, eol, rest);
+  if (write_all(JKP_INI, o, (long long)(pre + rl + rest)) == 0) install_log("JK placares: plugins.ini [CUSA22062] usa jk_placares.prx");
+  free(o); free(t);
+}
+
+static void jkp_fix_dplist(void) {
+  char p[200];
+  for (int k = 0; k < 4; k++) { snprintf(p, sizeof(p), "%s/%s", JKP_DIR, JKP_CPK[k]); if (file_size_of(p) <= 0) return; }
+  snprintf(p, sizeof(p), "%s/DpFileList.bin", JKP_DIR);
+  long long n = 0;
+  unsigned char *d = (unsigned char *)read_all(p, &n, 64 * 1024);
+  if (!d) return;
+  /* formato: N entradas de 48 bytes {u32 0, u32 N-k, u64 0, nome[32]} + 16 bytes zerados */
+  int cnt = (int)(d[4] | (d[5] << 8) | (d[6] << 16) | ((unsigned)d[7] << 24));
+  if (cnt <= 0 || cnt > 200 || n < 16 + 48LL * cnt) { free(d); return; }
+  char names[240][32], old[240][32];
+  int m = 0, no = 0;
+  for (int k = 0; k < cnt; k++) { memcpy(old[no], d + 16 + 48 * k, 32); old[no][31] = 0; no++; }
+  for (int k = 0; k < no; k++) {                              /* tira os JK_PLACAR de onde estiverem... */
+    int jk = 0;
+    for (int j = 0; j < 4; j++) if (!strcmp(old[k], JKP_CPK[j])) jk = 1;
+    if (!jk && m < 236) memcpy(names[m++], old[k], 32);
+  }
+  for (int j = 0; j < 4; j++) { memset(names[m], 0, 32); snprintf(names[m], 32, "%s", JKP_CPK[j]); m++; }   /* ...e poe no fim, na ordem certa */
+  int add = (m != no);
+  for (int k = 0; k < m && !add; k++) if (strcmp(names[k], old[k])) add = 1;
+  free(d);
+  if (!add) return;
+  long long on = 48LL * m + 16;
+  unsigned char *o = (unsigned char *)calloc(1, (size_t)on);
+  if (!o) return;
+  for (int k = 0; k < m; k++) {
+    unsigned v = (unsigned)(m - k);
+    unsigned char *e = o + 48 * k;
+    e[4] = (unsigned char)v; e[5] = (unsigned char)(v >> 8); e[6] = (unsigned char)(v >> 16); e[7] = (unsigned char)(v >> 24);
+    memcpy(e + 16, names[k], 32);
+  }
+  if (write_all(p, (const char *)o, on) == 0) install_log("JK placares: DpFileList com JK_PLACAR_A/B/CDB/LIB");
+  free(o);
+}
+
+static void jk_placares_fixup(void) {
+  jkp_fix_ini();
+  jkp_fix_dplist();
+}
+
 /* ------------------------------------------------------------------ instalacao (thread) */
 typedef struct { CatButton btn; } Job;
 
@@ -427,6 +538,7 @@ static void *install_thread(void *arg) {
       else if (nit == 2) snprintf(err, sizeof(err), "Download concluído: %s + 1 arquivo", lastname);
       else snprintf(err, sizeof(err), "Download concluído: %s", lastname);
       rc = 1; /* sucesso de download (diferente de pedido de instalacao) */
+      jk_placares_fixup();                             /* v1.37: placares JK (Demisan) continuam ligados depois de qualquer download */
     }
   } else if (!strcmp(action, "video") || !strcmp(action, "image")) {
     snprintf(err, sizeof(err), "Este tipo de botão não deveria iniciar uma tarefa em segundo plano.");
