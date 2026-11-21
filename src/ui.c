@@ -141,8 +141,13 @@ struct UI {
   int pl_b, pl_sel, pl_ed, pl_row, pl_scanned;
   int pl_pick[4], pl_inst[4];          /* opcao escolhida no "Monte o seu" / instalada no console (-1 = nenhuma) */
   int pl_oi[CAT_MAX_PLO], pl_ol[CAT_MAX_PLO];   /* opcao -> indice da imagem / do logo */
-  Image *pl_im[CAT_MAX_PLO * 2][2];    /* [0] = tamanho do card, [1] = tamanho do editor */
+  Image *pl_im[CAT_MAX_PLO * 2 + CAT_MAX_ART][2];    /* [0] = tamanho do card, [1] = tamanho do editor; v1.40: + cards de narrador/clube */
   Image *pl_bg;
+  /* v1.40: abas JK-MOD'S (0 placares, 1 narradores, 2 master league) */
+  int pl_cat, jk_sel, jk_btn, jk_n, jk_scanned;
+  int jk_art[CAT_MAX_ART], jk_b[CAT_MAX_ART][2], jk_inst[CAT_MAX_ART];   /* item -> card do catalogo / botao original e estrangeira (-1) / 0,1,2 instalado */
+  int jk_ai[CAT_MAX_ART];              /* card do catalogo -> indice da imagem */
+  const CatGame *jk_game;
 };
 
 /* ------------------------------------------------------------------ utilidades */
@@ -1344,6 +1349,7 @@ void ui_key(UI *ui, int key) {
         }
       } else if (g && is_plgrid(g)) {                              /* v1.37: tela JK-MOD PLACARES */
         ui->detail = 1;
+        ui->pl_cat = 0; ui->jk_sel = 0; ui->jk_btn = 0;            /* v1.40: a capa JK-MOD'S abre na aba PLACARES */
         pl_open(ui);
       } else if (g) {                                              /* abre o detalhe do jogo */
         int dl[CAT_MAX_BTNS], md[CAT_MAX_BTNS + 1], nd, nm;

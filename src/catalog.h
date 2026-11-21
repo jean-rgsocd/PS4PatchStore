@@ -69,6 +69,15 @@ typedef struct {
   CatPlPack pack[CAT_MAX_PLP];
 } CatPlBoard;
 
+/* ---- v1.40: tela JK-MOD'S (abas PLACARES / NARRADORES / MASTER LEAGUE PRO no card PLACARGRID)
+ * JKG <quadro> <titulo do card JK-MOD do patch>   -> de onde vem os botoes de narracao e de ML daquele patch
+ * JKN <chave> <imagem do card do narrador>        -> ordem = ordem na tela; chave = nome do botao sem acento/espaco
+ * JKC <chave> <imagem do card do clube>           -> idem para a Master League
+ * (o app antigo ignora essas linhas) */
+#define CAT_MAX_ART 48
+typedef struct { int kind; char key[48]; char img[256]; } CatArt;     /* kind 0 = narrador, 1 = clube */
+typedef struct { char board[24]; char game[96]; } CatJkLink;
+
 typedef struct {
   int locked;              /* 1 = catalogo "so olhar" (visitante / plano vencido ou pendente): sem links de download */
   CatApp app;
@@ -79,6 +88,9 @@ typedef struct {
   CatGame game[CAT_MAX_GAMES];
   int nplb;
   CatPlBoard plb[CAT_MAX_PLB];
+  int nart, njk;                   /* v1.40 */
+  CatArt art[CAT_MAX_ART];
+  CatJkLink jk[CAT_MAX_PLB];
 } Catalog;
 
 /* Le o catalogo. Retorna 0 em sucesso, <0 em erro (arquivo ausente/vazio). */
@@ -89,5 +101,7 @@ int catalog_version_num(const char *v);
 int catalog_parse(Catalog *c, char *text);
 /* "A" "B" "CDB" "LIB" -> 0..3 (-1 se invalido) */
 int catalog_pl_comp(const char *s);
+/* v1.40: "Galvão Bueno" -> "galvaobueno" (minusculas, sem acento, so letras e numeros) */
+void catalog_key(const char *in, char *out, int cap);
 
 #endif

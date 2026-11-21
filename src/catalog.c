@@ -43,6 +43,26 @@ int catalog_pl_comp(const char *s) {
   return -1;
 }
 
+void catalog_key(const char *in, char *out, int cap) {
+  int n = 0;
+  const unsigned char *p = (const unsigned char *)(in ? in : "");
+  while (*p && n < cap - 1) {
+    unsigned char c = *p++;
+    if (c == 0xC3 && *p) {                                   /* Latin-1 em UTF-8: tira o acento */
+      unsigned char d = *p++ | 0x20;                         /* maiuscula -> minuscula (0x80..0x9F -> 0xA0..0xBF) */
+      char r = 0;
+      if (d >= 0xA0 && d <= 0xA5) r = 'a'; else if (d == 0xA7) r = 'c'; else if (d >= 0xA8 && d <= 0xAB) r = 'e';
+      else if (d >= 0xAC && d <= 0xAF) r = 'i'; else if (d == 0xB1) r = 'n'; else if (d >= 0xB2 && d <= 0xB6) r = 'o';
+      else if (d >= 0xB9 && d <= 0xBC) r = 'u';
+      if (r) out[n++] = r;
+      continue;
+    }
+    if (c >= 'A' && c <= 'Z') c = (unsigned char)(c - 'A' + 'a');
+    if ((c >= 'a' && c <= 'z') || (c >= '0' && c <= '9')) out[n++] = (char)c;
+  }
+  out[n] = 0;
+}
+
 static CatPlBoard *pl_board(Catalog *c, const char *id) {
   for (int i = 0; i < c->nplb; i++) if (!strcmp(c->plb[i].id, id)) return &c->plb[i];
   return NULL;
@@ -135,6 +155,19 @@ int catalog_parse(Catalog *c, char *text) {
         copy(b->dest, sizeof(b->dest), f[4]);
         copy(b->extra, sizeof(b->extra), is_extra_list(f[5]) ? f[5] : "");
         b->monte = atoi(f[6]);
+      }
+    } else if ((!strcmp(f[0], "JKN") || !strcmp(f[0], "JKC")) && n >= 3) {   /* v1.40 */
+      if (c->nart < CAT_MAX_ART && !strncmp(f[2], "https://", 8)) {
+        CatArt *a = &c->art[c->nart++];
+        a->kind = f[0][2] == 'C';
+        catalog_key(f[1], a->key, sizeof(a->key));
+        copy(a->img, sizeof(a->img), f[2]);
+      }
+    } else if (!strcmp(f[0], "JKG") && n >= 3) {
+      if (c->njk < CAT_MAX_PLB) {
+        copy(c->jk[c->njk].board, sizeof(c->jk[0].board), f[1]);
+        copy(c->jk[c->njk].game, sizeof(c->jk[0].game), f[2]);
+        c->njk++;
       }
     } else if (!strcmp(f[0], "PLO") && n >= 9) {
       CatPlBoard *b = pl_board(c, f[1]);

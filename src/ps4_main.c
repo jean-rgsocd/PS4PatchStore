@@ -145,7 +145,13 @@ static void pad_open(void) {
 }
 
 /* Estado de repeticao: setas repetem ao segurar; X/O/L1/R1 so disparam ao apertar. */
-#define NKEYS 6
+#ifndef ORBIS_PAD_BUTTON_L2
+#define ORBIS_PAD_BUTTON_L2 0x00000100
+#endif
+#ifndef ORBIS_PAD_BUTTON_R2
+#define ORBIS_PAD_BUTTON_R2 0x00000200
+#endif
+#define NKEYS 8
 static const struct { uint32_t mask; int key; int repeat; } KEYMAP[NKEYS] = {
   { ORBIS_PAD_BUTTON_UP,     UI_UP,    1 },
   { ORBIS_PAD_BUTTON_DOWN,   UI_DOWN,  1 },
@@ -153,6 +159,8 @@ static const struct { uint32_t mask; int key; int repeat; } KEYMAP[NKEYS] = {
   { ORBIS_PAD_BUTTON_RIGHT,  UI_RIGHT, 1 },
   { ORBIS_PAD_BUTTON_L1,     UI_L1,    0 },
   { ORBIS_PAD_BUTTON_R1,     UI_R1,    0 },
+  { ORBIS_PAD_BUTTON_L2,     UI_L2,    0 },          /* v1.40: abas da tela JK-MOD'S */
+  { ORBIS_PAD_BUTTON_R2,     UI_R2,    0 },
 };
 
 static void poll_input(UI *ui) {

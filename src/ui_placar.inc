@@ -6,20 +6,20 @@
  * Incluido no ui.c (usa a struct UI e as funcoes de desenho de la). */
 
 #define PL_X0   80
-#define PL_Y0   130
+#define PL_Y0   186            /* v1.40: abaixo da barra de abas */
 #define PL_CW   568
-#define PL_CH   422
+#define PL_CH   398
 #define PL_GX   28
 #define PL_GY   16
 #define PL_PAD  14
 #define PL_IW   468            /* caixa da imagem do placar no card */
 #define PL_IH   64
 #define PL_LW   64             /* caixa do logo no card */
-#define PL_RS   85             /* distancia entre as linhas de competicao no card */
+#define PL_RS   80             /* distancia entre as linhas de competicao no card */
 #define PL_EIW  900            /* editor (Monte o seu) */
 #define PL_EIH  110
 #define PL_ELW  116
-#define PL_MAXU (CAT_MAX_PLO * 2)
+#define PL_MAXU (CAT_MAX_PLO * 2 + CAT_MAX_ART)   /* v1.40: + cards de narrador/clube (logo = 2: imagem pronta, sem escala) */
 #define PL_PER  6              /* cards por pagina */
 
 #define C_DEEP  RGB(0x0b, 0x12, 0x22)
@@ -79,9 +79,10 @@ static void *pl_worker(void *arg) {
     Image *raw = img_load(path);
     if (!raw) { remove(path); continue; }                       /* arquivo ruim: baixa de novo na proxima vez */
     Image *a, *b;
-    if (J->logo[k]) { a = pl_fit(raw, PL_LW - 6, PL_LW - 6); b = pl_fit(raw, PL_ELW - 14, PL_ELW - 14); }
+    if (J->logo[k] == 2) { a = raw; b = NULL; raw = NULL; }
+    else if (J->logo[k]) { a = pl_fit(raw, PL_LW - 6, PL_LW - 6); b = pl_fit(raw, PL_ELW - 14, PL_ELW - 14); }
     else            { a = pl_fit(raw, PL_IW - 10, PL_IH - 6);  b = pl_fit(raw, PL_EIW - 16, PL_EIH - 8); }
-    img_free(raw);
+    if (raw) img_free(raw);
     pthread_mutex_lock(&pl_mu);
     if (plr_gen == J->gen) {
       if (plr_im[k][0]) img_free(plr_im[k][0]);
@@ -125,6 +126,7 @@ static void pl_load_images(UI *ui) {
   pthread_mutex_unlock(&pl_mu);
   pl_free_images(ui);
   for (int i = 0; i < CAT_MAX_PLO; i++) ui->pl_oi[i] = ui->pl_ol[i] = -1;
+  for (int i = 0; i < CAT_MAX_ART; i++) ui->jk_ai[i] = -1;
   if (!b) return;
   PlJobs *J = (PlJobs *)calloc(1, sizeof(PlJobs));
   if (!J) return;
@@ -133,6 +135,7 @@ static void pl_load_images(UI *ui) {
     ui->pl_oi[i] = pl_url_add(ui, J, b->opt[i].img, 0);
   }
   for (int i = 0; i < b->nopt; i++) ui->pl_ol[i] = pl_url_add(ui, J, b->opt[i].logo, 1);
+  for (int i = 0; i < ui->cat->nart && i < CAT_MAX_ART; i++) ui->jk_ai[i] = pl_url_add(ui, J, ui->cat->art[i].img, 2);   /* v1.40 */
   if (J->n == 0 || !ui->cover_dir[0]) { free(J); return; }
   pthread_t t; pthread_attr_t at;
   pthread_attr_init(&at);
@@ -182,12 +185,245 @@ static int pl_pack_installed(UI *ui, const CatPlPack *p) {
   return 1;
 }
 
+
+/* ------------------------------------------------------------------ v1.40: abas NARRADORES e MASTER LEAGUE PRO
+ * Os cards (imagem pronta: foto/escudo, logo da emissora, nome) vem das linhas JKN/JKC. Os downloads sao os botoes que ja
+ * existem no card JK-MOD de cada patch (linha JKG): narrador = botao sem tipo (ORIGINAL) e COL3 (ESTRANGEIRA); clube = COL4.
+ * O botao e achado pelo nome (catalog_key). Instalado = o arquivo do botao esta no console com o mesmo tamanho. */
+static void pl_blit_center(UI *ui, const Image *im, int x, int y, int w, int h);
+static void pl_glow(Image *s, int x, int y, int w, int h, int r, uint32_t col);
+static const char *JK_TABS[3] = { "PLACARES", "NARRADORES", "MASTER LEAGUE PRO" };
+#define JK_Y0    192
+#define JK_NCW   280
+#define JK_NCH   250
+#define JK_NCOLS 6
+#define JK_NGX   16
+#define JK_NGY   14
+#define JK_MCW   340
+#define JK_MCH   184
+#define JK_MCOLS 5
+#define JK_MGX   14
+#define JK_MGY   12
+#define C_CYAN   RGB(0x78, 0xdc, 0xff)
+
+static const CatGame *jk_find_game(UI *ui) {
+  const CatPlBoard *b = pl_board_cur(ui);
+  if (!b || !ui->cat) return NULL;
+  for (int i = 0; i < ui->cat->njk; i++) {
+    if (strcmp(ui->cat->jk[i].board, b->id)) continue;
+    for (int g = 0; g < ui->cat->ngame; g++) if (!strcmp(ui->cat->game[g].title, ui->cat->jk[i].game)) return &ui->cat->game[g];
+  }
+  return NULL;
+}
+
+static void jk_fix_btn(UI *ui) {
+  if (ui->pl_cat != 1 || ui->jk_n <= 0) { ui->jk_btn = 0; return; }
+  int s = ui->jk_sel;
+  if (ui->jk_btn < 0 || ui->jk_btn > 1) ui->jk_btn = 0;
+  if (ui->jk_b[s][ui->jk_btn] < 0) ui->jk_btn = !ui->jk_btn;
+}
+
+static void jk_build(UI *ui) {
+  ui->jk_n = 0; ui->jk_scanned = 0;
+  ui->jk_game = jk_find_game(ui);
+  const CatGame *g = ui->jk_game;
+  if (g && ui->pl_cat > 0) {
+    int kind = ui->pl_cat == 1 ? 0 : 1;
+    for (int a = 0; a < ui->cat->nart && ui->jk_n < CAT_MAX_ART; a++) {
+      const CatArt *art = &ui->cat->art[a];
+      if (art->kind != kind) continue;
+      int bo = -1, be = -1;
+      for (int i = 0; i < g->nbtn; i++) {
+        const CatButton *bt = &g->btn[i];
+        if (strcmp(bt->action, "download") || !bt->url[0]) continue;
+        char k[48];
+        catalog_key(bt->label, k, sizeof(k));
+        if (strcmp(k, art->key)) continue;
+        if (kind == 1) { if (!strcmp(bt->type, "COL4") && bo < 0) bo = i; }
+        else if (!strcmp(bt->type, "COL3")) { if (be < 0) be = i; }
+        else if (!bt->type[0] && bo < 0) bo = i;
+      }
+      if (bo < 0 && be < 0) continue;
+      int n = ui->jk_n++;
+      ui->jk_art[n] = a; ui->jk_b[n][0] = bo; ui->jk_b[n][1] = be; ui->jk_inst[n] = 0;
+    }
+  }
+  if (ui->jk_sel >= ui->jk_n) ui->jk_sel = ui->jk_n > 0 ? ui->jk_n - 1 : 0;
+  if (ui->jk_sel < 0) ui->jk_sel = 0;
+  jk_fix_btn(ui);
+  ui->dirty = 1;
+}
+
+/* pasta destino + nome do arquivo do link (%20 -> espaco) */
+static void jk_btn_path(const CatButton *b, char *out, int cap) {
+  const char *u = b->url, *q = strrchr(u, '/');
+  const char *name = q ? q + 1 : u;
+  char nm[160]; int n = 0;
+  for (const char *p = name; *p && *p != '?' && n < (int)sizeof(nm) - 1; p++) {
+    if (p[0] == '%' && p[1] == '2' && p[2] == '0') { nm[n++] = ' '; p += 2; }
+    else nm[n++] = *p;
+  }
+  nm[n] = 0;
+  snprintf(out, (size_t)cap, "%s/%s", b->dest[0] ? b->dest : "/data", nm);
+}
+
+static void jk_scan(UI *ui) {
+  ui->jk_scanned = 1;
+  const CatGame *g = ui->jk_game;
+  if (!g) return;
+  for (int n = 0; n < ui->jk_n; n++) {
+    ui->jk_inst[n] = 0;
+    for (int k = 0; k < 2; k++) {
+      int bi = ui->jk_b[n][k];
+      if (bi < 0 || !g->btn[bi].size) continue;
+      char p[400];
+      jk_btn_path(&g->btn[bi], p, sizeof(p));
+      if (pl_fsize(p) == (long long)g->btn[bi].size) ui->jk_inst[n] = k + 1;
+    }
+  }
+}
+
+static void jk_install(UI *ui) {
+  const CatGame *g = ui->jk_game;
+  if (!g || ui->jk_n <= 0) return;
+  int bi = ui->jk_b[ui->jk_sel][ui->pl_cat == 1 ? ui->jk_btn : 0];
+  if (bi < 0) { ui_toast(ui, "Esta versão não existe para este patch.", UI_TOAST_INFO); return; }
+  const CatButton *b = &g->btn[bi];
+  if (ui->locked) {
+    ui_toast(ui, ui->offline ? "Sem conexão com o servidor. Downloads indisponíveis agora." : "Ative seu plano para baixar.", UI_TOAST_ERR);
+    return;
+  }
+  if (ui->busy) { ui_toast(ui, "Já existe um pedido em andamento. Aguarde.", UI_TOAST_INFO); return; }
+  ui_toast(ui, ui->pl_cat == 1 ? "Baixando a narração para o PS4..." : "Baixando a Master League para o PS4...", UI_TOAST_INFO);
+  ui->busy = 1;
+  ui->updating = 0;
+  ui->jk_scanned = 0;
+  if (ui->fn) ui->fn(b, ui->user);
+}
+
+/* posicao do item i na grade (a ultima linha fica centralizada) */
+static void jk_pos(UI *ui, int i, int *px, int *py) {
+  int narr = ui->pl_cat == 1;
+  int cols = narr ? JK_NCOLS : JK_MCOLS, cw = narr ? JK_NCW : JK_MCW, ch = narr ? JK_NCH : JK_MCH;
+  int gx = narr ? JK_NGX : JK_MGX, gy = narr ? JK_NGY : JK_MGY;
+  int r = i / cols, c = i % cols, inrow = ui->jk_n - r * cols;
+  if (inrow > cols) inrow = cols;
+  *px = (W - (inrow * cw + (inrow - 1) * gx)) / 2 + c * (cw + gx);
+  *py = JK_Y0 + r * (ch + gy);
+}
+
+static void jk_key(UI *ui, int key) {
+  int n = ui->jk_n, sel = ui->jk_sel, narr = ui->pl_cat == 1;
+  int cols = narr ? JK_NCOLS : JK_MCOLS, col = sel % cols;
+  switch (key) {
+    case UI_LEFT:
+      if (narr && ui->jk_btn == 1 && n > 0 && ui->jk_b[sel][0] >= 0) { ui->jk_btn = 0; ui->dirty = 1; return; }
+      if (col > 0) { sel--; ui->jk_btn = 1; }
+      break;
+    case UI_RIGHT:
+      if (narr && ui->jk_btn == 0 && n > 0 && ui->jk_b[sel][1] >= 0) { ui->jk_btn = 1; ui->dirty = 1; return; }
+      if (col < cols - 1 && sel + 1 < n) { sel++; ui->jk_btn = 0; }
+      break;
+    case UI_UP:   if (sel - cols >= 0) sel -= cols; break;
+    case UI_DOWN:
+      if (sel + cols < n) sel += cols;
+      else if ((sel / cols + 1) * cols < n) sel = n - 1;
+      break;
+    case UI_L1: case UI_R1:
+      if (ui->cat && ui->cat->nplb > 1) {
+        int nb = ui->cat->nplb;
+        ui->pl_b = (ui->pl_b + (key == UI_R1 ? 1 : nb - 1)) % nb;
+        pl_open(ui);
+      }
+      return;
+    case UI_OK: jk_install(ui); return;
+    case UI_BACK: ui->detail = 0; ui->pl_ed = 0; ui->dirty = 1; rebuild_fbg(ui); return;
+    case UI_SQUARE: trigger_update(ui); return;
+    default: return;
+  }
+  if (n > 0 && sel >= 0 && sel < n) { ui->jk_sel = sel; jk_fix_btn(ui); ui->dirty = 1; }
+}
+
+static void jk_tabs(UI *ui) {
+  Image *s = ui->s;
+  gfx_fill(s, 0, 116, W, 60, RGB(0x0a, 0x10, 0x1e), 230);
+  gfx_fill(s, 0, 176, W, 1, C_EDGE, 255);
+  int fs = 24, gap = 16, ws[3], tot = 0;
+  for (int i = 0; i < 3; i++) { ws[i] = TW(ui, 1, fs, JK_TABS[i], 2) + 80; tot += ws[i]; }
+  tot += gap * 2;
+  int x = (W - tot) / 2;
+  gfx_rrect(s, x - 70, 129, 50, 34, 8, C_EDGE, 255, 2); text_draw_in(s, ui->fb, 17, x - 70, 50, 152, "L2", C_MUTED, 255, 0, 1);
+  for (int i = 0; i < 3; i++) {
+    int on = i == ui->pl_cat;
+    if (on) { gfx_rrect(s, x, 124, ws[i], 44, 12, C_PANEL2, 255, 0); gfx_fill(s, x + 14, 164, ws[i] - 28, 4, C_FOCUS, 255); }
+    text_draw_in(s, ui->fb, fs, x, ws[i], 155, JK_TABS[i], on ? C_FOCUS : C_MUTED, 255, 2, 1);
+    x += ws[i] + gap;
+  }
+  gfx_rrect(s, x + 4, 129, 50, 34, 8, C_EDGE, 255, 2); text_draw_in(s, ui->fb, 17, x + 4, 50, 152, "R2", C_MUTED, 255, 0, 1);
+}
+
+/* botao pequeno do card do narrador. st: 0 normal, 1 em foco, 2 ativo (instalado), -1 nao existe */
+static void jk_pill(UI *ui, int x, int y, int w, int h, const char *txt, int st) {
+  Image *s = ui->s;
+  if (st < 0) {
+    gfx_rrect(s, x, y, w, h, 8, RGB(0x10, 0x18, 0x26), 255, 0);
+    gfx_rrect(s, x, y, w, h, 8, C_EDGE, 255, 1);
+    text_draw_in(s, ui->fb, 14, x, w, y + h / 2 + 5, txt, C_MUTED, 90, 0, 1);
+    return;
+  }
+  uint32_t bg = st == 1 ? C_FOCUS : (st == 2 ? C_BASE : RGB(0x0c, 0x1e, 0x34));
+  gfx_rrect(s, x, y, w, h, 8, bg, 255, 0);
+  if (st == 2) gfx_rrect(s, x, y, w, h, 8, C_BASE_EDGE, 255, 2);
+  else if (st == 0) gfx_rrect(s, x, y, w, h, 8, C_CYAN, 255, 1);
+  text_draw_in(s, ui->fb, 14, x, w, y + h / 2 + 5, st == 2 ? "\xE2\x9C\x93 ATIVO" : txt, st == 1 ? C_BG : C_TEXT, 255, 0, 1);
+}
+
+static void jk_placeholder(UI *ui, const CatGame *g, int n, int x, int y, int w, int h) {
+  Image *s = ui->s;
+  gfx_rrect(s, x, y, w, h, 14, C_PANEL, 245, 0);
+  gfx_rrect(s, x, y, w, h, 14, C_CYAN, 200, 2);
+  int bi = ui->jk_b[n][0] >= 0 ? ui->jk_b[n][0] : ui->jk_b[n][1];
+  if (g && bi >= 0) {
+    char t[64]; text_fit(ui->fb, 22, g->btn[bi].label, w - 30, t, sizeof(t));
+    text_draw_in(s, ui->fb, 22, x, w, y + (ui->pl_cat == 1 ? 180 : h / 2 + 8), t, C_TEXT, 255, 0, 1);
+  }
+}
+
+static void jk_draw(UI *ui) {
+  Image *s = ui->s;
+  const CatGame *g = ui->jk_game;
+  if (ui->jk_n <= 0) {
+    text_draw_in(s, ui->fb, 30, 0, W, 560, ui->pl_cat == 1 ? "Nenhum narrador para este patch." : "Nenhuma Master League para este patch.", C_MUTED, 255, 0, 1);
+    return;
+  }
+  int narr = ui->pl_cat == 1, cw = narr ? JK_NCW : JK_MCW, ch = narr ? JK_NCH : JK_MCH;
+  for (int i = 0; i < ui->jk_n; i++) {
+    int x, y, foc = i == ui->jk_sel;
+    jk_pos(ui, i, &x, &y);
+    int ai = ui->jk_ai[ui->jk_art[i]];
+    Image *im = ai >= 0 ? ui->pl_im[ai][0] : NULL;
+    if (im) pl_blit_center(ui, im, x, y, cw, ch); else jk_placeholder(ui, g, i, x, y, cw, ch);
+    if (narr) {
+      static const char *lab[2] = { "ORIGINAL", "ESTRANGEIRA" };
+      for (int k = 0; k < 2; k++) {
+        int st = ui->jk_b[i][k] < 0 ? -1 : (foc && ui->jk_btn == k ? 1 : (ui->jk_inst[i] == k + 1 ? 2 : 0));
+        jk_pill(ui, x + 18 + k * 126, y + 197, 118, 30, lab[k], st);
+      }
+    } else if (ui->jk_inst[i]) {
+      gfx_rrect(s, x + cw - 92, y + 12, 78, 26, 8, C_BASE, 255, 0);
+      text_draw_in(s, ui->fb, 15, x + cw - 92, 78, y + 31, "ATIVO", C_TEXT, 255, 1, 1);
+    }
+    if (foc) pl_glow(s, x, y, cw, ch, 14, C_FOCUS);
+  }
+}
+
 static void pl_open(UI *ui) {
   ui->pl_sel = 0; ui->pl_ed = 0; ui->pl_row = 0;
   pl_scan(ui);
   pl_load_images(ui);
   const CatPlBoard *b = pl_board_cur(ui);
   if (b) for (int p = 0; p < b->npack; p++) if (pl_pack_installed(ui, &b->pack[p])) { ui->pl_sel = p; break; }   /* abre no combo que ja esta no console */
+  jk_build(ui);                                                 /* v1.40 */
   ui->dirty = 1;
 }
 
@@ -265,6 +501,13 @@ static void pl_cycle(UI *ui, int c, int dir) {
 static void pl_key(UI *ui, int key) {
   const CatPlBoard *b = pl_board_cur(ui);
   int nc = pl_ncards(b);
+  if (!ui->pl_ed && (key == UI_L2 || key == UI_R2)) {          /* v1.40: troca a aba */
+    ui->pl_cat = (ui->pl_cat + (key == UI_R2 ? 1 : 2)) % 3;
+    ui->jk_sel = 0; ui->jk_btn = 0;
+    jk_build(ui);
+    return;
+  }
+  if (!ui->pl_ed && ui->pl_cat > 0) { jk_key(ui, key); return; }
   if (ui->pl_ed) {
     switch (key) {
       case UI_UP:    if (ui->pl_row > 0) { ui->pl_row--; ui->dirty = 1; } break;
@@ -315,6 +558,7 @@ static void pl_tick(UI *ui) {
   if (!pl_active(ui)) return;
   pl_poll(ui);
   if (!ui->pl_scanned && !ui->busy) { pl_scan(ui); ui->dirty = 1; }
+  if (ui->pl_cat > 0 && !ui->jk_scanned && !ui->busy) { jk_scan(ui); ui->dirty = 1; }
 }
 
 /* ---- desenho */
@@ -399,14 +643,14 @@ static void pl_draw_monte(UI *ui, const CatPlBoard *b, int x, int y, int focused
   T(ui, 1, 34, x + 22, y + 58, "MONTE O SEU", C_FOCUS, 255, 2);
   T(ui, 0, 18, x + 22, y + 90, "Escolha 1 placar para cada competição", C_MUTED, 255, 0);
   for (int c = 0; c < 4; c++) {
-    int ry = y + 118 + c * 62;
-    gfx_rrect(s, x + PL_PAD, ry, PL_CW - 2 * PL_PAD, 50, 10, C_DEEP, 255, 0);
-    gfx_fill(s, x + PL_PAD, ry + 10, 4, 30, C_ACCENT, 255);
-    T(ui, 1, 18, x + PL_PAD + 18, ry + 32, PL_COMP[c], C_TEXT, 255, 1);
+    int ry = y + 106 + c * 56;                                   /* v1.40: card mais baixo */
+    gfx_rrect(s, x + PL_PAD, ry, PL_CW - 2 * PL_PAD, 46, 10, C_DEEP, 255, 0);
+    gfx_fill(s, x + PL_PAD, ry + 8, 4, 30, C_ACCENT, 255);
+    T(ui, 1, 18, x + PL_PAD + 18, ry + 30, PL_COMP[c], C_TEXT, 255, 1);
     char n[24];
     snprintf(n, sizeof(n), "%d opções", pl_count(b, c));
     int w = TW(ui, 1, 17, n, 0);
-    T(ui, 1, 17, x + PL_CW - PL_PAD - 16 - w, ry + 32, n, C_ACCENT, 255, 0);
+    T(ui, 1, 17, x + PL_CW - PL_PAD - 16 - w, ry + 30, n, C_ACCENT, 255, 0);
   }
   pl_button(ui, x + PL_PAD, y + PL_CH - PL_PAD - 48, PL_CW - 2 * PL_PAD, 48, "MONTAR", focused, 0);
 }
@@ -421,7 +665,7 @@ static void pl_draw_header(UI *ui, const CatPlBoard *b) {
   gfx_fill(s, x, 22, 3, 68, C_ACCENT, 200);
   x += 20;
   T(ui, 1, 18, x, 44, "JK-MOD", C_ACCENT, 255, 6);
-  T(ui, 1, 46, x - 2, 92, "PLACARES", C_TEXT, 255, 4);
+  T(ui, 1, 46, x - 2, 92, "JK-MOD'S", C_TEXT, 255, 4);
   if (!ui->cat) return;
   /* quadros (patches): L1 / R1 */
   int n = ui->cat->nplb, cw[CAT_MAX_PLB], tot = 0;
@@ -508,6 +752,8 @@ static void pl_draw(UI *ui) {
   if (ui->pl_bg) gfx_blit_surface(s, ui->pl_bg); else gfx_fill(s, 0, 0, W, H, C_BG, 255);
   const CatPlBoard *b = pl_board_cur(ui);
   pl_draw_header(ui, b);
+  jk_tabs(ui);                                                   /* v1.40 */
+  if (ui->pl_cat > 0) { jk_draw(ui); pl_draw_msg(ui); return; }
   int nc = pl_ncards(b);
   if (!b || nc == 0) {
     text_draw_in(s, ui->fb, 30, 0, W, 540, "Nenhum placar disponível agora.", C_MUTED, 255, 0, 1);
@@ -537,11 +783,18 @@ static void pl_footer(UI *ui, int *px) {
     x = hint(ui, x, "\xE2\x97\x80 \xE2\x96\xB6", "Trocar placar");
     x = hint(ui, x, "X", ui->locked ? "Bloqueado" : "Baixar meu combo");
     x = hint(ui, x, "O", "Voltar");
+  } else if (ui->pl_cat > 0) {                                 /* v1.40 */
+    x = hint(ui, x, "\xE2\x97\x80 \xE2\x96\xB2 \xE2\x96\xBC \xE2\x96\xB6", ui->pl_cat == 1 ? "Escolher" : "Escolher clube");
+    x = hint(ui, x, "X", ui->locked ? "Bloqueado" : "Baixar");
+    x = hint(ui, x, "L2  R2", "Categoria");
+    if (ui->cat && ui->cat->nplb > 1) x = hint(ui, x, "L1  R1", "Patch");
+    x = hint(ui, x, "O", "Voltar");
   } else {
     const CatPlBoard *b = pl_board_cur(ui);
     x = hint(ui, x, "\xE2\x97\x80 \xE2\x96\xB2 \xE2\x96\xBC \xE2\x96\xB6", "Escolher combo");
     x = hint(ui, x, "X", ui->locked ? "Bloqueado" : ((b && b->monte && ui->pl_sel == pl_ncards(b) - 1) ? "Montar" : "Baixar"));
-    if (ui->cat && ui->cat->nplb > 1) x = hint(ui, x, "L1  R1", "Trocar patch");
+    x = hint(ui, x, "L2  R2", "Categoria");
+    if (ui->cat && ui->cat->nplb > 1) x = hint(ui, x, "L1  R1", "Patch");
     x = hint(ui, x, "O", "Voltar");
   }
   if (update_available(ui)) x = hint(ui, x, "\xE2\x96\xA1", "Atualizar app");

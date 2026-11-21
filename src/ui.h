@@ -6,7 +6,7 @@
 #include "gfx.h"
 #include "catalog.h"
 
-enum { UI_UP = 1, UI_DOWN, UI_LEFT, UI_RIGHT, UI_OK, UI_BACK, UI_L1, UI_R1, UI_OPTIONS, UI_SQUARE, UI_TRIANGLE };
+enum { UI_UP = 1, UI_DOWN, UI_LEFT, UI_RIGHT, UI_OK, UI_BACK, UI_L1, UI_R1, UI_OPTIONS, UI_SQUARE, UI_TRIANGLE, UI_L2, UI_R2 };   /* L2/R2: v1.40 */
 enum { UI_TOAST_INFO = 0, UI_TOAST_OK = 1, UI_TOAST_ERR = 2 };
 
 typedef struct UI UI;
