@@ -15,7 +15,7 @@ typedef struct {
   char content_id[48];
   unsigned long long size;
   char type[8];            /* PS4GD, PS4GP, PS4AC... (vazio = padrao) */
-  char extra[3072];        /* arquivos extras do botao, separados por '|' (ate 32). v1.37: + campo 12 da linha BTN (extras novos; o app antigo ignora) */
+  char extra[4096];        /* arquivos extras do botao, separados por '|' (ate 32). v1.37: + campo 12 da linha BTN; v1.39: 4096 (combo do Mega) */
   char dest[128];          /* pasta de destino do download (vazio = /data/PS4PatchStore/downloads) */
   char action[12];         /* pkg (padrao), download, video ou image */
   int base;                /* 1 = botao de jogo base (estilo diferente) */
@@ -62,7 +62,7 @@ typedef struct { char id[32]; int comp; char name[48]; char url[256]; unsigned l
 typedef struct { char name[64]; int opt[CAT_PL_COMPS]; } CatPlPack;
 typedef struct {
   char id[24], title[48], cusa[16], dest[128];
-  char extra[3072];
+  char extra[4096];        /* v1.39: 4096 (a base do Mega e grande) */
   int monte;
   int nopt, npack;
   CatPlOpt opt[CAT_MAX_PLO];
