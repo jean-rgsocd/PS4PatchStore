@@ -148,6 +148,9 @@ struct UI {
   int jk_art[CAT_MAX_ART], jk_b[CAT_MAX_ART][2], jk_inst[CAT_MAX_ART];   /* item -> card do catalogo / botao original e estrangeira (-1) / 0,1,2 instalado */
   int jk_ai[CAT_MAX_ART];              /* card do catalogo -> indice da imagem */
   const CatGame *jk_game;
+  /* v1.41: card Duvidas em telas */
+  int fq_i, fq_t, fq_pause;
+  Image *fq_im[CAT_MAX_FAQ];
 };
 
 /* ------------------------------------------------------------------ utilidades */
@@ -170,6 +173,13 @@ static const CatGame *cur_game(UI *ui) {
 }
 
 static int is_plgrid(const CatGame *g);
+static int is_ajuda(const CatGame *g);
+static int fq_active(UI *ui);
+static void fq_open(UI *ui);
+static void fq_key(UI *ui, int key);
+static void fq_tick(UI *ui);
+static void fq_draw(UI *ui);
+static void fq_footer(UI *ui, int *px);
 static void pl_open(UI *ui);
 static void pl_key(UI *ui, int key);
 static void pl_tick(UI *ui);
@@ -1252,6 +1262,7 @@ void ui_key(UI *ui, int key) {
   }
   const CatGame *g = cur_game(ui);
   if (ui->detail && is_plgrid(g)) { pl_key(ui, key); return; }   /* v1.37: tela de placares */
+  if (fq_active(ui)) { fq_key(ui, key); return; }                 /* v1.41: duvidas em telas */
   if (ui->detail && g) {                                          /* ---- detalhe: downloads (direita) e videos (esquerda) */
     int dl[CAT_MAX_BTNS], md[CAT_MAX_BTNS + 1], nd, nm;
     lists(g, dl, &nd, md, &nm);
@@ -1347,6 +1358,9 @@ void ui_key(UI *ui, int key) {
         for (int k = 1; k < ui->cat->ncat; k++) if (!strcmp(ui->cat->cat[k].label, g->title)) {
           ui->cat_idx = k; refilter(ui); select_game(ui, 0); break;
         }
+      } else if (g && is_ajuda(g) && ui->cat->nfaq > 0) {          /* v1.41: duvidas em telas */
+        ui->detail = 1;
+        fq_open(ui);
       } else if (g && is_plgrid(g)) {                              /* v1.37: tela JK-MOD PLACARES */
         ui->detail = 1;
         ui->pl_cat = 0; ui->jk_sel = 0; ui->jk_btn = 0;            /* v1.40: a capa JK-MOD'S abre na aba PLACARES */
@@ -1401,6 +1415,7 @@ void ui_tick(UI *ui) {
   if (ui->pi_on && ui->frame % 120 == 0) plan_refresh(ui);
   cover_poll(ui);
   pl_tick(ui);
+  fq_tick(ui);
   th_step(ui);
   guide_tick(ui);
   if (ui->vid_mode) vid_tick(ui);
@@ -1966,6 +1981,7 @@ static int hint(UI *ui, int x, const char *key, const char *label) {
 }
 
 #include "ui_placar.inc"
+#include "ui_faq.inc"
 
 static void draw_footer(UI *ui) {
   gfx_fill(ui->s, 0, 990, W, 1, C_WHITE, 26);
@@ -1996,6 +2012,8 @@ static void draw_footer(UI *ui) {
     x = hint(ui, x, "O", "Voltar");
   } else if (pl_active(ui)) {
     pl_footer(ui, &x);
+  } else if (fq_active(ui)) {
+    fq_footer(ui, &x);
   } else if (ui->mode == MODE_CATALOG && ui->detail) {
     x = hint(ui, x, "\xE2\x97\x80 \xE2\x96\xB2 \xE2\x96\xBC \xE2\x96\xB6", "Mover");
     x = hint(ui, x, "X", ui->zone == 0 ? (ui->locked ? "Bloqueado" : "Baixar") : "Assistir / ver");
@@ -2484,6 +2502,13 @@ void ui_skip_splash(UI *ui) { ui->splash = SPLASH_END - 1; ui_tick(ui); ui->dirt
 
 static void draw_scene(UI *ui) {
   if (ui->gmode && ui->mode == MODE_CATALOG) { draw_guide(ui); return; }      /* guia em tela cheia */
+  if (fq_active(ui)) {                                                        /* v1.41: duvidas em telas */
+    fq_draw(ui);
+    if (ui->shop) draw_shop(ui);
+    if (ui->upd_help) draw_upd_help(ui);
+    draw_footer(ui);
+    return;
+  }
   if (pl_active(ui)) {                                                        /* v1.37: tela JK-MOD PLACARES */
     pl_draw(ui);
     if (ui->shop) draw_shop(ui);

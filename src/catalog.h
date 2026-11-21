@@ -78,6 +78,11 @@ typedef struct {
 typedef struct { int kind; char key[48]; char img[256]; } CatArt;     /* kind 0 = narrador, 1 = clube */
 typedef struct { char board[24]; char game[96]; } CatJkLink;
 
+/* ---- v1.41: telas do card Duvidas (tag AJUDA)
+ * FAQ <titulo> <imagem 1920x1080> <video .jkv opcional>   (ordem = ordem das telas; o app antigo ignora) */
+#define CAT_MAX_FAQ 16
+typedef struct { char title[96]; char img[256]; char video[256]; } CatFaq;
+
 typedef struct {
   int locked;              /* 1 = catalogo "so olhar" (visitante / plano vencido ou pendente): sem links de download */
   CatApp app;
@@ -91,6 +96,8 @@ typedef struct {
   int nart, njk;                   /* v1.40 */
   CatArt art[CAT_MAX_ART];
   CatJkLink jk[CAT_MAX_PLB];
+  int nfaq;                        /* v1.41 */
+  CatFaq faq[CAT_MAX_FAQ];
 } Catalog;
 
 /* Le o catalogo. Retorna 0 em sucesso, <0 em erro (arquivo ausente/vazio). */

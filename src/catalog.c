@@ -163,6 +163,13 @@ int catalog_parse(Catalog *c, char *text) {
         catalog_key(f[1], a->key, sizeof(a->key));
         copy(a->img, sizeof(a->img), f[2]);
       }
+    } else if (!strcmp(f[0], "FAQ") && n >= 3) {                  /* v1.41 */
+      if (c->nfaq < CAT_MAX_FAQ && !strncmp(f[2], "https://", 8)) {
+        CatFaq *q = &c->faq[c->nfaq++];
+        copy(q->title, sizeof(q->title), f[1]);
+        copy(q->img, sizeof(q->img), f[2]);
+        copy(q->video, sizeof(q->video), (n >= 4 && !strncmp(f[3], "https://", 8)) ? f[3] : "");
+      }
     } else if (!strcmp(f[0], "JKG") && n >= 3) {
       if (c->njk < CAT_MAX_PLB) {
         copy(c->jk[c->njk].board, sizeof(c->jk[0].board), f[1]);
