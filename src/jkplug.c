@@ -298,7 +298,7 @@ static int dp_should(const char *dir, const char *cusa, const char *name, int *m
     for (int k = 0; k < n; k++) {
       if (!it[k].afr || it[k].nodp || strcmp(it[k].path, p)) continue;
       *managed = 1;
-      if (st_get(x->key, cusa) != 1) want = 0;               /* CPK de plugin: so com o plugin instalado neste jogo */
+      if (!jkx_fixed(x) && st_get(x->key, cusa) != 1) want = 0;   /* v1.43e: FIXO vale se o arquivo existir */               /* CPK de plugin: so com o plugin instalado neste jogo */
     }
   }
   if (!strcmp(name, "VTA.cpk") || !strcmp(name, "EstadioVarzea.cpk")) *managed = 1;   /* v1.38 */
@@ -475,6 +475,7 @@ int jkx_blocked(const char *path) {
   pthread_mutex_lock(&jx_mu);
   for (int i = 0; i < jx_n && !ok; i++) {
     const CatJkx *x = &jx_def[i];
+    if (jkx_fixed(x)) continue;                             /* v1.43e: FIXO vem com os botoes */
     for (int j = 0; j < jx_nb && !ok; j++) {
       const JBoard *b = &jx_b[j];
       if (!jkx_for_board(x, b->id)) continue;
@@ -492,7 +493,8 @@ int jkx_blocked(const char *path) {
 }
 
 /* ------------------------------------------------------------------ v1.43d: cards FIXOS */
-int jkx_fixed(const CatJkx *x) { return x && !strcmp(x->files, "FIXO"); }
+/* FIXO: vem junto com o placar (os botoes baixam), a aba so mostra. "arquivos" = FIXO (so o prx) ou "apagar" = FIXO (com os arquivos) */
+int jkx_fixed(const CatJkx *x) { return x && (!strcmp(x->files, "FIXO") || !strcmp(x->del, "FIXO")); }
 
 /* k-esima alternativa do prx ("a|b|c"). 0 = acabou */
 static int prx_alt(const char *prx, int k, char *out, int cap) {
@@ -506,9 +508,17 @@ static int prx_alt(const char *prx, int k, char *out, int cap) {
 }
 int jkx_fixed_on(const CatJkx *x, const CatPlBoard *b) {
   if (!jkx_fixed(x) || !b) return 0;
-  int on = 0; char a[128];
+  int on = 1, alts = 0, any = 0; char a[128];
   pthread_mutex_lock(&jx_mu);
-  for (int k = 0; !on && prx_alt(x->prx, k, a, sizeof(a)); k++) if (fsize(a) > 0 && ini_get(b->cusa, a) == 1) on = 1;
+  for (int k = 0; prx_alt(x->prx, k, a, sizeof(a)); k++) { alts++; if (fsize(a) > 0 && ini_get(b->cusa, a) == 1) any = 1; }
+  if (alts && !any) on = 0;
+  Item it[MAXIT]; int n = items(x, b->dest, it, MAXIT);
+  for (int k = 0; on && k < n; k++) {
+    if (it[k].list) continue;
+    long long sz = fsize(it[k].path);
+    if (sz <= 0 || (it[k].want > 0 && sz != it[k].want)) on = 0;
+  }
+  if (!alts && n <= 0) on = 0;
   pthread_mutex_unlock(&jx_mu);
   return on;
 }

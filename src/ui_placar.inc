@@ -331,7 +331,7 @@ static void jk_scan(UI *ui) {
     for (int n = 0; n < ui->jk_n; n++) {
       const CatJkx *xx = &ui->cat->jkx[ui->jk_art[n]];
       ui->jx_path[n][0] = 0; ui->jx_file[n][0] = 0;
-      if (jkx_fixed(xx)) {                                       /* v1.43d: card FIXO (vem com o placar) */
+      if (jkx_fixed(xx) && !strcmp(xx->files, "FIXO")) {        /* v1.43d: card FIXO so com prx (vem com o placar) */
         ui->jk_inst[n] = b ? jkx_fixed_on(xx, b) : 0; ui->jk_b[n][1] = -1;
         char f[64]; int k = 0;
         const char *s0 = xx->prx, *e0 = strchr(s0, '|'); if (!e0) e0 = s0 + strlen(s0);
@@ -342,8 +342,9 @@ static void jk_scan(UI *ui) {
         text_fit(ui->fb, 13, "GoldHEN/plugins", JX_CW - 20, ui->jx_path[n], sizeof(ui->jx_path[n]));
         continue;
       }
-      int in = b ? jkx_installed(xx, b) : 0;
-      ui->jk_inst[n] = in; ui->jk_b[n][1] = in ? 0 : -1;
+      int fx = jkx_fixed(xx);                                    /* v1.43e: FIXO com arquivos: mostra arquivo/pasta, sem botoes */
+      int in = b ? (fx ? jkx_fixed_on(xx, b) : jkx_installed(xx, b)) : 0;
+      ui->jk_inst[n] = in; ui->jk_b[n][1] = (in && !fx) ? 0 : -1;
       if (b) {                                                   /* pastas para onde vai: "GoldHEN/plugins + PCC59" */
         static char ps[8][200];
         int np = jkx_paths(&ui->cat->jkx[ui->jk_art[n]], b, ps, 8);
@@ -402,7 +403,7 @@ static void jkx_go(UI *ui) {                                     /* v1.43: X na 
   int sel = ui->jk_sel;
   const CatJkx *x = &ui->cat->jkx[ui->jk_art[sel]];
   if (jkx_fixed(x)) {                                            /* v1.43d */
-    ui_toast(ui, ui->jk_inst[sel] ? "Vem junto com o placar e já está ativado." : "Vem junto com o placar: baixe um placar na aba PLACARES.", UI_TOAST_INFO);
+    ui_toast(ui, ui->jk_inst[sel] ? "Vem junto com o JK-MOD e já está ativado." : "Vem junto com o JK-MOD: baixe um placar, narração ou Master League.", UI_TOAST_INFO);
     return;
   }
   if (ui->busy) { ui_toast(ui, "Já existe um pedido em andamento. Aguarde.", UI_TOAST_INFO); return; }
@@ -600,7 +601,7 @@ static void jk_draw(UI *ui) {
           gfx_rrect(s, x + 16, y + 246, cw - 32, 34, 8, foc ? C_FOCUS : C_BASE, 255, 0);
           gfx_rrect(s, x + 16, y + 246, cw - 32, 34, 8, C_BASE_EDGE, 255, 2);
           text_draw_in(s, ui->fb, 15, x + 16, cw - 32, y + 269, "\xE2\x9C\x93 ATIVADO", foc ? C_BG : C_TEXT, 255, 0, 1);
-        } else jk_pill(ui, x + 16, y + 246, cw - 32, 34, "VEM COM O PLACAR", foc ? 0 : -1);
+        } else jk_pill(ui, x + 16, y + 246, cw - 32, 34, "VEM COM O JK-MOD", foc ? 0 : -1);
       } else {
         int pw = (cw - 40) / 2;
         jx_pill(ui, x + 14, y + 246, pw, 34, "INSTALAR", foc && ui->jk_btn == 0 ? 1 : (in ? 2 : 0), 0);
