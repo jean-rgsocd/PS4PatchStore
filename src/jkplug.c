@@ -302,6 +302,9 @@ static int dp_should(const char *dir, const char *cusa, const char *name, int *m
     }
   }
   if (!strcmp(name, "VTA.cpk") || !strcmp(name, "EstadioVarzea.cpk")) *managed = 1;   /* v1.38 */
+  /* v1.43c: CPKs antigos do JK-MOD que o DpFileList dos botoes cita: sem o arquivo, sai da lista (nao precisa mais do "fake" de 8 KB) */
+  static const char *OLD[] = { "JKPlacar.cpk", "JKPlacar2.cpk", "CazeTV.cpk", "JKNarrador.cpk", "JKML.cpk", "CPK CLIENTES.cpk", "CPK ML.cpk", NULL };
+  for (int i = 0; OLD[i]; i++) if (!strcmp(name, OLD[i])) *managed = 1;
   if (*managed && sz <= 0) want = 0;                        /* nunca citar CPK que nao existe (o jogo trava) */
   return want;
 }
