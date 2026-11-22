@@ -494,7 +494,8 @@ int jkx_blocked(const char *path) {
 
 /* ------------------------------------------------------------------ v1.43d: cards FIXOS */
 /* FIXO: vem junto com o placar (os botoes baixam), a aba so mostra. "arquivos" = FIXO (so o prx) ou "apagar" = FIXO (com os arquivos) */
-int jkx_fixed(const CatJkx *x) { return x && (!strcmp(x->files, "FIXO") || !strcmp(x->del, "FIXO")); }
+int jkx_fixed(const CatJkx *x) { return x && (!strcmp(x->files, "FIXO") || !strncmp(x->del, "FIXO", 4)); }   /* "FIXO:texto" = aviso fixo no card (ex.: desativado) */
+const char *jkx_fixed_note(const CatJkx *x) { return (x && !strncmp(x->del, "FIXO:", 5) && x->del[5]) ? x->del + 5 : NULL; }
 
 /* k-esima alternativa do prx ("a|b|c"). 0 = acabou */
 static int prx_alt(const char *prx, int k, char *out, int cap) {
@@ -507,7 +508,7 @@ static int prx_alt(const char *prx, int k, char *out, int cap) {
   return n > 0;
 }
 int jkx_fixed_on(const CatJkx *x, const CatPlBoard *b) {
-  if (!jkx_fixed(x) || !b) return 0;
+  if (!jkx_fixed(x) || !b || jkx_fixed_note(x)) return 0;
   int on = 1, alts = 0, any = 0; char a[128];
   pthread_mutex_lock(&jx_mu);
   for (int k = 0; prx_alt(x->prx, k, a, sizeof(a)); k++) { alts++; if (fsize(a) > 0 && ini_get(b->cusa, a) == 1) any = 1; }

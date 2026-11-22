@@ -402,6 +402,7 @@ static void jkx_go(UI *ui) {                                     /* v1.43: X na 
   if (!b || ui->jk_n <= 0) return;
   int sel = ui->jk_sel;
   const CatJkx *x = &ui->cat->jkx[ui->jk_art[sel]];
+  if (jkx_fixed_note(x)) { char t[160]; snprintf(t, sizeof(t), "%s: %s", x->name, jkx_fixed_note(x)); ui_toast(ui, t, UI_TOAST_INFO); return; }   /* v1.43g */
   if (jkx_fixed(x)) {                                            /* v1.43d */
     ui_toast(ui, ui->jk_inst[sel] ? "Vem junto com o JK-MOD e já está ativado." : "Vem junto com o JK-MOD: baixe um placar, narração ou Master League.", UI_TOAST_INFO);
     return;
@@ -596,7 +597,13 @@ static void jk_draw(UI *ui) {
       int in = ui->jk_inst[i];
       if (ui->jx_file[i][0]) text_draw_in(s, ui->fb, 15, x, cw, y + 206, ui->jx_file[i], C_TEXT, 230, 0, 1);
       if (ui->jx_path[i][0]) text_draw_in(s, ui->fb, 13, x, cw, y + 226, ui->jx_path[i], C_CYAN, 210, 0, 1);
-      if (jkx_fixed(&ui->cat->jkx[ui->jk_art[i]])) {             /* v1.43d: vem com o placar */
+      const char *note = jkx_fixed_note(&ui->cat->jkx[ui->jk_art[i]]);
+      if (note) {                                                /* v1.43g: aviso fixo (ex.: DESATIVADO - TRAVANDO) */
+        char nt[64]; text_fit(ui->fb, 13, note, cw - 44, nt, sizeof(nt));
+        gfx_rrect(s, x + 16, y + 246, cw - 32, 34, 8, foc ? C_ERR : RGB(0x46, 0x14, 0x1c), 255, 0);
+        gfx_rrect(s, x + 16, y + 246, cw - 32, 34, 8, RGB(0xe6, 0x5a, 0x64), 255, 1);
+        text_draw_in(s, ui->fb, 13, x + 16, cw - 32, y + 268, nt, foc ? C_BG : C_TEXT, 255, 0, 1);
+      } else if (jkx_fixed(&ui->cat->jkx[ui->jk_art[i]])) {      /* v1.43d: vem com o placar */
         if (in) {
           gfx_rrect(s, x + 16, y + 246, cw - 32, 34, 8, foc ? C_FOCUS : C_BASE, 255, 0);
           gfx_rrect(s, x + 16, y + 246, cw - 32, 34, 8, C_BASE_EDGE, 255, 2);
