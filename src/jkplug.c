@@ -495,6 +495,7 @@ int jkx_blocked(const char *path) {
 /* ------------------------------------------------------------------ v1.43d: cards FIXOS */
 /* FIXO: vem junto com o placar (os botoes baixam), a aba so mostra. "arquivos" = FIXO (so o prx) ou "apagar" = FIXO (com os arquivos) */
 int jkx_fixed(const CatJkx *x) { return x && (!strcmp(x->files, "FIXO") || !strncmp(x->del, "FIXO", 4)); }   /* "FIXO:texto" = aviso fixo no card (ex.: desativado) */
+const char *jkx_aviso(const CatJkx *x) { return (x && !strncmp(x->del, "AVISO=https://", 14)) ? x->del + 6 : NULL; }   /* v1.44 */
 const char *jkx_fixed_note(const CatJkx *x) { return (x && !strncmp(x->del, "FIXO:", 5) && x->del[5]) ? x->del + 5 : NULL; }
 
 /* k-esima alternativa do prx ("a|b|c"). 0 = acabou */

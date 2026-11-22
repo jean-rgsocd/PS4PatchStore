@@ -31,7 +31,8 @@ int  jkx_uninstall(const char *keyboard, JkxListFn list, JkxLog log, char *msg, 
 
 /* v1.43d: card FIXO (vem com o placar, sem instalar/desinstalar). Linha JKX com arquivos = "FIXO" e prx = "a.prx|b.prx" */
 int  jkx_fixed(const CatJkx *x);
-const char *jkx_fixed_note(const CatJkx *x);          /* "apagar" = FIXO:texto -> texto no lugar do status (ex.: DESATIVADO - TRAVANDO) */
+const char *jkx_fixed_note(const CatJkx *x);
+const char *jkx_aviso(const CatJkx *x);               /* v1.44: "apagar" = AVISO=https://...png -> sem DESINSTALAR, botao AVISO abre a imagem */          /* "apagar" = FIXO:texto -> texto no lugar do status (ex.: DESATIVADO - TRAVANDO) */
 int  jkx_fixed_on(const CatJkx *x, const CatPlBoard *b);   /* 1 = algum prx do card esta no console e ligado no plugins.ini */
 /* o download gravou este arquivo: se for o prx de um card FIXO, o proximo jkx_apply liga ele e desliga a versao do outro patch
  * do mesmo jogo (ex.: pes21_fin_vivas_mega x pes21_fin_vivas no CUSA18676) */

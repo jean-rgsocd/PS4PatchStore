@@ -149,7 +149,7 @@ static void pl_load_images(UI *ui) {
   pl_free_images(ui);
   for (int i = 0; i < CAT_MAX_PLO; i++) ui->pl_oi[i] = ui->pl_ol[i] = -1;
   for (int i = 0; i < CAT_MAX_ART; i++) ui->jk_ai[i] = -1;
-  for (int i = 0; i < CAT_MAX_JKX; i++) ui->jx_ai[i] = -1;
+  for (int i = 0; i < CAT_MAX_JKX; i++) ui->jx_ai[i] = ui->jx_av[i] = -1;
   if (!b) return;
   PlJobs *J = (PlJobs *)calloc(1, sizeof(PlJobs));
   if (!J) return;
@@ -163,6 +163,7 @@ static void pl_load_images(UI *ui) {
   for (int i = 0; i < b->nopt; i++) ui->pl_ol[i] = pl_url_add(ui, J, b->opt[i].logo, 1);
   for (int i = 0; i < ui->cat->nart && i < CAT_MAX_ART; i++) ui->jk_ai[i] = pl_url_add(ui, J, ui->cat->art[i].img, 2);   /* v1.40 */
   for (int i = 0; i < ui->cat->njkx && i < CAT_MAX_JKX; i++) ui->jx_ai[i] = pl_url_add(ui, J, ui->cat->jkx[i].img, 2);   /* v1.43 */
+  for (int i = 0; i < ui->cat->njkx && i < CAT_MAX_JKX; i++) ui->jx_av[i] = pl_url_add(ui, J, jkx_aviso(&ui->cat->jkx[i]), 2);   /* v1.44: imagem inteira, sem escala */
   if (J->n == 0 || !ui->cover_dir[0]) { free(J); return; }
   pthread_t t; pthread_attr_t at;
   pthread_attr_init(&at);
@@ -270,7 +271,7 @@ static void jk_fix_btn(UI *ui) {
 }
 
 static void jk_build(UI *ui) {
-  ui->jk_n = 0; ui->jk_scanned = 0; ui->jx_arm = 0; ui->jx_top = 0;
+  ui->jk_n = 0; ui->jk_scanned = 0; ui->jx_arm = 0; ui->jx_top = 0; ui->jx_modal = 0;
   ui->jk_game = jk_find_game(ui);
   const CatGame *g = ui->jk_game;
   if (ui->pl_cat == 3) {                                         /* v1.43: plugins do quadro (uma card por chave) */
@@ -344,7 +345,7 @@ static void jk_scan(UI *ui) {
       }
       int fx = jkx_fixed(xx);                                    /* v1.43e: FIXO com arquivos: mostra arquivo/pasta, sem botoes */
       int in = b ? (fx ? jkx_fixed_on(xx, b) : jkx_installed(xx, b)) : 0;
-      ui->jk_inst[n] = in; ui->jk_b[n][1] = (in && !fx) ? 0 : -1;
+      ui->jk_inst[n] = in; ui->jk_b[n][1] = ((in && !fx) || jkx_aviso(xx)) ? 0 : -1;   /* v1.44: AVISO sempre clicavel */
       if (b) {                                                   /* pastas para onde vai: "GoldHEN/plugins + PCC59" */
         static char ps[8][200];
         int np = jkx_paths(&ui->cat->jkx[ui->jk_art[n]], b, ps, 8);
@@ -409,6 +410,12 @@ static void jkx_go(UI *ui) {                                     /* v1.43: X na 
   }
   if (ui->busy) { ui_toast(ui, "Já existe um pedido em andamento. Aguarde.", UI_TOAST_INFO); return; }
   static CatButton cb;
+  if (ui->jk_btn == 1 && jkx_aviso(x)) {                         /* v1.44: AVISO no lugar de DESINSTALAR */
+    int ai = ui->jx_av[ui->jk_art[sel]];
+    if (ai < 0 || !ui->pl_im[ai][0]) { ui_toast(ui, "Carregando o aviso... tente de novo em instantes.", UI_TOAST_INFO); return; }
+    ui->jx_modal = ui->jk_art[sel] + 1; ui->dirty = 1;
+    return;
+  }
   if (ui->jk_btn == 1) {
     if (!ui->jk_inst[sel]) return;
     if (ui->jx_arm != sel + 1 || ui->frame - ui->jx_arm_f > 240) {          /* 1o toque: so avisa */
@@ -549,6 +556,13 @@ static void jx_pill(UI *ui, int x, int y, int w, int h, const char *txt, int st,
     text_draw_in(s, ui->fb, w < 118 ? 12 : 14, x, w, y + h / 2 + 4, txt, C_MUTED, 90, 0, 1);
     return;
   }
+  if (red == 2) {                                                /* v1.44: AVISO (amarelo) */
+    gfx_rrect(s, x, y, w, h, 8, st == 1 ? RGB(0xf5, 0xc5, 0x18) : RGB(0x3a, 0x2e, 0x08), 255, 0);
+    if (st != 1) gfx_rrect(s, x, y, w, h, 8, RGB(0xf5, 0xc5, 0x18), 255, 1);
+    int f2 = w < 118 ? 12 : 14;
+    text_draw_in(s, ui->fb, f2, x, w, y + h / 2 + (f2 == 12 ? 4 : 5), txt, st == 1 ? C_BG : RGB(0xff, 0xe0, 0x70), 255, 0, 1);
+    return;
+  }
   uint32_t bg = st == 1 ? (red ? C_ERR : C_FOCUS) : st == 2 ? C_BASE : red ? RGB(0x46, 0x14, 0x1c) : RGB(0x0c, 0x1e, 0x34);
   gfx_rrect(s, x, y, w, h, 8, bg, 255, 0);
   if (st == 2) gfx_rrect(s, x, y, w, h, 8, C_BASE_EDGE, 255, 2);
@@ -574,6 +588,20 @@ static void jk_placeholder(UI *ui, const CatGame *g, int n, int x, int y, int w,
     char t[64]; text_fit(ui->fb, 22, g->btn[bi].label, w - 30, t, sizeof(t));
     text_draw_in(s, ui->fb, 22, x, w, y + (ui->pl_cat == 1 ? 180 : h / 2 + 8), t, C_TEXT, 255, 0, 1);
   }
+}
+
+/* v1.44: AVISO do plugin (imagem do catalogo, tela cheia por cima da aba) */
+static void jx_draw_modal(UI *ui) {
+  if (!ui->jx_modal || ui->jx_modal > CAT_MAX_JKX) return;
+  int ai = ui->jx_av[ui->jx_modal - 1];
+  Image *im = ai >= 0 ? ui->pl_im[ai][0] : NULL;
+  if (!im) { ui->jx_modal = 0; return; }
+  Image *s = ui->s;
+  gfx_rrect(s, 0, 0, W, H, 0, RGB(0, 0, 0), 205, 0);
+  int x = (W - im->w) / 2, y = im->h <= 900 ? 34 : (H - 100 - im->h) / 2;
+  gfx_rrect(s, x - 6, y - 6, im->w + 12, im->h + 12, 18, RGB(0xf5, 0xc5, 0x18), 255, 2);
+  gfx_blit(s, im, x, y, 0, 255);
+  text_draw_in(s, ui->fb, 20, 0, W, y + im->h + 38, "X  ou  O   fechar", C_TEXT, 255, 0, 1);
 }
 
 static void jk_draw(UI *ui) {
@@ -612,7 +640,8 @@ static void jk_draw(UI *ui) {
       } else {
         int pw = (cw - 40) / 2;
         jx_pill(ui, x + 14, y + 246, pw, 34, "INSTALAR", foc && ui->jk_btn == 0 ? 1 : (in ? 2 : 0), 0);
-        jx_pill(ui, x + 26 + pw, y + 246, pw, 34, "DESINSTALAR", !in ? -1 : (foc && ui->jk_btn == 1 ? 1 : 0), 1);
+        if (jkx_aviso(&ui->cat->jkx[ui->jk_art[i]])) jx_pill(ui, x + 26 + pw, y + 246, pw, 34, "AVISO", foc && ui->jk_btn == 1 ? 1 : 0, 2);   /* v1.44 */
+        else jx_pill(ui, x + 26 + pw, y + 246, pw, 34, "DESINSTALAR", !in ? -1 : (foc && ui->jk_btn == 1 ? 1 : 0), 1);
       }
     } else if (narr) {
       static const char *lab[2] = { "ORIGINAL", "ESTRANGEIRA" };
@@ -727,6 +756,10 @@ static void pl_key(UI *ui, int key) {
     ui->pl_cat = (ui->pl_cat + (key == UI_R2 ? 1 : nt - 1)) % nt;
     ui->jk_sel = 0; ui->jk_btn = 0;
     jk_build(ui);
+    return;
+  }
+  if (ui->jx_modal) {                                            /* v1.44: AVISO aberto: X ou O fecha */
+    if (key == UI_OK || key == UI_BACK) { ui->jx_modal = 0; ui->dirty = 1; }
     return;
   }
   if (!ui->pl_ed && ui->pl_cat > 0) { jk_key(ui, key); return; }
@@ -982,7 +1015,7 @@ static void pl_draw(UI *ui) {
   const CatPlBoard *b = pl_board_cur(ui);
   pl_draw_header(ui, b);
   jk_tabs(ui);                                                   /* v1.40 */
-  if (ui->pl_cat > 0) { jk_draw(ui); pl_draw_msg(ui); return; }
+  if (ui->pl_cat > 0) { jk_draw(ui); pl_draw_msg(ui); jx_draw_modal(ui); return; }
   int nc = pl_ncards(b);
   if (!b || nc == 0) {
     text_draw_in(s, ui->fb, 30, 0, W, 540, "Nenhum placar disponível agora.", C_MUTED, 255, 0, 1);
