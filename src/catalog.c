@@ -40,6 +40,12 @@ int catalog_pl_comp(const char *s) {
   if (!strcmp(s, "B")) return 1;
   if (!strcmp(s, "CDB")) return 2;
   if (!strcmp(s, "LIB")) return 3;
+  if (!strcmp(s, "MUN")) return 4;                          /* v1.43 */
+  /* v1.43: "A+" "B+" "CDB+" "LIB+" = opcao nova so para o app novo (o 1.42 ignora): para testar antes de liberar */
+  if (!strcmp(s, "A+")) return 0;
+  if (!strcmp(s, "B+")) return 1;
+  if (!strcmp(s, "CDB+")) return 2;
+  if (!strcmp(s, "LIB+")) return 3;
   return -1;
 }
 
@@ -170,6 +176,17 @@ int catalog_parse(Catalog *c, char *text) {
         copy(q->img, sizeof(q->img), f[2]);
         copy(q->video, sizeof(q->video), (n >= 4 && !strncmp(f[3], "https://", 8)) ? f[3] : "");
       }
+    } else if (!strcmp(f[0], "JKX") && n >= 8) {                  /* v1.43 */
+      if (c->njkx < CAT_MAX_JKX && f[1][0] && strlen(f[7]) < sizeof(c->jkx[0].files)) {
+        CatJkx *x = &c->jkx[c->njkx++];
+        copy(x->key, sizeof(x->key), f[1]);
+        copy(x->name, sizeof(x->name), f[2]);
+        copy(x->img, sizeof(x->img), !strncmp(f[3], "https://", 8) ? f[3] : "");
+        copy(x->boards, sizeof(x->boards), f[4]);
+        copy(x->prx, sizeof(x->prx), !strncmp(f[5], "/data/", 6) ? f[5] : "");
+        copy(x->del, sizeof(x->del), strcmp(f[6], "-") ? f[6] : "");
+        copy(x->files, sizeof(x->files), f[7]);
+      }
     } else if (!strcmp(f[0], "JKG") && n >= 3) {
       if (c->njk < CAT_MAX_PLB) {
         copy(c->jk[c->njk].board, sizeof(c->jk[0].board), f[1]);
@@ -195,11 +212,13 @@ int catalog_parse(Catalog *c, char *text) {
         CatPlPack p;
         int ok = 1;
         copy(p.name, sizeof(p.name), f[2]);
-        for (int k = 0; k < CAT_PL_COMPS; k++) {
+        for (int k = 0; k < 4; k++) {
           int oi = pl_opt(b, f[3 + k]);
           if (oi < 0 || b->opt[oi].comp != k) ok = 0;   /* PLO precisa vir antes e ser da competicao certa */
           p.opt[k] = oi;
         }
+        p.opt[4] = -1;                                    /* v1.43: 5o placar (Mundial / Copas) e opcional */
+        if (n >= 8 && f[7][0]) { int oi = pl_opt(b, f[7]); if (oi >= 0 && b->opt[oi].comp == 4) p.opt[4] = oi; }
         if (ok) b->pack[b->npack++] = p;
       }
     }

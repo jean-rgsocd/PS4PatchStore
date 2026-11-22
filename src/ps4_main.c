@@ -31,6 +31,7 @@
 #include "auth_proto.h"
 #include "version.h"
 #include "vplayer.h"
+#include "jkplug.h"
 
 #ifndef JK_DIR
 #define JK_DIR "/data/jk"
@@ -325,7 +326,7 @@ static void jkp_fix_ini(const JkpGame *G) {
   free(o); free(t);
 }
 
-static void jkp_fix_dplist(const JkpGame *G) {
+static void __attribute__((unused)) jkp_fix_dplist(const JkpGame *G) {   /* v1.43: substituido por jkx_dp_fix (jkplug.c) */
   char p[200];
   for (int k = 0; k < 4; k++) { snprintf(p, sizeof(p), "%s/%s", G->dir, JKP_CPK[k]); if (file_size_of(p) <= 0) return; }
   snprintf(p, sizeof(p), "%s/DpFileList.bin", G->dir);
@@ -466,8 +467,30 @@ static int jk_expand_list(const char *url, const char *defdir, char (*iu)[1024],
 }
 
 static void jk_placares_fixup(void) {
-  for (int g = 0; g < 2; g++) { jkp_fix_ini(&JKP_GAMES[g]); jkp_fix_dplist(&JKP_GAMES[g]); }
+  for (int g = 0; g < 2; g++) jkp_fix_ini(&JKP_GAMES[g]);
   jkh_fix_ini();                                          /* v1.42 */
+  jkx_apply(install_log);                                 /* v1.43: plugins da aba PLUGINS (ini) + DpFileList de cada jogo
+                                                             (JK_PLACAR, VTA, Varzea e CPKs dos plugins; nunca cita CPK que nao existe) */
+}
+
+/* v1.43: caminhos dos arquivos de uma lista "?list" (para desinstalar os hinos) */
+static int jkx_list_paths(const char *url, const char *dir, char (*paths)[200], int max) {
+  enum { LM = 96 };
+  static char lu[LM][1024], ld[LM][120];
+  static char ls[LM];
+  int n = jk_expand_list(url, dir, lu, ld, ls, 0, max < LM ? max : LM);
+  for (int k = 0; k < n; k++) {
+    const char *b = strrchr(lu[k], '/'); b = b ? b + 1 : lu[k];
+    char nm[180]; int j = 0;
+    while (*b && *b != '?' && j + 1 < (int)sizeof(nm)) {
+      unsigned char ch = (unsigned char)*b++;
+      if (ch == '%' && b[0] && b[1]) { char hx[3] = { b[0], b[1], 0 }; char *e = NULL; long v = strtol(hx, &e, 16); if (e && *e == 0) { ch = (unsigned char)v; b += 2; } }
+      nm[j++] = (char)ch;
+    }
+    nm[j] = 0;
+    snprintf(paths[k], 200, "%s/%s", ld[k], nm);
+  }
+  return n;
 }
 
 /* ------------------------------------------------------------------ instalacao (thread) */
@@ -532,8 +555,17 @@ static void *install_thread(void *arg) {
         rc = -1;
       }
     }
+  } else if (!strcmp(action, "jkxoff")) {                  /* v1.43: desinstalar plugin da aba PLUGINS */
+    char lm[300];
+    snprintf(lm, sizeof(lm), "Plugins: desinstalando %s", j->btn.name);
+    install_log(lm);
+    rc = jkx_uninstall(j->btn.name, jkx_list_paths, install_log, err, sizeof(err)) == 0 ? 1 : -1;
   } else if (!strcmp(action, "download")) {
     const char *dir = "/data/PS4PatchStore/downloads";
+    if (!strcmp(j->btn.content_id, "JKX")) {               /* v1.43: instalar pela aba PLUGINS liga o plugin (estado 1) */
+      jkx_mark_install(j->btn.name);
+      char lm[300]; snprintf(lm, sizeof(lm), "Plugins: instalando %s", j->btn.name); install_log(lm);
+    }
     const char *d = j->btn.dest;
     if (!strncmp(d, "/data/", 6) && !strstr(d, "..") && strlen(d) < 120) dir = d;      /* destino escolhido no catalogo */
     mkdir("/data/PS4PatchStore", 0777);
@@ -610,6 +642,11 @@ static void *install_thread(void *arg) {
       filename[k] = 0;
       if (!filename[0] || !strcmp(filename, ".") || !strcmp(filename, "..")) snprintf(filename, sizeof(filename), "arquivo_download.bin");
       snprintf(path, sizeof(path), "%s/%s", it_dir[u], filename);
+      if (jkx_blocked(path)) {                         /* v1.43: plugin desinstalado pela aba: nao baixa de novo */
+        char lmb[700]; snprintf(lmb, sizeof(lmb), "Item %d/%d pulado (plugin desinstalado): %s", u + 1, nit, path);
+        install_log(lmb);
+        continue;
+      }
       {                                                /* "?once" na URL = so baixa se o arquivo ainda nao existir (nao troca o que o usuario ja escolheu) */
         char *q = strstr(it_url[u], "?once");
         if (q) {
@@ -909,6 +946,7 @@ static void check_auth(UI *ui) {
         } else {
           ui_set_plan(ui, "CONTA ATIVA", 0);                   /* sem vencimento: o app e livre */
         }
+        jkx_set_catalog(&cat);                                /* v1.43: copia dos plugins para a thread de download */
         ui_set_catalog(ui, &cat);
         install_log("Catalogo recebido do servidor.");
         mod_update_check(&cat);

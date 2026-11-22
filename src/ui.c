@@ -5,6 +5,7 @@
 #include <time.h>
 #include "version.h"
 #include "vplayer.h"
+#include "jkplug.h"
 
 #include <stdio.h>
 #include <pthread.h>
@@ -139,14 +140,16 @@ struct UI {
 
   /* v1.37: tela JK-MOD PLACARES (card PLACARGRID) */
   int pl_b, pl_sel, pl_ed, pl_row, pl_scanned;
-  int pl_pick[4], pl_inst[4];          /* opcao escolhida no "Monte o seu" / instalada no console (-1 = nenhuma) */
+  int pl_pick[CAT_PL_COMPS], pl_inst[CAT_PL_COMPS];   /* v1.43: 5 (Mundial / Copas) */          /* opcao escolhida no "Monte o seu" / instalada no console (-1 = nenhuma) */
   int pl_oi[CAT_MAX_PLO], pl_ol[CAT_MAX_PLO];   /* opcao -> indice da imagem / do logo */
-  Image *pl_im[CAT_MAX_PLO * 2 + CAT_MAX_ART][2];    /* [0] = tamanho do card, [1] = tamanho do editor; v1.40: + cards de narrador/clube */
+  Image *pl_im[CAT_MAX_PLO * 2 + CAT_MAX_ART + CAT_MAX_JKX][2];   /* v1.43: + cards dos plugins */    /* [0] = tamanho do card, [1] = tamanho do editor; v1.40: + cards de narrador/clube */
   Image *pl_bg;
   /* v1.40: abas JK-MOD'S (0 placares, 1 narradores, 2 master league) */
   int pl_cat, jk_sel, jk_btn, jk_n, jk_scanned;
   int jk_art[CAT_MAX_ART], jk_b[CAT_MAX_ART][2], jk_inst[CAT_MAX_ART];   /* item -> card do catalogo / botao original e estrangeira (-1) / 0,1,2 instalado */
   int jk_ai[CAT_MAX_ART];              /* card do catalogo -> indice da imagem */
+  int jx_ai[CAT_MAX_JKX];              /* v1.43: linha JKX -> indice da imagem */
+  int jx_arm; unsigned jx_arm_f;       /* v1.43: DESINSTALAR pede 2 toques (item+1 e quadro do 1o toque) */
   const CatGame *jk_game;
   /* v1.41: card Duvidas em telas */
   int fq_i, fq_t, fq_pause;

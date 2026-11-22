@@ -52,9 +52,9 @@ typedef struct {
 /* ---- v1.37: tela "JK-MOD PLACARES" (card com tag PLACARGRID) ----
  * PLB <quadro> <titulo> <cusa> <pasta destino> <extras comuns> <monte_o_seu 0/1>
  * PLO <quadro> <id> <competicao A|B|CDB|LIB> <emissora> <url do cpk> <tamanho> <imagem do placar> <logo>
- * PLP <quadro> <nome do combo> <id A> <id B> <id CDB> <id LIB>
+ * PLP <quadro> <nome do combo> <id A> <id B> <id CDB> <id LIB> [<id MUN> v1.43, opcional]
  * (o app antigo ignora essas linhas) */
-#define CAT_PL_COMPS  4
+#define CAT_PL_COMPS  5          /* v1.43: + MUN (Mundial / Copas, placar "Pes" do jogo). O app antigo ignora PLO MUN */
 #define CAT_MAX_PLB   3
 #define CAT_MAX_PLO   40
 #define CAT_MAX_PLP   16
@@ -83,6 +83,15 @@ typedef struct { char board[24]; char game[96]; } CatJkLink;
 #define CAT_MAX_FAQ 16
 typedef struct { char title[96]; char img[256]; char video[256]; } CatFaq;
 
+/* ---- v1.43: aba PLUGINS da tela JK-MOD'S (cada plugin opcional com INSTALAR / DESINSTALAR)
+ * JKX <chave> <nome> <imagem do card> <quadros "mega,brasfoot"> <prx do plugins.ini ou -> <apagar ou -> <arquivos>
+ *   arquivos: "pasta=https://...?once=TAMANHO" separados por '|'; pasta "@" = pasta AFR do quadro (CPK que vai no DpFileList)
+ *   apagar:   pastas/arquivos a mais para apagar ao desinstalar ("@/nome" = dentro da pasta AFR)
+ * A mesma chave pode ter varias linhas (uma por patch, quando os links mudam). Ordem = ordem dos cards.
+ * (o app antigo ignora essas linhas) */
+#define CAT_MAX_JKX 40
+typedef struct { char key[32]; char name[64]; char img[256]; char boards[64]; char prx[128]; char del[512]; char files[2048]; } CatJkx;
+
 typedef struct {
   int locked;              /* 1 = catalogo "so olhar" (visitante / plano vencido ou pendente): sem links de download */
   CatApp app;
@@ -98,6 +107,8 @@ typedef struct {
   CatJkLink jk[CAT_MAX_PLB];
   int nfaq;                        /* v1.41 */
   CatFaq faq[CAT_MAX_FAQ];
+  int njkx;                        /* v1.43 */
+  CatJkx jkx[CAT_MAX_JKX];
 } Catalog;
 
 /* Le o catalogo. Retorna 0 em sucesso, <0 em erro (arquivo ausente/vazio). */

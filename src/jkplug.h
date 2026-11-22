@@ -1,0 +1,32 @@
+/* v1.43: plugins opcionais da aba PLUGINS (JK-MOD'S): estado por jogo, plugins.ini e DpFileList.
+ * Estado em /data/jk/plugins.txt, linhas "chave@CUSA=0|1". Sem linha = nunca mexeu (vale o que os botoes ja instalaram). */
+#ifndef JKPLUG_H
+#define JKPLUG_H
+#include "catalog.h"
+
+typedef void (*JkxLog)(const char *msg);
+/* lista "?list" (hinos): grava em paths os caminhos dos arquivos da lista (ate max) e devolve quantos. Pode ser NULL. */
+typedef int (*JkxListFn)(const char *url, const char *dir, char (*paths)[200], int max);
+
+void jkx_set_root(const char *root);                 /* so o simulador: prefixo dos caminhos ("" no PS4) */
+void jkx_set_catalog(const Catalog *c);             /* copia os JKX e os quadros (a thread de download usa a copia) */
+int  jkx_state(const char *key, const char *cusa); /* -1 nunca mexeu, 0 desinstalado, 1 instalado pela aba */
+void jkx_state_set(const char *key, const char *cusa, int v);
+int  jkx_for_board(const CatJkx *x, const char *board);
+int  jkx_installed(const CatJkx *x, const CatPlBoard *b);
+/* monta o botao de download do plugin para o quadro. 0 = ok */
+int  jkx_button(const CatJkx *x, const CatPlBoard *b, CatButton *out);
+/* idem para desinstalar (acao "jkxoff") */
+void jkx_button_off(const CatJkx *x, const CatPlBoard *b, CatButton *out);
+/* depois de todo download: plugins.ini + DpFileList de cada jogo conforme o estado */
+void jkx_apply(JkxLog log);
+/* arruma so o DpFileList de uma pasta (JK_PLACAR, VTA, Varzea e os CPKs dos plugins) */
+void jkx_dp_fix(const char *dir, const char *cusa, JkxLog log);
+/* 1 = este arquivo pertence a um plugin desinstalado (o download pula) */
+int  jkx_blocked(const char *path);
+/* "chave@quadro" do botao: liga o estado 1 (antes do download da aba) */
+void jkx_mark_install(const char *keyboard);
+/* "chave@quadro": desinstala (desliga no ini, apaga os arquivos, arruma o DpFileList). 0 = ok */
+int  jkx_uninstall(const char *keyboard, JkxListFn list, JkxLog log, char *msg, int cap);
+
+#endif
