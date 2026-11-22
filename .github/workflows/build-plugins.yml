@@ -1,0 +1,47 @@
+name: build-plugins
+# Compila os plugins GoldHEN do JK PATCHS (pasta plugins/). So roda no "Run workflow".
+# Gera o artifact "jk-plugins" com os .prx prontos para /data/GoldHEN/plugins.
+on:
+  workflow_dispatch:
+jobs:
+  plugins:
+    runs-on: ubuntu-22.04
+    steps:
+      - uses: actions/checkout@v4
+      - name: Dependencias
+        run: sudo apt-get update && sudo apt-get install -y clang lld llvm jq
+      - name: Baixar OpenOrbis Toolchain
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -e
+          curl -fsSL -H "Authorization: Bearer $GH_TOKEN" https://api.github.com/repos/OpenOrbis/OpenOrbis-PS4-Toolchain/releases/latest -o rel.json
+          KIND=tar
+          URL=$(jq -r '[.assets[] | select(.name | test("\\.(tar\\.gz|tgz)$"))][0].browser_download_url // empty' rel.json)
+          if [ -z "$URL" ]; then KIND=zip; URL=$(jq -r '[.assets[] | select(.name | test("\\.zip$"))][0].browser_download_url // empty' rel.json); fi
+          curl -fL "$URL" -o toolchain.bin
+          mkdir -p oo
+          if [ "$KIND" = tar ]; then tar xzf toolchain.bin -C oo; else unzip -q toolchain.bin -d oo; fi
+          TC=$(dirname "$(find oo -name link.x | head -1)")
+          echo "OO_PS4_TOOLCHAIN=$GITHUB_WORKSPACE/$TC" >> "$GITHUB_ENV"
+          chmod -R +x "$TC/bin/linux" || true
+      - name: SDK do GoldHEN
+        run: make -C plugins/goldhen_sdk > sdk.log 2>&1 || { tail -n 40 sdk.log; exit 1; }
+      - name: Plugins
+        run: |
+          set -e
+          mkdir -p saida
+          for P in plugins/jk_*/; do
+            echo "=== $P"
+            make -C "$P" 2>&1 | tee -a plugins.log
+            cp "$P"/*.prx saida/
+          done
+          ls -la saida
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: jk-plugins
+          path: |
+            saida/*.prx
+            sdk.log
+            plugins.log
