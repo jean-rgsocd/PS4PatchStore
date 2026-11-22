@@ -22,11 +22,14 @@ void jkx_button_off(const CatJkx *x, const CatPlBoard *b, CatButton *out);
 void jkx_apply(JkxLog log);
 /* arruma so o DpFileList de uma pasta (JK_PLACAR, VTA, Varzea e os CPKs dos plugins) */
 void jkx_dp_fix(const char *dir, const char *cusa, JkxLog log);
-/* 1 = este arquivo pertence a um plugin desinstalado (o download pula) */
+/* 1 = arquivo de plugin opcional que nao esta instalado pela aba neste jogo (o download dos botoes pula) */
 int  jkx_blocked(const char *path);
 /* "chave@quadro" do botao: liga o estado 1 (antes do download da aba) */
 void jkx_mark_install(const char *keyboard);
 /* "chave@quadro": desinstala (desliga no ini, apaga os arquivos, arruma o DpFileList). 0 = ok */
 int  jkx_uninstall(const char *keyboard, JkxListFn list, JkxLog log, char *msg, int cap);
+
+/* caminhos no console dos arquivos do plugin (para mostrar na tela) */
+int  jkx_paths(const CatJkx *x, const CatPlBoard *b, char (*out)[200], int max);
 
 #endif

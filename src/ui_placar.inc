@@ -62,6 +62,21 @@ static Image *pl_fit(const Image *src, int bw, int bh) {
   return img_scale(src, w, h);
 }
 
+/* v1.43: corta a borda transparente da imagem do placar (a barra ocupa o espaco todo do card) */
+static Image *pl_trim(Image *im) {
+  if (!im) return im;
+  int x0 = im->w, y0 = im->h, x1 = -1, y1 = -1;
+  for (int y = 0; y < im->h; y++)
+    for (int x = 0; x < im->w; x++)
+      if ((im->px[y * im->w + x] >> 24) > 16) { if (x < x0) x0 = x; if (x > x1) x1 = x; if (y < y0) y0 = y; if (y > y1) y1 = y; }
+  if (x1 < 0 || (x0 == 0 && y0 == 0 && x1 == im->w - 1 && y1 == im->h - 1)) return im;
+  Image *o = img_new(x1 - x0 + 1, y1 - y0 + 1);
+  if (!o) return im;
+  for (int y = 0; y < o->h; y++) memcpy(o->px + y * o->w, im->px + (y0 + y) * im->w + x0, (size_t)o->w * 4);
+  img_free(im);
+  return o;
+}
+
 static int pl_file_ok(const char *p) {
   FILE *f = fopen(p, "rb");
   if (!f) return 0;
@@ -88,7 +103,7 @@ static void *pl_worker(void *arg) {
     Image *a, *b;
     if (J->logo[k] == 2) { a = raw; b = NULL; raw = NULL; }
     else if (J->logo[k]) { a = pl_fit(raw, J->lw - 6, J->lw - 6); b = pl_fit(raw, J->elw - 14, J->elw - 14); }
-    else            { a = pl_fit(raw, PL_IW - 10, J->ih - 6);  b = pl_fit(raw, PL_EIW - 16, J->eih - 8); }
+    else            { raw = pl_trim(raw); a = pl_fit(raw, PL_IW - 10, J->ih - 6);  b = pl_fit(raw, PL_EIW - 16, J->eih - 8); }
     if (raw) img_free(raw);
     pthread_mutex_lock(&pl_mu);
     if (plr_gen == J->gen) {
@@ -140,7 +155,7 @@ static void pl_load_images(UI *ui) {
   if (!J) return;
   J->ui = ui; J->gen = gen;
   { int five = pl_ncomp(b) == 5;                                  /* v1.43 */
-    pli_ih = five ? 44 : PL_IH; pli_lw = five ? 44 : PL_LW; pli_eih = five ? 84 : PL_EIH; pli_elw = five ? 84 : PL_ELW;
+    pli_ih = PL_IH; pli_lw = PL_LW; pli_eih = five ? 84 : PL_EIH; pli_elw = five ? 84 : PL_ELW;   /* card do combo: sempre 4 linhas (barra grande) */
     J->ih = pli_ih; J->lw = pli_lw; J->eih = pli_eih; J->elw = pli_elw; }
   for (int i = 0; i < b->nopt; i++) {                            /* primeiro as imagens dos placares, depois os logos */
     ui->pl_oi[i] = pl_url_add(ui, J, b->opt[i].img, 0);
@@ -301,6 +316,25 @@ static void jk_scan(UI *ui) {
     for (int n = 0; n < ui->jk_n; n++) {
       int in = b ? jkx_installed(&ui->cat->jkx[ui->jk_art[n]], b) : 0;
       ui->jk_inst[n] = in; ui->jk_b[n][1] = in ? 0 : -1;
+      ui->jx_path[n][0] = 0;
+      if (b) {                                                   /* pastas para onde vai: "GoldHEN/plugins + PCC59" */
+        static char ps[8][200];
+        int np = jkx_paths(&ui->cat->jkx[ui->jk_art[n]], b, ps, 8);
+        if (np > 0) {
+          char t[200] = "";
+          size_t L = 0;
+          for (int k = 0; k < np; k++) {
+            char *sl = strrchr(ps[k], '/'); if (sl) *sl = 0;        /* tira o nome do arquivo */
+            const char *q = !strncmp(ps[k], "/data/", 6) ? ps[k] + 6 : ps[k];
+            int dup = 0;
+            for (int j = 0; j < k; j++) { const char *r = !strncmp(ps[j], "/data/", 6) ? ps[j] + 6 : ps[j]; if (!strcmp(r, q)) dup = 1; }
+            if (dup) continue;
+            L += (size_t)snprintf(t + L, sizeof(t) - L, "%s%s", L ? " + " : "", q);
+            if (L >= sizeof(t) - 1) break;
+          }
+          text_fit(ui->fb, 13, t, JK_NCW - 24, ui->jx_path[n], sizeof(ui->jx_path[n]));
+        }
+      }
     }
     jk_fix_btn(ui);
     return;
@@ -494,6 +528,7 @@ static void jk_draw(UI *ui) {
     if (im) pl_blit_center(ui, im, x, y, cw, ch); else jk_placeholder(ui, g, i, x, y, cw, ch);
     if (ui->pl_cat == 3) {                                       /* v1.43 */
       int in = ui->jk_inst[i];
+      if (ui->jx_path[i][0]) text_draw_in(s, ui->fb, 13, x, cw, y + 188, ui->jx_path[i], C_MUTED, 255, 0, 1);
       jx_pill(ui, x + 18, y + 197, 118, 30, "INSTALAR", foc && ui->jk_btn == 0 ? 1 : (in ? 2 : 0), 0);
       jx_pill(ui, x + 144, y + 197, 118, 30, "DESINSTALAR", !in ? -1 : (foc && ui->jk_btn == 1 ? 1 : 0), 1);
     } else if (narr) {
@@ -710,7 +745,7 @@ static void pl_draw_pack(UI *ui, const CatPlBoard *b, int p, int x, int y, int f
   else gfx_rrect(s, x, y, PL_CW, PL_CH, 18, inst ? C_BASE_EDGE : C_EDGE, 255, inst ? 2 : 1);
   gfx_fill(s, x + 24, y + 1, 110, 3, inst ? C_ACCENT : (focused ? C_FOCUS : C_ACCENT), focused || inst ? 255 : 110);   /* risco "neon" do topo */
   unsigned long long tot = 0;
-  int nc = pl_ncomp(b), rs = nc == 5 ? 64 : PL_RS;               /* v1.43 */
+  int nc = 4, rs = PL_RS;                                        /* v1.43: o card do combo mostra so as 4 (a 5a fica no Monte o seu) */
   for (int c = 0; c < nc; c++) {
     int ry = y + PL_PAD + c * rs;
     int oi = pk->opt[c];

@@ -150,6 +150,7 @@ struct UI {
   int jk_ai[CAT_MAX_ART];              /* card do catalogo -> indice da imagem */
   int jx_ai[CAT_MAX_JKX];              /* v1.43: linha JKX -> indice da imagem */
   int jx_arm; unsigned jx_arm_f;       /* v1.43: DESINSTALAR pede 2 toques (item+1 e quadro do 1o toque) */
+  char jx_path[CAT_MAX_ART][56];       /* v1.43: pasta do arquivo principal do plugin (mostrada no card) */
   const CatGame *jk_game;
   /* v1.41: card Duvidas em telas */
   int fq_i, fq_t, fq_pause;

@@ -10,7 +10,7 @@
 
 #define JKX_STATE "/data/jk/plugins.txt"
 #define JKX_INI   "/data/GoldHEN/plugins.ini"
-#define MAXIT     48
+#define MAXIT     12          /* itens por linha JKX. Pequeno de proposito: Item vai na pilha (a thread de download tem 256 KB; v1.43 travava ao desinstalar com 48) */
 
 typedef struct { char id[24], cusa[16], dest[128]; } JBoard;
 
@@ -75,6 +75,7 @@ static void logf_(JkxLog log, const char *a, const char *b) {
 }
 
 /* ------------------------------------------------------------------ catalogo */
+void jkx_migrate(void);
 void jkx_set_root(const char *root) { snprintf(jx_root, sizeof(jx_root), "%s", root ? root : ""); }
 
 void jkx_set_catalog(const Catalog *c) {
@@ -90,6 +91,7 @@ void jkx_set_catalog(const Catalog *c) {
     }
   }
   pthread_mutex_unlock(&jx_mu);
+  jkx_migrate();
 }
 
 static const JBoard *board_by_id(const char *id) {
@@ -183,6 +185,7 @@ int jkx_state(const char *key, const char *cusa) {
   pthread_mutex_unlock(&jx_mu);
   return v;
 }
+static void st_set(const char *key, const char *cusa, int v);
 static void st_set(const char *key, const char *cusa, int v) {
   st_load();
   char k[64]; snprintf(k, sizeof(k), "%s@%s=", key, cusa);
@@ -289,7 +292,7 @@ static int dp_should(const char *dir, const char *cusa, const char *name, int *m
     for (int k = 0; k < n; k++) {
       if (!it[k].afr || it[k].nodp || strcmp(it[k].path, p)) continue;
       *managed = 1;
-      if (st_get(x->key, cusa) == 0) want = 0;
+      if (st_get(x->key, cusa) != 1) want = 0;               /* CPK de plugin: so com o plugin instalado neste jogo */
     }
   }
   if (!strcmp(name, "VTA.cpk") || !strcmp(name, "EstadioVarzea.cpk")) *managed = 1;   /* v1.38 */
@@ -365,8 +368,19 @@ void jkx_dp_fix(const char *dir, const char *cusa, JkxLog log) {
 }
 
 /* ------------------------------------------------------------------ instalado / botoes */
+static int files_ok(const CatJkx *x, const char *cusa, const char *dest) {
+  Item it[MAXIT]; int n = items(x, dest, it, MAXIT);
+  if (n <= 0) return 0;
+  for (int k = 0; k < n; k++) {
+    if (it[k].list) continue;
+    long long sz = fsize(it[k].path);
+    if (sz <= 0 || (it[k].want > 0 && sz != it[k].want)) return 0;
+  }
+  if (x->prx[0] && ini_get(cusa, x->prx) != 1) return 0;
+  return 1;
+}
 static int installed_nolock(const CatJkx *x, const char *cusa, const char *dest) {
-  if (st_get(x->key, cusa) == 0) return 0;
+  if (st_get(x->key, cusa) != 1) return 0;                  /* v1.43: cada jogo tem o seu (Mega/Brasfoot x Demisan) */
   Item it[MAXIT]; int n = items(x, dest, it, MAXIT);
   if (n <= 0) return 0;
   for (int k = 0; k < n; k++) {
@@ -438,33 +452,35 @@ static int used_elsewhere(const char *key, const char *cusa) {
       if (!strcmp(b->cusa, cusa) || !jkx_for_board(x, b->id)) continue;
       char p[200]; snprintf(p, sizeof(p), "%s/DpFileList.bin", b->dest);
       if (fsize(p) <= 0) continue;
-      if (st_get(key, b->cusa) == 0) continue;
-      if (x->prx[0] ? ini_get(b->cusa, x->prx) == 1 : 1) return 1;
+      if (st_get(key, b->cusa) == 1) return 1;
     }
   }
   return 0;
 }
 
-/* ------------------------------------------------------------------ bloqueio no download */
+/* ------------------------------------------------------------------ bloqueio no download
+ * Os botoes do JK-MOD (placar, narracao, ML) ainda trazem os plugins opcionais no catalogo. O app 1.43 so baixa
+ * esses arquivos se o plugin estiver INSTALADO pela aba (estado 1) naquele jogo. Assim os botoes baixam so o obrigatorio. */
 int jkx_blocked(const char *path) {
-  int r = 0;
+  int hit = 0, ok = 0;
   pthread_mutex_lock(&jx_mu);
-  for (int i = 0; i < jx_n && !r; i++) {
+  for (int i = 0; i < jx_n && !ok; i++) {
     const CatJkx *x = &jx_def[i];
-    for (int j = 0; j < jx_nb && !r; j++) {
+    for (int j = 0; j < jx_nb && !ok; j++) {
       const JBoard *b = &jx_b[j];
       if (!jkx_for_board(x, b->id)) continue;
       Item it[MAXIT]; int n = items(x, b->dest, it, MAXIT);
-      for (int k = 0; k < n && !r; k++) {
-        int hit = !strcmp(it[k].path, path) || (it[k].list && !strncmp(path, it[k].dir, strlen(it[k].dir)) && path[strlen(it[k].dir)] == '/');
-        if (!hit) continue;
-        if (st_get(x->key, b->cusa) != 0) continue;
-        if (it[k].afr || !used_elsewhere(x->key, b->cusa)) r = 1;
+      for (int k = 0; k < n; k++) {
+        size_t dl = strlen(it[k].dir);
+        int m = !strcmp(it[k].path, path) || (it[k].list && !strncmp(path, it[k].dir, dl) && path[dl] == '/');
+        if (!m) continue;
+        hit = 1;
+        if (st_get(x->key, b->cusa) == 1) { ok = 1; break; }
       }
     }
   }
   pthread_mutex_unlock(&jx_mu);
-  return r;
+  return hit && !ok;
 }
 
 /* ------------------------------------------------------------------ depois de todo download */
@@ -491,7 +507,8 @@ void jkx_apply(JkxLog log) {
       if (!aplica) continue;
       int st = st_get(x->key, g[k].cusa);
       if (x->prx[0]) {
-        if (st == 0 && ini_get(g[k].cusa, x->prx) == 1) ini_set(g[k].cusa, x->prx, 0, log);
+        /* so carrega no jogo em que foi instalado pela aba (o plugins.ini dos botoes vem com tudo =true) */
+        if ((st != 1 || fsize(x->prx) <= 0) && ini_get(g[k].cusa, x->prx) == 1) ini_set(g[k].cusa, x->prx, 0, log);
         if (st == 1 && fsize(x->prx) > 0 && ini_get(g[k].cusa, x->prx) != 1) ini_set(g[k].cusa, x->prx, 1, log);
       }
       if (st == 0) {                                        /* desinstalado: nada dele fica na pasta AFR */
@@ -550,4 +567,39 @@ int jkx_uninstall(const char *kb, JkxListFn list, JkxLog log, char *msg, int cap
   jkx_apply(log);
   snprintf(msg, (size_t)cap, "%s desinstalado (%d arquivos apagados)%s", name[0] ? name : key, apagados, (other && comum) ? ". O outro jogo continua com ele." : "");
   return 0;
+}
+
+int jkx_paths(const CatJkx *x, const CatPlBoard *b, char (*out)[200], int max) {
+  Item it[MAXIT]; int n = items(x, b->dest, it, MAXIT), m = 0;
+  for (int k = 0; k < n && m < max; k++) {
+    if (it[k].list) snprintf(out[m++], 200, "%s/x", it[k].dir);
+    else snprintf(out[m++], 200, "%s", it[k].path);
+  }
+  return m;
+}
+
+/* ------------------------------------------------------------------ migracao (1a vez no 1.43)
+ * Quem ja tinha os plugins pelos botoes antigos: o que esta ligado no plugins.ini e com os arquivos certos
+ * vira "instalado" (estado 1) naquele jogo. Roda uma vez so (marca "#migrado" no plugins.txt). */
+void jkx_migrate(void) {
+  pthread_mutex_lock(&jx_mu);
+  st_load();
+  if (jx_n <= 0 || jx_nb <= 0 || strstr(st_buf, "#migrado")) { pthread_mutex_unlock(&jx_mu); return; }
+  for (int j = 0; j < jx_nb; j++) {
+    const JBoard *b = &jx_b[j];
+    char p[200]; snprintf(p, sizeof(p), "%s/DpFileList.bin", b->dest);
+    if (fsize(p) <= 0) continue;                              /* jogo sem patch instalado */
+    for (int i = 0; i < jx_n; i++) {
+      const CatJkx *x = &jx_def[i];
+      if (!jkx_for_board(x, b->id) || st_get(x->key, b->cusa) != -1) continue;
+      if (files_ok(x, b->cusa, b->dest)) st_set(x->key, b->cusa, 1);
+    }
+  }
+  size_t L = strlen(st_buf);
+  if (L + 12 < sizeof(st_buf)) {
+    snprintf(st_buf + L, sizeof(st_buf) - L, "#migrado\n");
+    { char d[300]; P("/data/jk", d, sizeof(d)); mkdir(d, 0777); }
+    writef(JKX_STATE, st_buf, (long long)strlen(st_buf));
+  }
+  pthread_mutex_unlock(&jx_mu);
 }
