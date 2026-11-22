@@ -473,6 +473,8 @@ static int used_elsewhere(const char *key, const char *cusa) {
  * esses arquivos se o plugin estiver INSTALADO pela aba (estado 1) naquele jogo. Assim os botoes baixam so o obrigatorio. */
 int jkx_blocked(const char *path) {
   int hit = 0, ok = 0;   /* ok fica 0: ver abaixo */
+  { const char *nm = strrchr(path, '/'); nm = nm ? nm + 1 : path;
+    if (!strncmp(nm, "JK_PLACAR_", 10)) return 0; }        /* v1.46: placar do Monte o seu (ex.: JK_PLACAR_SULA) sempre baixa, mesmo sendo o padrao de um plugin */
   pthread_mutex_lock(&jx_mu);
   for (int i = 0; i < jx_n && !ok; i++) {
     const CatJkx *x = &jx_def[i];
