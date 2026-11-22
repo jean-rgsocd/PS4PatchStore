@@ -1,8 +1,10 @@
 name: build-plugins
 # Compila os plugins GoldHEN do JK PATCHS (pasta plugins/). So roda no "Run workflow".
-# Gera o artifact "jk-plugins" com os .prx prontos para /data/GoldHEN/plugins.
+# Publica os .prx numa Release "plugins-N" (nao usa a cota de artifacts).
 on:
   workflow_dispatch:
+permissions:
+  contents: write
 jobs:
   plugins:
     runs-on: ubuntu-22.04
@@ -36,12 +38,11 @@ jobs:
             make -C "$P" 2>&1 | tee -a plugins.log
             cp "$P"/*.prx saida/
           done
+          cp sdk.log plugins.log saida/
           ls -la saida
-      - uses: actions/upload-artifact@v4
-        if: always()
-        with:
-          name: jk-plugins
-          path: |
-            saida/*.prx
-            sdk.log
-            plugins.log
+      - name: Publicar na Release
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          TAG="plugins-${{ github.run_number }}"
+          gh release create "$TAG" saida/* --title "Plugins JK ($TAG)" --notes "jk_sonda e outros plugins GoldHEN" --prerelease
