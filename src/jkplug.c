@@ -491,8 +491,79 @@ int jkx_blocked(const char *path) {
   return hit && !ok;
 }
 
+/* ------------------------------------------------------------------ v1.43d: cards FIXOS */
+int jkx_fixed(const CatJkx *x) { return x && !strcmp(x->files, "FIXO"); }
+
+/* k-esima alternativa do prx ("a|b|c"). 0 = acabou */
+static int prx_alt(const char *prx, int k, char *out, int cap) {
+  const char *s = prx;
+  for (int i = 0; i < k && s; i++) { s = strchr(s, '|'); if (s) s++; }
+  if (!s || !*s) return 0;
+  int n = 0;
+  while (s[n] && s[n] != '|' && n + 1 < cap) { out[n] = s[n]; n++; }
+  out[n] = 0;
+  return n > 0;
+}
+int jkx_fixed_on(const CatJkx *x, const CatPlBoard *b) {
+  if (!jkx_fixed(x) || !b) return 0;
+  int on = 0; char a[128];
+  pthread_mutex_lock(&jx_mu);
+  for (int k = 0; !on && prx_alt(x->prx, k, a, sizeof(a)); k++) if (fsize(a) > 0 && ini_get(b->cusa, a) == 1) on = 1;
+  pthread_mutex_unlock(&jx_mu);
+  return on;
+}
+
+static char jx_got[8][128];
+static int jx_ngot = 0;
+void jkx_note_download(const char *path) {
+  if (!path) return;
+  pthread_mutex_lock(&jx_mu);
+  for (int i = 0; i < jx_n && jx_ngot < 8; i++) {
+    if (!jkx_fixed(&jx_def[i])) continue;
+    char a[128]; int hit = 0;                               /* so o 1o prx liga sozinho (os outros sao versoes antigas: gol fora) */
+    if (prx_alt(jx_def[i].prx, 0, a, sizeof(a)) && !strcmp(a, path)) hit = 1;
+    if (hit) { snprintf(jx_got[jx_ngot++], sizeof(jx_got[0]), "%s", path); break; }
+  }
+  pthread_mutex_unlock(&jx_mu);
+}
+static int has_alt(const CatJkx *x, const char *p) {
+  char a[128];
+  for (int k = 0; prx_alt(x->prx, k, a, sizeof(a)); k++) if (!strcmp(a, p)) return 1;
+  return 0;
+}
+/* sem trava: quem chama segura jx_mu */
+static void fixed_apply(JkxLog log) {
+  for (int g = 0; g < jx_ngot; g++) {
+    const char *p = jx_got[g];
+    if (fsize(p) <= 0) continue;
+    for (int i = 0; i < jx_n; i++) {
+      const CatJkx *x = &jx_def[i];
+      if (!jkx_fixed(x) || !has_alt(x, p)) continue;
+      for (int j = 0; j < jx_nb; j++) {
+        if (!jkx_for_board(x, jx_b[j].id)) continue;
+        const char *cusa = jx_b[j].cusa;
+        if (ini_get(cusa, p) != 1) ini_set(cusa, p, 1, log);
+        for (int o = 0; o < jx_n; o++) {                   /* mesma chave, outro patch do mesmo jogo: desliga o prx dele */
+          const CatJkx *y = &jx_def[o];
+          if (o == i || !jkx_fixed(y) || strcmp(y->key, x->key)) continue;
+          int same = 0;
+          for (int t = 0; t < jx_nb; t++) if (!strcmp(jx_b[t].cusa, cusa) && jkx_for_board(y, jx_b[t].id)) same = 1;
+          if (!same) continue;
+          char a[128];
+          for (int k = 0; prx_alt(y->prx, k, a, sizeof(a)); k++)
+            if (strcmp(a, p) && !has_alt(x, a) && ini_get(cusa, a) == 1) ini_set(cusa, a, 0, log);
+        }
+      }
+    }
+  }
+  jx_ngot = 0;
+}
+
 /* ------------------------------------------------------------------ depois de todo download */
 void jkx_apply(JkxLog log) {
+  pthread_mutex_lock(&jx_mu);
+  fixed_apply(log);
+  pthread_mutex_unlock(&jx_mu);
   /* jogos: os quadros do catalogo + os 2 conhecidos (catalogo antigo sem PLB) */
   JBoard g[CAT_MAX_PLB + 2]; int ng = 0;
   pthread_mutex_lock(&jx_mu);
@@ -512,7 +583,7 @@ void jkx_apply(JkxLog log) {
       const CatJkx *x = &jx_def[i];
       int aplica = 0;
       for (int j = 0; j < jx_nb; j++) if (!strcmp(jx_b[j].dest, g[k].dest) && jkx_for_board(x, jx_b[j].id)) aplica = 1;
-      if (!aplica) continue;
+      if (!aplica || jkx_fixed(x)) continue;
       int st = st_get(x->key, g[k].cusa);
       if (x->prx[0]) {
         /* so carrega no jogo em que foi instalado pela aba (o plugins.ini dos botoes vem com tudo =true) */

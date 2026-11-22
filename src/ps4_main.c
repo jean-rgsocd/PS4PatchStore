@@ -703,6 +703,7 @@ static void *install_thread(void *arg) {
         } else if (!err[0]) snprintf(err, sizeof(err), "Falha ao baixar o arquivo.");
       } else {
         install_log(path);
+        jkx_note_download(path);                       /* v1.43d: prx de card FIXO (financas vivas): o fixup liga o deste patch */
         snprintf(lastname, sizeof(lastname), "%s", filename);
       }
     }

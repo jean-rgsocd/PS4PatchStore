@@ -236,6 +236,21 @@ static int jk_grid(UI *ui) { return ui->pl_cat == 1 || ui->pl_cat == 3; }       
 #define JK_MGX   14
 #define JK_MGY   12
 #define C_CYAN   RGB(0x78, 0xdc, 0xff)
+/* v1.43d: aba PLUGINS: cards mais altos (titulo / arquivo / pasta) em 7 colunas, 2 linhas visiveis com rolagem */
+#define JX_CW    256
+#define JX_CH    300
+#define JX_COLS  7
+#define JX_GX    12
+#define JX_GY    12
+#define JX_ROWS  2
+static void jk_dims(UI *ui, int *cols, int *cw, int *ch, int *gx, int *gy) {
+  int narr = jk_grid(ui), px = ui->pl_cat == 3;
+  *cols = px ? JX_COLS : narr ? JK_NCOLS : JK_MCOLS;
+  *cw = px ? JX_CW : narr ? JK_NCW : JK_MCW;
+  *ch = px ? JX_CH : narr ? JK_NCH : JK_MCH;
+  *gx = px ? JX_GX : narr ? JK_NGX : JK_MGX;
+  *gy = px ? JX_GY : narr ? JK_NGY : JK_MGY;
+}
 
 static const CatGame *jk_find_game(UI *ui) {
   const CatPlBoard *b = pl_board_cur(ui);
@@ -255,7 +270,7 @@ static void jk_fix_btn(UI *ui) {
 }
 
 static void jk_build(UI *ui) {
-  ui->jk_n = 0; ui->jk_scanned = 0; ui->jx_arm = 0;
+  ui->jk_n = 0; ui->jk_scanned = 0; ui->jx_arm = 0; ui->jx_top = 0;
   ui->jk_game = jk_find_game(ui);
   const CatGame *g = ui->jk_game;
   if (ui->pl_cat == 3) {                                         /* v1.43: plugins do quadro (uma card por chave) */
@@ -314,9 +329,21 @@ static void jk_scan(UI *ui) {
   if (ui->pl_cat == 3) {                                         /* v1.43 */
     const CatPlBoard *b = pl_board_cur(ui);
     for (int n = 0; n < ui->jk_n; n++) {
-      int in = b ? jkx_installed(&ui->cat->jkx[ui->jk_art[n]], b) : 0;
+      const CatJkx *xx = &ui->cat->jkx[ui->jk_art[n]];
+      ui->jx_path[n][0] = 0; ui->jx_file[n][0] = 0;
+      if (jkx_fixed(xx)) {                                       /* v1.43d: card FIXO (vem com o placar) */
+        ui->jk_inst[n] = b ? jkx_fixed_on(xx, b) : 0; ui->jk_b[n][1] = -1;
+        char f[64]; int k = 0;
+        const char *s0 = xx->prx, *e0 = strchr(s0, '|'); if (!e0) e0 = s0 + strlen(s0);
+        const char *nm = s0; for (const char *q = s0; q < e0; q++) if (*q == '/') nm = q + 1;
+        while (nm < e0 && k < 63) f[k++] = *nm++;
+        f[k] = 0;
+        text_fit(ui->fb, 15, f, JX_CW - 20, ui->jx_file[n], sizeof(ui->jx_file[n]));
+        text_fit(ui->fb, 13, "GoldHEN/plugins", JX_CW - 20, ui->jx_path[n], sizeof(ui->jx_path[n]));
+        continue;
+      }
+      int in = b ? jkx_installed(xx, b) : 0;
       ui->jk_inst[n] = in; ui->jk_b[n][1] = in ? 0 : -1;
-      ui->jx_path[n][0] = 0;
       if (b) {                                                   /* pastas para onde vai: "GoldHEN/plugins + PCC59" */
         static char ps[8][200];
         int np = jkx_paths(&ui->cat->jkx[ui->jk_art[n]], b, ps, 8);
@@ -332,7 +359,23 @@ static void jk_scan(UI *ui) {
             L += (size_t)snprintf(t + L, sizeof(t) - L, "%s%s", L ? " + " : "", q);
             if (L >= sizeof(t) - 1) break;
           }
-          text_fit(ui->fb, 13, t, JK_NCW - 24, ui->jx_path[n], sizeof(ui->jx_path[n]));
+          text_fit(ui->fb, 13, t, JX_CW - 20, ui->jx_path[n], sizeof(ui->jx_path[n]));
+          /* nome do arquivo principal: os .prx e .cpk do plugin (os outros sao de apoio) */
+          char f[200] = ""; size_t F = 0; int lista = 0;
+          np = jkx_paths(xx, b, ps, 8);                          /* de novo: o laco acima cortou o nome */
+          for (int k = 0; k < np; k++) {
+            const char *nm = strrchr(ps[k], '/'); nm = nm ? nm + 1 : ps[k];
+            size_t L2 = strlen(nm);
+            if (!strcmp(nm, "x")) { lista = 1; continue; }
+            char ex[5] = ""; for (int e = 0; L2 > 4 && e < 4; e++) { char c = nm[L2 - 4 + e]; ex[e] = (c >= 'A' && c <= 'Z') ? (char)(c + 32) : c; }
+            int main_ = !strcmp(ex, ".prx") || !strcmp(ex, ".cpk");
+            if (!main_) continue;
+            F += (size_t)snprintf(f + F, sizeof(f) - F, "%s%s", F ? " + " : "", nm);
+            if (F >= sizeof(f) - 1) break;
+          }
+          if (lista && F < sizeof(f) - 12) F += (size_t)snprintf(f + F, sizeof(f) - F, "%s", F ? " + hinos" : "hinos");
+          if (!F && np > 0) { const char *nm = strrchr(ps[0], '/'); snprintf(f, sizeof(f), "%s", nm ? nm + 1 : ps[0]); }
+          text_fit(ui->fb, 15, f, JX_CW - 20, ui->jx_file[n], sizeof(ui->jx_file[n]));
         }
       }
     }
@@ -358,6 +401,10 @@ static void jkx_go(UI *ui) {                                     /* v1.43: X na 
   if (!b || ui->jk_n <= 0) return;
   int sel = ui->jk_sel;
   const CatJkx *x = &ui->cat->jkx[ui->jk_art[sel]];
+  if (jkx_fixed(x)) {                                            /* v1.43d */
+    ui_toast(ui, ui->jk_inst[sel] ? "Vem junto com o placar e já está ativado." : "Vem junto com o placar: baixe um placar na aba PLACARES.", UI_TOAST_INFO);
+    return;
+  }
   if (ui->busy) { ui_toast(ui, "Já existe um pedido em andamento. Aguarde.", UI_TOAST_INFO); return; }
   static CatButton cb;
   if (ui->jk_btn == 1) {
@@ -407,18 +454,20 @@ static void jk_install(UI *ui) {
 
 /* posicao do item i na grade (a ultima linha fica centralizada) */
 static void jk_pos(UI *ui, int i, int *px, int *py) {
-  int narr = jk_grid(ui);
-  int cols = narr ? JK_NCOLS : JK_MCOLS, cw = narr ? JK_NCW : JK_MCW, ch = narr ? JK_NCH : JK_MCH;
-  int gx = narr ? JK_NGX : JK_MGX, gy = narr ? JK_NGY : JK_MGY;
+  int cols, cw, ch, gx, gy;
+  jk_dims(ui, &cols, &cw, &ch, &gx, &gy);
   int r = i / cols, c = i % cols, inrow = ui->jk_n - r * cols;
   if (inrow > cols) inrow = cols;
   *px = (W - (inrow * cw + (inrow - 1) * gx)) / 2 + c * (cw + gx);
-  *py = JK_Y0 + r * (ch + gy);
+  *py = JK_Y0 + (r - (ui->pl_cat == 3 ? ui->jx_top : 0)) * (ch + gy);
 }
 
 static void jk_key(UI *ui, int key) {
   int n = ui->jk_n, sel = ui->jk_sel, narr = jk_grid(ui);
-  int cols = narr ? JK_NCOLS : JK_MCOLS, col = sel % cols;
+  int cols, cw_, ch_, gx_, gy_;
+  jk_dims(ui, &cols, &cw_, &ch_, &gx_, &gy_);
+  (void)cw_; (void)ch_; (void)gx_; (void)gy_;
+  int col = sel % cols;
   switch (key) {
     case UI_LEFT:
       if (narr && ui->jk_btn == 1 && n > 0 && ui->jk_b[sel][0] >= 0) { ui->jk_btn = 0; ui->dirty = 1; return; }
@@ -445,7 +494,14 @@ static void jk_key(UI *ui, int key) {
     case UI_SQUARE: trigger_update(ui); return;
     default: return;
   }
-  if (n > 0 && sel >= 0 && sel < n) { ui->jk_sel = sel; jk_fix_btn(ui); ui->dirty = 1; }
+  if (n > 0 && sel >= 0 && sel < n) {
+    ui->jk_sel = sel; jk_fix_btn(ui); ui->dirty = 1;
+    if (ui->pl_cat == 3) {                                       /* v1.43d: rola para a linha do item */
+      int r = sel / cols;
+      if (r < ui->jx_top) ui->jx_top = r;
+      if (r >= ui->jx_top + JX_ROWS) ui->jx_top = r - JX_ROWS + 1;
+    }
+  }
 }
 
 static void jk_tabs(UI *ui) {
@@ -485,12 +541,18 @@ static void jk_pill(UI *ui, int x, int y, int w, int h, const char *txt, int st)
 /* v1.43: botoes do card de plugin. st: -1 apagado, 0 normal, 1 em foco, 2 instalado. red = DESINSTALAR */
 static void jx_pill(UI *ui, int x, int y, int w, int h, const char *txt, int st, int red) {
   Image *s = ui->s;
-  if (st < 0) { jk_pill(ui, x, y, w, h, txt, -1); return; }
+  if (st < 0) {
+    gfx_rrect(s, x, y, w, h, 8, RGB(0x10, 0x18, 0x26), 255, 0);
+    gfx_rrect(s, x, y, w, h, 8, C_EDGE, 255, 1);
+    text_draw_in(s, ui->fb, w < 118 ? 12 : 14, x, w, y + h / 2 + 4, txt, C_MUTED, 90, 0, 1);
+    return;
+  }
   uint32_t bg = st == 1 ? (red ? C_ERR : C_FOCUS) : st == 2 ? C_BASE : red ? RGB(0x46, 0x14, 0x1c) : RGB(0x0c, 0x1e, 0x34);
   gfx_rrect(s, x, y, w, h, 8, bg, 255, 0);
   if (st == 2) gfx_rrect(s, x, y, w, h, 8, C_BASE_EDGE, 255, 2);
   else if (st == 0) gfx_rrect(s, x, y, w, h, 8, red ? RGB(0xe6, 0x5a, 0x64) : C_CYAN, 255, 1);
-  text_draw_in(s, ui->fb, 14, x, w, y + h / 2 + 5, st == 2 ? "\xE2\x9C\x93 INSTALADO" : txt, st == 1 ? C_BG : C_TEXT, 255, 0, 1);
+  int fs = w < 118 ? 12 : 14;                                    /* v1.43d: card de 256 px */
+  text_draw_in(s, ui->fb, fs, x, w, y + h / 2 + (fs == 12 ? 4 : 5), st == 2 ? "\xE2\x9C\x93 INSTALADO" : txt, st == 1 ? C_BG : C_TEXT, 255, 0, 1);
 }
 
 static void jk_placeholder(UI *ui, const CatGame *g, int n, int x, int y, int w, int h) {
@@ -519,18 +581,31 @@ static void jk_draw(UI *ui) {
     text_draw_in(s, ui->fb, 30, 0, W, 560, ui->pl_cat == 1 ? "Nenhum narrador para este patch." : ui->pl_cat == 3 ? "Nenhum plugin para este patch." : "Nenhuma Master League para este patch.", C_MUTED, 255, 0, 1);
     return;
   }
-  int narr = jk_grid(ui), cw = narr ? JK_NCW : JK_MCW, ch = narr ? JK_NCH : JK_MCH;
+  int narr = jk_grid(ui), cols_, cw, ch, gx_, gy_;
+  jk_dims(ui, &cols_, &cw, &ch, &gx_, &gy_);
+  (void)cols_; (void)gx_; (void)gy_;
   for (int i = 0; i < ui->jk_n; i++) {
     int x, y, foc = i == ui->jk_sel;
     jk_pos(ui, i, &x, &y);
+    if (ui->pl_cat == 3 && (y < JK_Y0 || y + ch > 1000)) continue;   /* v1.43d: fora da janela (rolagem) */
     int ai = ui->pl_cat == 3 ? ui->jx_ai[ui->jk_art[i]] : ui->jk_ai[ui->jk_art[i]];
     Image *im = ai >= 0 ? ui->pl_im[ai][0] : NULL;
     if (im) pl_blit_center(ui, im, x, y, cw, ch); else jk_placeholder(ui, g, i, x, y, cw, ch);
     if (ui->pl_cat == 3) {                                       /* v1.43 */
       int in = ui->jk_inst[i];
-      if (ui->jx_path[i][0]) text_draw_in(s, ui->fb, 13, x, cw, y + 188, ui->jx_path[i], C_MUTED, 255, 0, 1);
-      jx_pill(ui, x + 18, y + 197, 118, 30, "INSTALAR", foc && ui->jk_btn == 0 ? 1 : (in ? 2 : 0), 0);
-      jx_pill(ui, x + 144, y + 197, 118, 30, "DESINSTALAR", !in ? -1 : (foc && ui->jk_btn == 1 ? 1 : 0), 1);
+      if (ui->jx_file[i][0]) text_draw_in(s, ui->fb, 15, x, cw, y + 206, ui->jx_file[i], C_TEXT, 230, 0, 1);
+      if (ui->jx_path[i][0]) text_draw_in(s, ui->fb, 13, x, cw, y + 226, ui->jx_path[i], C_CYAN, 210, 0, 1);
+      if (jkx_fixed(&ui->cat->jkx[ui->jk_art[i]])) {             /* v1.43d: vem com o placar */
+        if (in) {
+          gfx_rrect(s, x + 16, y + 246, cw - 32, 34, 8, foc ? C_FOCUS : C_BASE, 255, 0);
+          gfx_rrect(s, x + 16, y + 246, cw - 32, 34, 8, C_BASE_EDGE, 255, 2);
+          text_draw_in(s, ui->fb, 15, x + 16, cw - 32, y + 269, "\xE2\x9C\x93 ATIVADO", foc ? C_BG : C_TEXT, 255, 0, 1);
+        } else jk_pill(ui, x + 16, y + 246, cw - 32, 34, "VEM COM O PLACAR", foc ? 0 : -1);
+      } else {
+        int pw = (cw - 40) / 2;
+        jx_pill(ui, x + 14, y + 246, pw, 34, "INSTALAR", foc && ui->jk_btn == 0 ? 1 : (in ? 2 : 0), 0);
+        jx_pill(ui, x + 26 + pw, y + 246, pw, 34, "DESINSTALAR", !in ? -1 : (foc && ui->jk_btn == 1 ? 1 : 0), 1);
+      }
     } else if (narr) {
       static const char *lab[2] = { "ORIGINAL", "ESTRANGEIRA" };
       for (int k = 0; k < 2; k++) {
@@ -542,6 +617,11 @@ static void jk_draw(UI *ui) {
       text_draw_in(s, ui->fb, 15, x + cw - 92, 78, y + 31, "ATIVO", C_TEXT, 255, 1, 1);
     }
     if (foc) pl_glow(s, x, y, cw, ch, 14, C_FOCUS);
+  }
+  if (ui->pl_cat == 3) {                                         /* v1.43d: tem mais cards acima/abaixo */
+    int rows = (ui->jk_n + JX_COLS - 1) / JX_COLS;
+    if (ui->jx_top + JX_ROWS < rows) text_draw_in(s, ui->fb, 18, 0, W, 994, "\xE2\x96\xBC  mais plugins  \xE2\x96\xBC", C_MUTED, 255, 0, 1);
+    else if (ui->jx_top > 0) text_draw_in(s, ui->fb, 18, 0, W, 994, "\xE2\x96\xB2  mais plugins acima  \xE2\x96\xB2", C_MUTED, 255, 0, 1);
   }
 }
 

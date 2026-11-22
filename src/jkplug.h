@@ -29,6 +29,13 @@ void jkx_mark_install(const char *keyboard);
 /* "chave@quadro": desinstala (desliga no ini, apaga os arquivos, arruma o DpFileList). 0 = ok */
 int  jkx_uninstall(const char *keyboard, JkxListFn list, JkxLog log, char *msg, int cap);
 
+/* v1.43d: card FIXO (vem com o placar, sem instalar/desinstalar). Linha JKX com arquivos = "FIXO" e prx = "a.prx|b.prx" */
+int  jkx_fixed(const CatJkx *x);
+int  jkx_fixed_on(const CatJkx *x, const CatPlBoard *b);   /* 1 = algum prx do card esta no console e ligado no plugins.ini */
+/* o download gravou este arquivo: se for o prx de um card FIXO, o proximo jkx_apply liga ele e desliga a versao do outro patch
+ * do mesmo jogo (ex.: pes21_fin_vivas_mega x pes21_fin_vivas no CUSA18676) */
+void jkx_note_download(const char *path);
+
 /* caminhos no console dos arquivos do plugin (para mostrar na tela) */
 int  jkx_paths(const CatJkx *x, const CatPlBoard *b, char (*out)[200], int max);
 
