@@ -128,6 +128,12 @@ static void url_name(const char *u, char *out, int cap) {
     out[k++] = bad ? '_' : (char)ch;
   }
   out[k] = 0;
+  const char *qa = strstr(u, "?as=");                      /* v1.43: "?as=NOME" (mesmo nome que o download usa) */
+  if (qa) {
+    qa += 4; k = 0;
+    while (*qa && *qa != '?' && k + 1 < cap) out[k++] = *qa++;
+    out[k] = 0;
+  }
 }
 
 static int items(const CatJkx *x, const char *dest, Item *it, int max) {

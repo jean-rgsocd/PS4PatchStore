@@ -640,6 +640,22 @@ static void *install_thread(void *arg) {
         filename[k++] = bad ? '_' : (char)ch;
       }
       filename[k] = 0;
+      {                                                /* v1.43: "?as=NOME" = grava com outro nome (o mesmo arquivo do R2 serve para varios patches) */
+        char *qa = strstr(it_url[u], "?as=");
+        if (qa) {
+          char *e = qa + 4; size_t j = 0;
+          char nm[180];
+          while (*e && *e != '?' && j + 1 < sizeof(nm)) {
+            unsigned char ch = (unsigned char)*e++;
+            if (ch == '%' && e[0] && e[1]) { char hx[3] = { e[0], e[1], 0 }; char *en = NULL; long v = strtol(hx, &en, 16); if (en && *en == 0) { ch = (unsigned char)v; e += 2; } }
+            int bad = (ch < 32 || ch == '/' || ch == '\\' || ch == ':' || ch == '*' || ch == '"' || ch == '<' || ch == '>' || ch == '|');
+            nm[j++] = bad ? '_' : (char)ch;
+          }
+          nm[j] = 0;
+          memmove(qa, e, strlen(e) + 1);               /* tira o "?as=..." da URL (fica o "?once" se tiver) */
+          if (nm[0] && strcmp(nm, ".") && strcmp(nm, "..")) snprintf(filename, sizeof(filename), "%s", nm);
+        }
+      }
       if (!filename[0] || !strcmp(filename, ".") || !strcmp(filename, "..")) snprintf(filename, sizeof(filename), "arquivo_download.bin");
       snprintf(path, sizeof(path), "%s/%s", it_dir[u], filename);
       if (jkx_blocked(path)) {                         /* v1.43: plugin opcional nao instalado pela aba: os botoes so baixam o obrigatorio */
