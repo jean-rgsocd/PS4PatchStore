@@ -529,7 +529,7 @@ void jkx_note_download(const char *path) {
   if (!path) return;
   pthread_mutex_lock(&jx_mu);
   for (int i = 0; i < jx_n && jx_ngot < 8; i++) {
-    if (!jkx_fixed(&jx_def[i])) continue;
+    if (strcmp(jx_def[i].files, "FIXO")) continue;          /* v1.43e: so Financas Vivas/Gol Fora; o resto respeita o plugins.ini do R2 */
     char a[128]; int hit = 0;                               /* so o 1o prx liga sozinho (os outros sao versoes antigas: gol fora) */
     if (prx_alt(jx_def[i].prx, 0, a, sizeof(a)) && !strcmp(a, path)) hit = 1;
     if (hit) { snprintf(jx_got[jx_ngot++], sizeof(jx_got[0]), "%s", path); break; }
@@ -548,14 +548,14 @@ static void fixed_apply(JkxLog log) {
     if (fsize(p) <= 0) continue;
     for (int i = 0; i < jx_n; i++) {
       const CatJkx *x = &jx_def[i];
-      if (!jkx_fixed(x) || !has_alt(x, p)) continue;
+      if (strcmp(x->files, "FIXO") || !has_alt(x, p)) continue;
       for (int j = 0; j < jx_nb; j++) {
         if (!jkx_for_board(x, jx_b[j].id)) continue;
         const char *cusa = jx_b[j].cusa;
         if (ini_get(cusa, p) != 1) ini_set(cusa, p, 1, log);
         for (int o = 0; o < jx_n; o++) {                   /* mesma chave, outro patch do mesmo jogo: desliga o prx dele */
           const CatJkx *y = &jx_def[o];
-          if (o == i || !jkx_fixed(y) || strcmp(y->key, x->key)) continue;
+          if (o == i || strcmp(y->files, "FIXO") || strcmp(y->key, x->key)) continue;
           int same = 0;
           for (int t = 0; t < jx_nb; t++) if (!strcmp(jx_b[t].cusa, cusa) && jkx_for_board(y, jx_b[t].id)) same = 1;
           if (!same) continue;
