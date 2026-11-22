@@ -291,16 +291,17 @@ static int dp_should(const char *dir, const char *cusa, const char *name, int *m
   char p[400]; snprintf(p, sizeof(p), "%s/%s", dir, name);
   long long sz = fsize(p);
   *managed = 0;
-  int want = 1;
+  int want = 1, alguem = 0;
   for (int i = 0; i < jx_n; i++) {
     const CatJkx *x = &jx_def[i];
     Item it[MAXIT]; int n = items(x, dir, it, MAXIT);
     for (int k = 0; k < n; k++) {
       if (!it[k].afr || it[k].nodp || strcmp(it[k].path, p)) continue;
       *managed = 1;
-      if (!jkx_fixed(x) && st_get(x->key, cusa) != 1) want = 0;   /* v1.43e: FIXO vale se o arquivo existir */               /* CPK de plugin: so com o plugin instalado neste jogo */
+      if (jkx_fixed(x) || st_get(x->key, cusa) == 1) alguem = 1;   /* v1.45: o CPK fica se QUALQUER plugin que usa ele estiver instalado (ex.: placares da Sula) */
     }
   }
+  if (*managed && !alguem) want = 0;
   if (!strcmp(name, "VTA.cpk") || !strcmp(name, "EstadioVarzea.cpk")) *managed = 1;   /* v1.38 */
   /* v1.43c: CPKs antigos do JK-MOD que o DpFileList dos botoes cita: sem o arquivo, sai da lista (nao precisa mais do "fake" de 8 KB) */
   static const char *OLD[] = { "JKPlacar.cpk", "JKPlacar2.cpk", "CazeTV.cpk", "JKNarrador.cpk", "JKML.cpk", "CPK CLIENTES.cpk", "CPK ML.cpk", NULL };
@@ -572,6 +573,17 @@ static void fixed_apply(JkxLog log) {
 }
 
 /* ------------------------------------------------------------------ depois de todo download */
+/* v1.45: outro plugin instalado usa o mesmo arquivo da pasta AFR? (sem trava: quem chama segura jx_mu) */
+static int afr_em_uso(const char *path, const char *dest, const char *cusa) {
+  for (int i = 0; i < jx_n; i++) {
+    const CatJkx *x = &jx_def[i];
+    if (!jkx_fixed(x) && st_get(x->key, cusa) != 1) continue;
+    Item it[MAXIT]; int n = items(x, dest, it, MAXIT);
+    for (int k = 0; k < n; k++) if (it[k].afr && !strcmp(it[k].path, path)) return 1;
+  }
+  return 0;
+}
+
 void jkx_apply(JkxLog log) {
   pthread_mutex_lock(&jx_mu);
   fixed_apply(log);
@@ -604,7 +616,7 @@ void jkx_apply(JkxLog log) {
       }
       if (st == 0) {                                        /* desinstalado: nada dele fica na pasta AFR */
         Item it[MAXIT]; int n = items(x, g[k].dest, it, MAXIT);
-        for (int t = 0; t < n; t++) if (it[t].afr && fsize(it[t].path) >= 0 && rm(it[t].path) == 0) logf_(log, "Plugins: apagado ", it[t].path);
+        for (int t = 0; t < n; t++) if (it[t].afr && fsize(it[t].path) >= 0 && !afr_em_uso(it[t].path, g[k].dest, g[k].cusa) && rm(it[t].path) == 0) logf_(log, "Plugins: apagado ", it[t].path);
       }
     }
     pthread_mutex_unlock(&jx_mu);

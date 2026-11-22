@@ -25,8 +25,8 @@
 #define C_DEEP  RGB(0x0b, 0x12, 0x22)
 #define C_EDGE  RGB(0x22, 0x30, 0x4b)
 
-static const char *PL_COMP[5] = { "BRASILEIRÃO SÉRIE A", "BRASILEIRÃO SÉRIE B", "COPA DO BRASIL", "LIBERTADORES", "MUNDIAL / COPAS" };
-static const char *PL_FILE[5] = { "A", "B", "CDB", "LIB", "MUN" };
+static const char *PL_COMP[6] = { "BRASILEIRÃO SÉRIE A", "BRASILEIRÃO SÉRIE B", "COPA DO BRASIL", "LIBERTADORES", "MUNDIAL / COPAS", "SUL-AMERICANA" };
+static const char *PL_FILE[6] = { "A", "B", "CDB", "LIB", "MUN", "SULA" };
 /* v1.43: tamanhos das imagens (menores quando o quadro tem a 5a linha) */
 static int pli_ih = PL_IH, pli_lw = PL_LW, pli_eih = PL_EIH, pli_elw = PL_ELW;
 
@@ -40,9 +40,10 @@ static const CatPlBoard *pl_board_cur(UI *ui) {
 }
 static int pl_ncards(const CatPlBoard *b) { return b ? b->npack + (b->monte ? 1 : 0) : 0; }
 /* v1.43: 4 competicoes, ou 5 se o catalogo tiver placares MUN para o quadro */
-static int pl_ncomp(const CatPlBoard *b) {
-  if (b) for (int i = 0; i < b->nopt; i++) if (b->opt[i].comp == 4) return 5;
-  return 4;
+static int pl_ncomp(const CatPlBoard *b) {                       /* v1.45: ate a ultima competicao com placar (4, 5 ou 6) */
+  int n = 4;
+  if (b) for (int i = 0; i < b->nopt; i++) if (b->opt[i].comp + 1 > n) n = b->opt[i].comp + 1;
+  return n;
 }
 
 /* ---- imagens (baixadas em segundo plano, guardadas na mesma pasta das capas) */
@@ -154,8 +155,8 @@ static void pl_load_images(UI *ui) {
   PlJobs *J = (PlJobs *)calloc(1, sizeof(PlJobs));
   if (!J) return;
   J->ui = ui; J->gen = gen;
-  { int five = pl_ncomp(b) == 5;                                  /* v1.43 */
-    pli_ih = PL_IH; pli_lw = PL_LW; pli_eih = five ? 84 : PL_EIH; pli_elw = five ? 84 : PL_ELW;   /* card do combo: sempre 4 linhas (barra grande) */
+  { int nc_ = pl_ncomp(b), five = nc_ >= 5;                      /* v1.43; v1.45: 6 linhas */
+    pli_ih = PL_IH; pli_lw = PL_LW; pli_eih = nc_ >= 6 ? 70 : five ? 84 : PL_EIH; pli_elw = nc_ >= 6 ? 70 : five ? 84 : PL_ELW;   /* card do combo: sempre 4 linhas (barra grande) */
     J->ih = pli_ih; J->lw = pli_lw; J->eih = pli_eih; J->elw = pli_elw; }
   for (int i = 0; i < b->nopt; i++) {                            /* primeiro as imagens dos placares, depois os logos */
     ui->pl_oi[i] = pl_url_add(ui, J, b->opt[i].img, 0);
@@ -210,7 +211,7 @@ static void pl_scan(UI *ui) {
 }
 static int pl_pack_installed(UI *ui, const CatPlPack *p) {
   for (int c = 0; c < 4; c++) if (ui->pl_inst[c] != p->opt[c]) return 0;
-  if (p->opt[4] >= 0 && ui->pl_inst[4] != p->opt[4]) return 0;   /* v1.43 */
+  for (int c = 4; c < CAT_PL_COMPS; c++) if (p->opt[c] >= 0 && ui->pl_inst[c] != p->opt[c]) return 0;   /* v1.43 */
   return 1;
 }
 
@@ -712,8 +713,8 @@ static void pl_install(UI *ui, const int *opt, const char *what) {
   cb.size = b->opt[opt[0]].size;
   size_t L = 0;
   for (int c = 1; c < 4; c++) L += (size_t)snprintf(cb.extra + L, sizeof(cb.extra) - L, "%s%s", L ? "|" : "", b->opt[opt[c]].url);
-  if (opt[4] >= 0 && opt[4] < b->nopt && b->opt[opt[4]].url[0])  /* v1.43: 5o placar (opcional) */
-    L += (size_t)snprintf(cb.extra + L, sizeof(cb.extra) - L, "|%s", b->opt[opt[4]].url);
+  for (int c = 4; c < CAT_PL_COMPS; c++)                         /* v1.43: 5o placar (opcional); v1.45: 6o (Sula) */
+    if (opt[c] >= 0 && opt[c] < b->nopt && b->opt[opt[c]].url[0]) L += (size_t)snprintf(cb.extra + L, sizeof(cb.extra) - L, "|%s", b->opt[opt[c]].url);
   if (b->extra[0] && L + 1 + strlen(b->extra) < sizeof(cb.extra)) snprintf(cb.extra + L, sizeof(cb.extra) - L, "|%s", b->extra);
   ui_toast(ui, "Baixando os placares para o PS4...", UI_TOAST_INFO);
   ui->busy = 1;
@@ -731,7 +732,7 @@ static void pl_ed_open(UI *ui) {
     if (p < 0) for (int i = 0; i < b->nopt; i++) if (b->opt[i].comp == c) { p = i; break; }
     ui->pl_pick[c] = p;
   }
-  ui->pl_pick[4] = ui->pl_inst[4];                              /* v1.43: -1 = nao troca */
+  for (int c = 4; c < CAT_PL_COMPS; c++) ui->pl_pick[c] = ui->pl_inst[c];   /* v1.43: -1 = nao troca */
   ui->pl_ed = 1; ui->pl_row = 0; ui->dirty = 1;
 }
 
@@ -740,7 +741,7 @@ static void pl_cycle(UI *ui, int c, int dir) {
   const CatPlBoard *b = pl_board_cur(ui);
   if (!b) return;
   int idx[CAT_MAX_PLO + 1], n = 0, at = 0;
-  if (c == 4) idx[n++] = -1;                                    /* v1.43: "NAO TROCAR" */
+  if (c >= 4) idx[n++] = -1;                                    /* v1.43: "NAO TROCAR" (Mundial e Sula) */
   for (int i = 0; i < b->nopt; i++) if (b->opt[i].comp == c) { if (i == ui->pl_pick[c]) at = n; idx[n++] = i; }
   if (n <= 0) return;
   at = (at + dir + n) % n;
@@ -899,12 +900,12 @@ static void pl_draw_monte(UI *ui, const CatPlBoard *b, int x, int y, int focused
   gfx_fill(s, ix + 60, iy + 39, 4, 15, C_BG, 255);
   T(ui, 1, 34, x + 22, y + 58, "MONTE O SEU", C_FOCUS, 255, 2);
   T(ui, 0, 18, x + 22, y + 90, "Escolha 1 placar para cada competição", C_MUTED, 255, 0);
-  int ncp = pl_ncomp(b), sp = ncp == 5 ? 46 : 56, rh = ncp == 5 ? 40 : 46;   /* v1.43 */
+  int ncp = pl_ncomp(b), sp = ncp >= 6 ? 38 : ncp == 5 ? 46 : 56, rh = ncp >= 6 ? 33 : ncp == 5 ? 40 : 46;   /* v1.43; v1.45: 6 */
   for (int c = 0; c < ncp; c++) {
     int ry = y + 106 + c * sp;                                   /* v1.40: card mais baixo */
     gfx_rrect(s, x + PL_PAD, ry, PL_CW - 2 * PL_PAD, rh, 10, C_DEEP, 255, 0);
     gfx_fill(s, x + PL_PAD, ry + 8, 4, rh - 16, C_ACCENT, 255);
-    T(ui, 1, 18, x + PL_PAD + 18, ry + rh / 2 + 7, PL_COMP[c], C_TEXT, 255, 1);
+    T(ui, 1, ncp >= 6 ? 16 : 18, x + PL_PAD + 18, ry + rh / 2 + (ncp >= 6 ? 6 : 7), PL_COMP[c], C_TEXT, 255, 1);
     char n[24];
     snprintf(n, sizeof(n), "%d opções", pl_count(b, c));
     int w = TW(ui, 1, 17, n, 0);
@@ -975,26 +976,26 @@ static void pl_draw_editor(UI *ui, const CatPlBoard *b) {
   { int w = TW(ui, 1, 20, b->title, 2) + 40; gfx_rrect(s, px + pw - 40 - w, py + 34, w, 40, 12, C_ACCENT, 255, 0);
     text_draw_in(s, ui->fb, 20, px + pw - 40 - w, w, py + 61, b->title, C_DARKTXT, 255, 2, 1); }
   unsigned long long tot = 0;
-  int nc = pl_ncomp(b), five = nc == 5;                          /* v1.43 */
+  int nc = pl_ncomp(b), five = nc >= 5, six = nc >= 6;           /* v1.43; v1.45: 6 linhas */
   for (int c = 0; c < nc; c++) {
-    int ry = py + 124 + c * (five ? 120 : 148), rx = px + 40, rw = pw - 80, rh = five ? 108 : 134;
+    int ry = py + 124 + c * (six ? 102 : five ? 120 : 148), rx = px + 40, rw = pw - 80, rh = six ? 94 : five ? 108 : 134;
     int foc = ui->pl_row == c;
     gfx_rrect(s, rx, ry, rw, rh, 16, foc ? C_PANEL2 : C_DEEP, 255, 0);
     if (foc) pl_glow(s, rx, ry, rw, rh, 16, C_FOCUS); else gfx_rrect(s, rx, ry, rw, rh, 16, C_EDGE, 255, 1);
     int oi = ui->pl_pick[c];
     const CatPlOpt *o = (oi >= 0 && oi < b->nopt) ? &b->opt[oi] : NULL;
     if (o) tot += o->size;
-    T(ui, 1, 21, rx + 28, ry + 46, PL_COMP[c], C_TEXT, 255, 1);
+    T(ui, 1, 21, rx + 28, ry + (six ? 36 : 46), PL_COMP[c], C_TEXT, 255, 1);
     if (o) {
       char nm[64]; text_fit(ui->fb, 24, o->name, 300, nm, sizeof(nm));
-      T(ui, 1, 24, rx + 28, ry + (five ? 72 : 84), nm, C_ACCENT, 255, 0);
+      T(ui, 1, six ? 22 : 24, rx + 28, ry + (six ? 64 : five ? 72 : 84), nm, C_ACCENT, 255, 0);
       int at = 0, n = 0;
       for (int i = 0; i < b->nopt; i++) if (b->opt[i].comp == c) { if (i == oi) at = n; n++; }
       char pos[24]; snprintf(pos, sizeof(pos), "%d de %d", at + 1, n);
-      T(ui, 0, 18, rx + 28, ry + (five ? 98 : 116), pos, C_MUTED, 255, 0);
-    } else if (c == 4) {
-      T(ui, 1, 24, rx + 28, ry + 72, "NÃO TROCAR", C_MUTED, 255, 0);
-      T(ui, 0, 18, rx + 28, ry + 98, "fica o que já está", C_MUTED, 200, 0);
+      T(ui, 0, 18, rx + 28, ry + (six ? 86 : five ? 98 : 116), pos, C_MUTED, 255, 0);
+    } else if (c >= 4) {
+      T(ui, 1, six ? 22 : 24, rx + 28, ry + (six ? 64 : 72), "NÃO TROCAR", C_MUTED, 255, 0);
+      T(ui, 0, 18, rx + 28, ry + (six ? 86 : 98), c == 5 ? "precisa do plugin da Sula" : "fica o que já está", C_MUTED, 200, 0);
     }
     uint32_t ac = foc ? C_FOCUS : C_MUTED;
     text_draw_in(s, ui->fb, 34, rx + 330, 40, ry + rh / 2 + 12, "\xE2\x97\x80", ac, foc ? 255 : 120, 0, 1);
