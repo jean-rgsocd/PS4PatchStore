@@ -468,7 +468,7 @@ static int used_elsewhere(const char *key, const char *cusa) {
  * Os botoes do JK-MOD (placar, narracao, ML) ainda trazem os plugins opcionais no catalogo. O app 1.43 so baixa
  * esses arquivos se o plugin estiver INSTALADO pela aba (estado 1) naquele jogo. Assim os botoes baixam so o obrigatorio. */
 int jkx_blocked(const char *path) {
-  int hit = 0, ok = 0;
+  int hit = 0, ok = 0;   /* ok fica 0: ver abaixo */
   pthread_mutex_lock(&jx_mu);
   for (int i = 0; i < jx_n && !ok; i++) {
     const CatJkx *x = &jx_def[i];
@@ -480,8 +480,7 @@ int jkx_blocked(const char *path) {
         size_t dl = strlen(it[k].dir);
         int m = !strcmp(it[k].path, path) || (it[k].list && !strncmp(path, it[k].dir, dl) && path[dl] == '/');
         if (!m) continue;
-        hit = 1;
-        if (st_get(x->key, b->cusa) == 1) { ok = 1; break; }
+        hit = 1;                                            /* v1.43b: botao normal nunca baixa plugin (so a aba Plugins) */
       }
     }
   }

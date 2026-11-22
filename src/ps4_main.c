@@ -658,7 +658,7 @@ static void *install_thread(void *arg) {
       }
       if (!filename[0] || !strcmp(filename, ".") || !strcmp(filename, "..")) snprintf(filename, sizeof(filename), "arquivo_download.bin");
       snprintf(path, sizeof(path), "%s/%s", it_dir[u], filename);
-      if (jkx_blocked(path)) {                         /* v1.43: plugin opcional nao instalado pela aba: os botoes so baixam o obrigatorio */
+      if (strcmp(j->btn.content_id, "JKX") && jkx_blocked(path)) {   /* v1.43: plugin opcional: so a aba Plugins baixa (placar/narracao/ML baixam so o obrigatorio) */
         char lmb[700]; snprintf(lmb, sizeof(lmb), "Item %d/%d pulado (plugin opcional, instale pela aba Plugins): %s", u + 1, nit, path);
         install_log(lmb);
         continue;
