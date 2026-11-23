@@ -8,6 +8,9 @@
  * Troca os 2 clubes no jogo marcado (antes da data), no confronto, na lista de inscritos e no nome.
  * Se o clube do usuario entrar, grava o jogo na agenda dele.
  *
+ * v1.09: CORRIGE a Sula parando no playoff: o RB le a contagem de confrontos de cada rodada para
+ *        saber o que sortear; os "a definir" faziam ele achar que tudo estava sorteado. Agora a rodada
+ *        seguinte a uma fase terminada fica vazia para o RB sortear.
  * v1.08: chaveamento da Sula com 5 colunas (playoff, oitavas, quartas, semi, final): eboot 0xd6908b.
  *        Desligar: sem_oitavas.txt.
  * v1.07: Eliminatorias da Sula ABREM (testado no console): correcao do chaveamento (v1.06) +
@@ -61,7 +64,7 @@
 attr_public const char *g_pluginName = "jk_supercopas";
 attr_public const char *g_pluginDesc = "JK PATCHS - Supercopa Rei e Recopa na Master League";
 attr_public const char *g_pluginAuth = "JK PATCHS";
-attr_public uint32_t g_pluginVersion = 0x00000110;
+attr_public uint32_t g_pluginVersion = 0x00000111;
 
 int jk_qmp(void *addr, void **start, void **end, int *prot) __asm__("sceKernelQueryMemoryProtection");
 
@@ -575,6 +578,37 @@ static int vagas_do_codigo(int cod)
     switch (cod) { case 0xbc: case 0xc0: return 8; case 0xcc: return 4; case 0xd0: return 2; case 0xd4: return 1; }
     return 0;
 }
+/* rodada so com confrontos "a definir" (times e jogos vazios): e nossa, pode esvaziar */
+static int rodada_a_definir(uint64_t r)
+{
+    int n = *(volatile uint8_t *)(r + 0x204);
+    if (n <= 0 || n > 16) return 0;
+    for (int t = 0; t < n; t++) {
+        uint64_t c = r + 4 + t * 0x20;
+        if (U32(c) != 0xffffffff || U32(c + 4) != 0xffffffff || U32(c + 8) != 0xffffffff) return 0;
+    }
+    return 1;
+}
+/* todos os jogos da rodada ja foram disputados (byte 5 do jogo, bit 0x40) */
+static int rodada_terminada(uint64_t db, uint64_t r)
+{
+    int n = *(volatile uint8_t *)(r + 0x204);
+    if (n <= 0 || n > 16) return 0;
+    for (int t = 0; t < n; t++) {
+        uint64_t c = r + 4 + t * 0x20;
+        if (U32(c) == 0xffffffff || U32(c + 4) == 0xffffffff) return 0;   /* ainda "a definir" */
+        uint32_t jj = U32(c + 8);
+        for (int l = 0; l < 2; l++) {
+            uint32_t id = l ? (jj >> 16) : (jj & 0xffff);
+            if (id == 0xffff) continue;
+            if (id >= JOGOS_MAX) return 0;
+            uint64_t g = db + DB_JOGOS + (uint64_t)id * JOGO_STRIDE;
+            if (U16(g) != id || !(*(volatile uint8_t *)(g + 5) & 0x40)) return 0;
+        }
+        if ((jj & 0xffff) == 0xffff && (jj >> 16) == 0xffff) return 0;
+    }
+    return 1;
+}
 static void chaves_sula(uint64_t db)
 {
     static int conta = 0;
@@ -599,6 +633,12 @@ static void chaves_sula(uint64_t db)
         logf_("FASE_SULA comp=%u chave=0x%x tipo 2 -> 3 (desfeito o ajuste da v1.05)", i, U16(cp));
     }
     if (!g_com_chaves) return;
+    /* v1.09: o plugin do RB descobre qual fase sortear pelo numero de confrontos de cada rodada
+     * (rb.prx 0x8448: contagem > 0 = fase ja publicada). Com "a definir" em todas, ele achava que
+     * tudo ja estava publicado e parava no playoff. Agora:
+     *   - a rodada seguinte a uma fase JA TERMINADA fica vazia (o RB ve 0 e sorteia ela);
+     *   - so as rodadas depois da fase em andamento recebem "a definir" (o RB nao olha para elas
+     *     enquanto a fase atual nao termina, e quando termina a gente esvazia a proxima). */
     for (uint32_t i = 0; i < n; i++) {
         uint64_t cp = db + DB_COMP_TAB + (uint64_t)i * COMP_STRIDE;
         if (U32(cp + 0xf4) != SULA_REGRA || U32(cp + 0xf8) != 3) continue;
@@ -608,19 +648,35 @@ static void chaves_sula(uint64_t db)
         uint64_t r0 = db + DB_CONFRONTOS + (uint64_t)rod[0] * RODADA_STRIDE;
         if (*(volatile uint8_t *)(r0 + 0x204) == 0) continue;      /* playoff ainda nao publicado */
         for (int k = 1; k < nr; k++) {
-            if (rod[k] > 0x2000) break;
+            if (rod[k] > 0x2000 || rod[k - 1] > 0x2000) break;
             uint64_t r = db + DB_CONFRONTOS + (uint64_t)rod[k] * RODADA_STRIDE;
+            uint64_t ra = db + DB_CONFRONTOS + (uint64_t)rod[k - 1] * RODADA_STRIDE;
             volatile uint8_t *cnt = (volatile uint8_t *)(r + 0x204);
             int cod = *(volatile uint8_t *)(r + 0x207);
-            if (*cnt != 0) continue;                                 /* ja publicada (pelo RB ou por nos) */
             int vagas = vagas_do_codigo(cod), fase = cod >> 2;
             if (!vagas) continue;
+            int anterior_terminou = rodada_terminada(db, ra);
+            if (*cnt != 0) {
+                /* "a definir" nosso numa rodada que o RB precisa sortear agora: esvazia */
+                if (anterior_terminou && rodada_a_definir(r)) {
+                    for (int t = 0; t < 16; t++) {
+                        uint64_t c = r + 4 + t * 0x20;
+                        U32(c + 0x00) = 0xffffffff; U32(c + 0x04) = 0xffffffff; U32(c + 0x08) = 0xffffffff;
+                        U32(c + 0x0c) = 0x07f7ffff; U32(c + 0x10) = 0x07f7ffff; U32(c + 0x14) = 0x07f7ffff;
+                        U32(c + 0x18) = 0x07f7ffff; U32(c + 0x1c) = 0x07f7ffff;
+                    }
+                    *cnt = 0;
+                    logf_("CHAVES_SULA comp=%u rodada=0x%x liberada: a fase anterior terminou, o RB sorteia esta", i, rod[k]);
+                }
+                continue;
+            }
+            if (anterior_terminou) continue;                          /* vazia de proposito: e a vez do RB */
             int livre = 1;
             for (int t = 0; t < 16; t++) if (U32(r + 4 + t * 0x20) != 0xffffffff || U32(r + 8 + t * 0x20) != 0xffffffff) livre = 0;
             if (!livre) continue;
             uint32_t chave = U32(r);
             int prox = (k + 1 < nr) ? (*(volatile uint8_t *)(db + DB_CONFRONTOS + (uint64_t)rod[k + 1] * RODADA_STRIDE + 0x207) >> 2) : -1;
-            int ant = (k - 1 >= 1) ? (*(volatile uint8_t *)(db + DB_CONFRONTOS + (uint64_t)rod[k - 1] * RODADA_STRIDE + 0x207) >> 2) : -1;
+            int ant = (k - 1 >= 1) ? (*(volatile uint8_t *)(ra + 0x207) >> 2) : -1;
             for (int t = 0; t < vagas; t++) {
                 uint64_t c = r + 4 + t * 0x20;
                 U32(c + 0x00) = 0xffffffff;  U32(c + 0x04) = 0xffffffff;  U32(c + 0x08) = 0xffffffff;
@@ -807,7 +863,7 @@ static void *trabalho(void *arg)
     struct proc_info pi; memset(&pi, 0, sizeof pi);
     if (sys_sdk_proc_info(&pi) != 0) { logf_("ERRO proc_info"); return 0; }
     g_base = pi.base_address;
-    logf_("JK_SUPERCOPAS v1.08 titulo=%s versao=%s", pi.titleid, pi.version);
+    logf_("JK_SUPERCOPAS v1.09 titulo=%s versao=%s", pi.titleid, pi.version);
     if (strncmp(pi.titleid, "CUSA18676", 9) != 0) { logf_("titulo diferente: parado"); return 0; }
 
     uint64_t ultimo = 0;
