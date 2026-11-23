@@ -8,6 +8,8 @@
  * Troca os 2 clubes no jogo marcado (antes da data), no confronto, na lista de inscritos e no nome.
  * Se o clube do usuario entrar, grava o jogo na agenda dele.
  *
+ * v1.06: corrige a tela de chaveamento no proprio jogo (eboot 0xd69053, 5 bytes, conferidos antes)
+ *        e desfaz o ajuste de tipo da v1.05. Desligar: sem_chaveamento.txt.
  * v1.05: CAUSA da queda nas Eliminatorias da Sula (queda.log, eboot 0xd694c0): a primeira fase (0xe)
  *        era tipo 3 e vinha antes do mata-mata na tabela. Ela vira tipo 2 enquanto o mata-mata tem
  *        confrontos. Chaves "a definir" desligadas (com_chaves.txt liga). Desligar tudo: sem_fase.txt.
@@ -55,7 +57,7 @@
 attr_public const char *g_pluginName = "jk_supercopas";
 attr_public const char *g_pluginDesc = "JK PATCHS - Supercopa Rei e Recopa na Master League";
 attr_public const char *g_pluginAuth = "JK PATCHS";
-attr_public uint32_t g_pluginVersion = 0x0000010d;
+attr_public uint32_t g_pluginVersion = 0x0000010e;
 
 int jk_qmp(void *addr, void **start, void **end, int *prot) __asm__("sceKernelQueryMemoryProtection");
 
@@ -584,46 +586,13 @@ static void chaves_sula(uint64_t db)
     if (g_sem_chaves) return;
     uint32_t n = U32(db + DB_COMP_N);
     if (n > 400) return;
-    /* CAUSA DA QUEDA (queda.log: eboot 0xd694c0, leitura em ponteiro nulo).
-     * A tela de chaveamento (eboot 0xd68fc0) pega o mata-mata da copa por dois caminhos:
-     *   0x1b15f80 -> a PRIMEIRA competicao tipo 3 da regra, na ordem da tabela;
-     *   0x1b23370 -> a fase ATUAL (a primeira ainda nao terminada).
-     * Se nao forem a mesma, ela segue com ponteiro nulo e o jogo cai.
-     * Na Libertadores a unica tipo 3 da familia e o mata-mata (0xa). Na Sula do RB existem duas:
-     * a primeira fase (0xe, posicao 199) vem antes do mata-mata (0xd, posicao 209), entao com o
-     * mata-mata em andamento os dois caminhos discordam.
-     * Correcao: enquanto o mata-mata tem confrontos publicados, a primeira fase (ja encerrada) fica
-     * marcada como tipo 2 (fase sem jogos proprios, como a fase-mae dos grupos). Quando o mata-mata
-     * fica vazio (nova temporada), ela volta a tipo 3. */
-    {
-        uint64_t mata = 0; int mais = -1;
-        for (uint32_t i = 0; i < n; i++) {
-            uint64_t cp = db + DB_COMP_TAB + (uint64_t)i * COMP_STRIDE;
-            if (U32(cp + 0xf4) != SULA_REGRA) continue;
-            uint32_t t = U32(cp + 0xf8);
-            if (t != 3 && !(t == 2 && U32(cp + 0xfc) != 0xffffffff)) continue;
-            int nr = 0; while (nr < 8 && U32(cp + 0xfc + 4 * nr) != 0xffffffff) nr++;
-            if (nr > mais) { mais = nr; mata = cp; }
-        }
-        int publicado = 0;
-        if (mata && mais >= 2) {
-            uint32_t r0 = U32(mata + 0xfc);
-            if (r0 < 0x2000) publicado = *(volatile uint8_t *)(db + DB_CONFRONTOS + (uint64_t)r0 * RODADA_STRIDE + 0x204) != 0;
-        }
-        for (uint32_t i = 0; mata && i < n; i++) {
-            uint64_t cp = db + DB_COMP_TAB + (uint64_t)i * COMP_STRIDE;
-            if (cp == mata || U32(cp + 0xf4) != SULA_REGRA) continue;
-            if (U32(cp + 0xfc) == 0xffffffff) continue;              /* so fases com rodadas proprias (a primeira fase) */
-            uint32_t t = U32(cp + 0xf8), quer = publicado && cp < mata ? 2 : 3;
-            if (t != 2 && t != 3) continue;
-            if (t == 2 && U32(cp + 0xfc) == 0xffffffff) continue;
-            if (t != quer) {
-                U32(cp + 0xf8) = quer;
-                logf_("FASE_SULA comp=%u chave=0x%x tipo %u -> %u (%s); mata-mata = chave 0x%x",
-                      i, U16(cp), t, quer, quer == 2 ? "primeira fase encerrada, chaveamento do mata-mata liberado" : "primeira fase de volta",
-                      U16(mata));
-            }
-        }
+    /* v1.05 marcava a primeira fase da Sula (0xe) como tipo 2; isso fez o jogo cair de outro jeito.
+     * Aqui ela volta a tipo 3 (o original do RB), caso o save tenha ficado com a marca. */
+    for (uint32_t i = 0; i < n; i++) {
+        uint64_t cp = db + DB_COMP_TAB + (uint64_t)i * COMP_STRIDE;
+        if (U32(cp + 0xf4) != SULA_REGRA || U32(cp + 0xf8) != 2 || U32(cp + 0xfc) == 0xffffffff) continue;
+        U32(cp + 0xf8) = 3;
+        logf_("FASE_SULA comp=%u chave=0x%x tipo 2 -> 3 (desfeito o ajuste da v1.05)", i, U16(cp));
     }
     if (!g_com_chaves) return;
     for (uint32_t i = 0; i < n; i++) {
@@ -730,6 +699,48 @@ static void instalar_queda(void)
     logf_("QUEDA registro instalado sinais=%d/5 fd=%d", ok, g_queda_fd);
 }
 
+/* ---- chaveamento (v1.06) ----
+ * queda.log da v1.04c: o jogo cai em eboot 0xd694c0 (funcao da tela de chaveamento, 0xd68fc0).
+ * Ela pega "o mata-mata" da copa por dois caminhos e compara:
+ *   lista[0] = primeira competicao tipo 3 da regra (0x1b15f80)  -> na Sula: a primeira fase (0xe)
+ *   ax       = fase atual da copa (0x1b23370)                     -> na Sula: as eliminatorias (0xd)
+ *   0xd69053: 66 3b 01   cmp (%rcx),%ax
+ *   0xd69056: 75 10      jne -> r14 = NULL  (e depois le r14 -> queda)
+ * Correcao: usar sempre a fase atual -> grava ax em lista[0] e segue:
+ *   0xd69053: 66 89 01   mov %ax,(%rcx)
+ *   0xd69056: 90 90      nop nop
+ * Na Libertadores e nas outras copas os dois ja sao iguais: nada muda para elas. */
+#define RVA_CHAVE_CMP 0xd69053ULL
+static int ler_eboot(uint64_t src, void *dest, uint64_t n)
+{
+    struct proc_rw rw;
+    memset(&rw, 0, sizeof rw);
+    rw.address = src; rw.data = dest; rw.length = n; rw.write_flags = 0;
+    return sys_sdk_proc_rw(&rw) == 0;
+}
+static void corrigir_chaveamento(void)
+{
+    static const uint8_t original[5] = {0x66, 0x3b, 0x01, 0x75, 0x10};
+    static const uint8_t novo[5]     = {0x66, 0x89, 0x01, 0x90, 0x90};
+    if (existe(PASTA "/sem_chaveamento.txt")) { logf_("CHAVEAMENTO desligado (sem_chaveamento.txt)"); return; }
+    uint64_t a = g_base + RVA_CHAVE_CMP;
+    uint8_t b[5] = {0};
+    if (!ler_eboot(a, b, 5)) { logf_("CHAVEAMENTO recusado=leitura"); return; }
+    if (memcmp(b, novo, 5) == 0) { logf_("CHAVEAMENTO ja corrigido"); return; }
+    if (memcmp(b, original, 5) != 0) {
+        logf_("CHAVEAMENTO recusado=bytes_diferentes (%02x %02x %02x %02x %02x)", b[0], b[1], b[2], b[3], b[4]);
+        return;
+    }
+    struct proc_rw rw;
+    memset(&rw, 0, sizeof rw);
+    rw.address = a; rw.data = (void *)novo; rw.length = 5; rw.write_flags = 1;
+    if (sys_sdk_proc_rw(&rw) != 0) { logf_("CHAVEAMENTO recusado=gravacao"); return; }
+    memset(b, 0, 5);
+    int ok = ler_eboot(a, b, 5) && memcmp(b, novo, 5) == 0;
+    logf_("CHAVEAMENTO %s rva=0x%llx (%02x %02x %02x %02x %02x)", ok ? "ok" : "conferencia_falhou",
+          (unsigned long long)RVA_CHAVE_CMP, b[0], b[1], b[2], b[3], b[4]);
+}
+
 static campeoes_t g_camp;
 static int g_camp_ano = 0, g_camp_ok = 0;
 
@@ -782,7 +793,7 @@ static void *trabalho(void *arg)
     struct proc_info pi; memset(&pi, 0, sizeof pi);
     if (sys_sdk_proc_info(&pi) != 0) { logf_("ERRO proc_info"); return 0; }
     g_base = pi.base_address;
-    logf_("JK_SUPERCOPAS v1.05 titulo=%s versao=%s", pi.titleid, pi.version);
+    logf_("JK_SUPERCOPAS v1.06 titulo=%s versao=%s", pi.titleid, pi.version);
     if (strncmp(pi.titleid, "CUSA18676", 9) != 0) { logf_("titulo diferente: parado"); return 0; }
 
     uint64_t ultimo = 0;
@@ -792,7 +803,7 @@ static void *trabalho(void *arg)
         if (!db) { if (ultimo) { g_copas[0].feito_ano = g_copas[1].feito_ano = 0; g_camp_ano = 0; ultimo = 0; } continue; }
         ultimo = db;
         static int tentou_gancho = 0, espera = 0;
-        if (!tentou_gancho && ++espera >= 3) { instalar_queda(); tentou_gancho = 1; logf_("GANCHO_LISTA passo=inicio"); instalar_lista(); }
+        if (!tentou_gancho && ++espera >= 3) { instalar_queda(); corrigir_chaveamento(); tentou_gancho = 1; logf_("GANCHO_LISTA passo=inicio"); instalar_lista(); }
         ciclo(db);
     }
     return 0;
