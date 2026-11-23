@@ -1,5 +1,5 @@
 /*
- * JK CRAQUE v1.00 - PES 2021 (Mega/Brasfoot CUSA18676 01.08 e Demisan CUSA22062)
+ * JK CRAQUE v1.01 - PES 2021 (Mega/Brasfoot CUSA18676 01.08 e Demisan CUSA22062)
  *
  * "Craque do Jogo": a cerimonia de melhor da partida (JK_CRAQUE.cpk) tem dois visuais no mesmo CPK:
  *   - Craque Betano  (Brasileirao, Copa do Brasil e o resto): pastas OP-04_POTM1_TROPHY, OP-04_BOARD_POTM1, OP-04_BOARD_1
@@ -11,6 +11,8 @@
  *
  * Config (opcional): /data/jk/craque.txt   linha  lib=5   (ids separados por virgula que usam o visual 2)
  * Desligar: /data/jk/craque_off.txt
+ * v1.01: na hora da cena de fim de jogo a competicao ja volta a 0; o plugin guarda a ultima competicao
+ *        diferente de 0 vista durante a partida (amostra a cada 0,2 s) e usa essa.
  * Log: /data/jk/craque.log  (caminhos das pastas OP-04 pedidos, competicao e se trocou)
  */
 #include <stdint.h>
@@ -27,7 +29,7 @@
 attr_public const char *g_pluginName = "jk_craque";
 attr_public const char *g_pluginDesc = "JK PATCHS - Craque do Jogo por competicao";
 attr_public const char *g_pluginAuth = "JK PATCHS";
-attr_public uint32_t g_pluginVersion = 0x00000100;
+attr_public uint32_t g_pluginVersion = 0x00000101;
 
 #define RVA_ARQUIVO   0x1a522e0ULL     /* executa um pedido de arquivo: rdi = pedido, caminho (std::string) em +0x20 */
 #define RVA_COMPET    0x5bff80cULL     /* int: competicao da partida atual (-1 amistoso) */
@@ -37,6 +39,7 @@ static uint64_t g_base;
 static volatile int g_rodando = 1;
 static OrbisPthread g_thr;
 static int g_libs[16] = {5}; static int g_nlibs = 1;
+static volatile int g_comp_partida = 0x7fffffff;   /* ultima competicao != 0 vista */
 
 __attribute__((visibility("hidden"))) uint64_t g_arq_volta;
 static uint64_t jk_arq_orig(uint64_t a, uint64_t b, uint64_t c, uint64_t d, uint64_t e, uint64_t f);
@@ -96,7 +99,9 @@ static uint64_t arquivo_hook(uint64_t a, uint64_t b, uint64_t c, uint64_t d, uin
         uint64_t len = *(volatile uint64_t *)(req + 0x30);
         char *p = cap >= 0x10 ? *(char **)(req + 0x20) : (char *)(req + 0x20);
         if (p && len > 6 && len < 4096 && tem_op04(p, len)) {
-            int comp = *(volatile int32_t *)(g_base + RVA_COMPET);
+            int agora = *(volatile int32_t *)(g_base + RVA_COMPET);
+            if (agora != 0) g_comp_partida = agora;
+            int comp = g_comp_partida;
             int lib = eh_lib(comp);
             int t = ajustar(p, len, lib);
             if (t) g_trocas++;
@@ -168,17 +173,20 @@ static void *trabalho(void *arg)
     struct proc_info pi; memset(&pi, 0, sizeof pi);
     if (sys_sdk_proc_info(&pi) != 0) { logf_("ERRO proc_info"); return 0; }
     g_base = pi.base_address;
-    logf_("JK_CRAQUE v1.00 titulo=%s versao=%s", pi.titleid, pi.version);
+    logf_("JK_CRAQUE v1.01 titulo=%s versao=%s", pi.titleid, pi.version);
     if (strncmp(pi.titleid, "CUSA18676", 9) != 0 && strncmp(pi.titleid, "CUSA22062", 9) != 0) { logf_("titulo diferente: parado"); return 0; }
     if (existe(PASTA "/craque_off.txt")) { logf_("DESLIGADO (craque_off.txt): todas as partidas com o Craque Betano"); return 0; }
     ler_config();
     sceKernelUsleep(3000000);              /* deixa o jogo subir antes de gravar no executavel */
     instalar();
-    int comp_ant = 0x7fffffff;
+    int comp_ant = 0x7fffffff, part_ant = 0x7fffffff, tic = 0;
     while (g_rodando) {
-        sceKernelUsleep(1000000);
+        sceKernelUsleep(200000);
         int comp = *(volatile int32_t *)(g_base + RVA_COMPET);
-        if (comp != comp_ant) { logf_("COMPETICAO %d -> visual %s", comp, eh_lib(comp) ? "LIBERTADORES" : "BETANO"); comp_ant = comp; }
+        if (comp != 0) g_comp_partida = comp;
+        if (comp != comp_ant) { logf_("t=%ds COMPETICAO agora=%d", tic / 5, comp); comp_ant = comp; }
+        if (g_comp_partida != part_ant) { part_ant = g_comp_partida; logf_("t=%ds PARTIDA competicao=%d -> visual %s", tic / 5, part_ant, eh_lib(part_ant) ? "LIBERTADORES" : "BETANO"); }
+        tic++;
         while (g_anel_lido != g_anel_pos) {
             if (g_anel_pos - g_anel_lido > ANEL) g_anel_lido = g_anel_pos - ANEL;
             uint32_t k = g_anel_lido % ANEL;
