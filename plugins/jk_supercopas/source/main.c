@@ -8,6 +8,7 @@
  * Troca os 2 clubes no jogo marcado (antes da data), no confronto, na lista de inscritos e no nome.
  * Se o clube do usuario entrar, grava o jogo na agenda dele.
  *
+ * v1.16: roda tambem no Demisan (CUSA22062).
  * v1.15: aba Eliminatorias: liga o bit 0x100 (+0x378) do mata-mata da Sula, que o jogo le no menu.
  * v1.14: aba Eliminatorias apagada no mata-mata: o "a definir" nao aponta mais para rodada ja sorteada pelo RB.
  * v1.13: a aba (categoria) so muda depois que o jogo da copa existe no calendario: numa ML nova a Recopa
@@ -73,7 +74,7 @@
 attr_public const char *g_pluginName = "jk_supercopas";
 attr_public const char *g_pluginDesc = "JK PATCHS - Supercopa Rei e Recopa na Master League";
 attr_public const char *g_pluginAuth = "JK PATCHS";
-attr_public uint32_t g_pluginVersion = 0x00000117;
+attr_public uint32_t g_pluginVersion = 0x00000118;
 
 int jk_qmp(void *addr, void **start, void **end, int *prot) __asm__("sceKernelQueryMemoryProtection");
 
@@ -970,8 +971,11 @@ static void *trabalho(void *arg)
     struct proc_info pi; memset(&pi, 0, sizeof pi);
     if (sys_sdk_proc_info(&pi) != 0) { logf_("ERRO proc_info"); return 0; }
     g_base = pi.base_address;
-    logf_("JK_SUPERCOPAS v1.15 titulo=%s versao=%s", pi.titleid, pi.version);
-    if (strncmp(pi.titleid, "CUSA18676", 9) != 0) { logf_("titulo diferente: parado"); return 0; }
+    logf_("JK_SUPERCOPAS v1.16 titulo=%s versao=%s", pi.titleid, pi.version);
+    /* v1.16: Demisan (CUSA22062, 01.03) tem o executavel igual ao do Mega nos enderecos que usamos
+     * (conferido com a copia da sonda: funcoes do chaveamento, menu e carreira identicas; os remendos
+     * ainda conferem os bytes antes de gravar). */
+    if (strncmp(pi.titleid, "CUSA18676", 9) != 0 && strncmp(pi.titleid, "CUSA22062", 9) != 0) { logf_("titulo diferente: parado"); return 0; }
 
     uint64_t ultimo = 0;
     while (g_rodando) {
