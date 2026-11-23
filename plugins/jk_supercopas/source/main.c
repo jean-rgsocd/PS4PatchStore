@@ -8,6 +8,8 @@
  * Troca os 2 clubes no jogo marcado (antes da data), no confronto, na lista de inscritos e no nome.
  * Se o clube do usuario entrar, grava o jogo na agenda dele.
  *
+ * v1.04c: Sula - o mata-mata deixa de apontar para a fase de grupos da Libertadores (+0xec);
+ *         chaves "a definir" ligadas de novo. Desligar: sem_chaves.txt.
  * v1.04b: grava /data/jk/super/queda.log quando o jogo cai (endereco, registradores, pilha).
  * v1.04: Sula - as rodadas vazias do mata-mata (oitavas, quartas, semi, final) recebem confrontos
  *        "a definir" como nas copas do jogo; sem isso a tela Eliminatorias caia (CE-34878-0).
@@ -48,7 +50,7 @@
 attr_public const char *g_pluginName = "jk_supercopas";
 attr_public const char *g_pluginDesc = "JK PATCHS - Supercopa Rei e Recopa na Master League";
 attr_public const char *g_pluginAuth = "JK PATCHS";
-attr_public uint32_t g_pluginVersion = 0x0000010a;
+attr_public uint32_t g_pluginVersion = 0x0000010b;
 
 int jk_qmp(void *addr, void **start, void **end, int *prot) __asm__("sceKernelQueryMemoryProtection");
 
@@ -567,8 +569,8 @@ static void chaves_sula(uint64_t db)
     static int conta = 0;
     if (g_sem_chaves < 0 || ++conta >= 15) {
         conta = 0;
-        int s = !existe(PASTA "/com_chaves.txt");             /* v1.04b: desligado por padrao (nao resolveu a queda) */
-        if (s != g_sem_chaves) logf_(s ? "CHAVES_SULA desligado (criar com_chaves.txt para ligar)" : "CHAVES_SULA ligado (com_chaves.txt)");
+        int s = existe(PASTA "/sem_chaves.txt");
+        if (s != g_sem_chaves) logf_(s ? "CHAVES_SULA desligado (sem_chaves.txt)" : "CHAVES_SULA ligado");
         g_sem_chaves = s;
     }
     if (g_sem_chaves) return;
@@ -577,6 +579,21 @@ static void chaves_sula(uint64_t db)
     for (uint32_t i = 0; i < n; i++) {
         uint64_t cp = db + DB_COMP_TAB + (uint64_t)i * COMP_STRIDE;
         if (U32(cp + 0xf4) != SULA_REGRA || U32(cp + 0xf8) != 3) continue;
+        /* ligacao de fase: o RB copiou o mata-mata da Libertadores e a Sula ficou apontando
+         * para a fase de grupos DA LIBERTADORES (+0xec = 9). A tela de chaveamento segue essa
+         * ligacao. Sem fase anterior (0xffff) a Sula fica como a Copa Argentina, que abre normal. */
+        uint16_t ant_comp = U16(cp + 0xec);
+        if (ant_comp != 0xffff) {
+            int outra_regra = 1;
+            for (uint32_t j = 0; j < n; j++) {
+                uint64_t q = db + DB_COMP_TAB + (uint64_t)j * COMP_STRIDE;
+                if (U16(q) == ant_comp) { outra_regra = U32(q + 0xf4) != SULA_REGRA; break; }
+            }
+            if (outra_regra) {
+                U16(cp + 0xec) = 0xffff;
+                logf_("LIGACAO_SULA comp=%u chave=0x%x fase_anterior 0x%x (outra copa) -> nenhuma", i, U16(cp), ant_comp);
+            }
+        }
         uint32_t rod[8]; int nr = 0;
         for (int k = 0; k < 8; k++) { uint32_t r = U32(cp + 0xfc + 4 * k); if (r == 0xffffffff) break; rod[nr++] = r; }
         if (nr < 2 || rod[0] > 0x2000) continue;
@@ -641,8 +658,14 @@ static void queda(int sig, void *info, void *uctx)
             n += txt(b + n, nm[i]); b[n++] = '=';
             n += hexo(b + n, i < 15 ? mc[1 + i] : rsp); b[n++] = (i % 4 == 3) ? '\n' : ' ';
         }
+        n += txt(b + n, "CONTEXTO\n");                          /* bruto: confere a posicao dos registradores no PS4 */
+        for (int i = 0; i < 48; i++) { n += hexo(b + n, ((uint64_t *)uctx)[i]); b[n++] = (i % 4 == 3) ? '\n' : ' '; }
+        if (info) { n += txt(b + n, "INFO\n"); for (int i = 0; i < 8; i++) { n += hexo(b + n, ((uint64_t *)info)[i]); b[n++] = (i % 4 == 3) ? '\n' : ' '; } }
         n += txt(b + n, "PILHA\n");
         sceKernelWrite(g_queda_fd, b, n); n = 0;
+        if (!legivel(rsp & ~7ULL, 8)) {                        /* rsp fora do lugar esperado: tenta os valores do contexto */
+            for (int i = 0; i < 48; i++) { uint64_t v = ((uint64_t *)uctx)[i]; if (v > 0x10000 && legivel(v & ~7ULL, 8) && v == (v & ~7ULL)) { if ((v >> 32) == 0x7 || (v >> 36) == 0) { rsp = v; break; } } }
+        }
         uint64_t *sp = (uint64_t *)(rsp & ~7ULL);
         for (int i = 0; i < 256; i++) {
             if (!legivel((uint64_t)(sp + i), 8)) break;
@@ -724,7 +747,7 @@ static void *trabalho(void *arg)
     struct proc_info pi; memset(&pi, 0, sizeof pi);
     if (sys_sdk_proc_info(&pi) != 0) { logf_("ERRO proc_info"); return 0; }
     g_base = pi.base_address;
-    logf_("JK_SUPERCOPAS v1.04b titulo=%s versao=%s", pi.titleid, pi.version);
+    logf_("JK_SUPERCOPAS v1.04c titulo=%s versao=%s", pi.titleid, pi.version);
     if (strncmp(pi.titleid, "CUSA18676", 9) != 0) { logf_("titulo diferente: parado"); return 0; }
 
     uint64_t ultimo = 0;
