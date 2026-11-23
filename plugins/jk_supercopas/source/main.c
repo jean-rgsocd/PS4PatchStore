@@ -8,6 +8,8 @@
  * Troca os 2 clubes no jogo marcado (antes da data), no confronto, na lista de inscritos e no nome.
  * Se o clube do usuario entrar, grava o jogo na agenda dele.
  *
+ * v1.03b: gancho gravado pelo kernel do GoldHEN (proc_rw), como o do RB; a v1.03 travava ao abrir o jogo.
+ *        Para desligar o gancho: criar /data/jk/super/sem_gancho.txt
  * v1.03: categoria no menu "Categoria de competicao": Supercopa Rei na aba BRASIL e Recopa nos INTERNACIONAIS
  *        (junto da Sul-Americana). A lista de 6 copas de cada liga (onde o plugin do RB encaixa a Sula)
  *        nao recebe as nossas copas, para a Sula nunca perder o lugar. Em dezembro (virada da temporada)
@@ -29,7 +31,6 @@
 #include <string.h>
 #include <orbis/libkernel.h>
 #include "GoldHEN.h"
-#include "Detour.h"
 
 #define attr_public __attribute__((visibility("default")))
 #define attr_module_hidden __attribute__((weak)) __attribute__((visibility("hidden")))
@@ -37,7 +38,7 @@
 attr_public const char *g_pluginName = "jk_supercopas";
 attr_public const char *g_pluginDesc = "JK PATCHS - Supercopa Rei e Recopa na Master League";
 attr_public const char *g_pluginAuth = "JK PATCHS";
-attr_public uint32_t g_pluginVersion = 0x00000103;
+attr_public uint32_t g_pluginVersion = 0x00000104;
 
 int jk_qmp(void *addr, void **start, void **end, int *prot) __asm__("sceKernelQueryMemoryProtection");
 
@@ -235,15 +236,34 @@ static void categoria(uint64_t db, copa_t *cp, int nova)
     }
 }
 
-/* ---------- lista de copas de cada liga: tira as nossas para nao ocupar a vaga da Sula ---------- */
-typedef void *(*lista_liga_t)(void *saida, uint32_t liga);
-static Detour g_det_lista;
+/* ---------- lista de copas de cada liga: tira as nossas para nao ocupar a vaga da Sula ----------
+ * Gancho no inicio da funcao do jogo (eboot+0xfee0f0), escrito pelo kernel do GoldHEN (sys_sdk_proc_rw),
+ * do mesmo jeito que o plugin do RB grava os ganchos dele. Sem mprotect e sem memoria executavel nova:
+ * o comeco original da funcao (17 bytes) fica copiado aqui no proprio plugin (jk_lista_orig). */
+__attribute__((visibility("hidden"))) uint64_t g_lista_volta;   /* eboot+0xfee101 */
+void *jk_lista_orig(void *saida, uint32_t liga);
+__asm__(
+    ".text\n"
+    ".p2align 4\n"
+    ".globl jk_lista_orig\n"
+    ".hidden jk_lista_orig\n"
+    "jk_lista_orig:\n"
+    "  push %rbp\n"
+    "  mov %rsp,%rbp\n"
+    "  push %r15\n"
+    "  push %r14\n"
+    "  push %r13\n"
+    "  push %r12\n"
+    "  push %rbx\n"
+    "  sub $0x78,%rsp\n"
+    "  jmp *g_lista_volta(%rip)\n");
+
 static int g_lista_ok = 0;
 static volatile uint32_t g_lista_tiradas = 0;
 
 static void *lista_liga_hook(void *saida, uint32_t liga)
 {
-    void *r = Detour_Stub(&g_det_lista, lista_liga_t, saida, liga);
+    void *r = jk_lista_orig(saida, liga);
     if (saida && liga != (uint32_t)g_copas[0].regra && liga != (uint32_t)g_copas[1].regra) {
         int32_t *l = (int32_t *)saida + 1;          /* [0] = liga, [1..6] = copas */
         int k = 0, tirou = 0;
@@ -257,20 +277,46 @@ static void *lista_liga_hook(void *saida, uint32_t liga)
     return r;
 }
 
+static int gravar_eboot(uint64_t dest, const void *src, uint64_t n)
+{
+    struct proc_rw rw;
+    memset(&rw, 0, sizeof rw);
+    rw.address = dest; rw.data = (void *)src; rw.length = n; rw.write_flags = 1;
+    if (sys_sdk_proc_rw(&rw) != 0) return 0;
+    return memcmp((const void *)dest, src, n) == 0;
+}
+
 static void instalar_lista(void)
 {
     static const uint8_t esperado[17] = {0x55,0x48,0x89,0xe5,0x41,0x57,0x41,0x56,0x41,0x55,0x41,0x54,0x53,0x48,0x83,0xec,0x78};
+    if (existe(PASTA "/sem_gancho.txt")) { logf_("GANCHO_LISTA desligado (sem_gancho.txt)"); return; }
     uint64_t f = g_base + RVA_LISTA_LIGA;
     if (!legivel(f, sizeof esperado) || memcmp((const void *)f, esperado, sizeof esperado) != 0) {
         const uint8_t *b = (const uint8_t *)f;
-        logf_("GANCHO_LISTA recusado=bytes_diferentes (%02x %02x %02x %02x): a categoria funciona, a lista da liga fica sem filtro",
-              legivel(f, 4) ? b[0] : 0, legivel(f, 4) ? b[1] : 0, legivel(f, 4) ? b[2] : 0, legivel(f, 4) ? b[3] : 0);
+        int ok = legivel(f, 4);
+        logf_("GANCHO_LISTA recusado=bytes_diferentes (%02x %02x %02x %02x): as abas funcionam, a lista da liga fica sem filtro",
+              ok ? b[0] : 0, ok ? b[1] : 0, ok ? b[2] : 0, ok ? b[3] : 0);
         return;
     }
-    Detour_Construct(&g_det_lista, DetourMode_x64);
-    if (!Detour_DetourFunction(&g_det_lista, f, (void *)lista_liga_hook)) { logf_("GANCHO_LISTA recusado=detour"); return; }
+    g_lista_volta = f + sizeof esperado;
+    uint8_t salto[17];
+    uint64_t alvo = (uint64_t)(void *)lista_liga_hook;
+    salto[0] = 0xff; salto[1] = 0x25; salto[2] = salto[3] = salto[4] = salto[5] = 0;   /* jmp [rip+0] */
+    memcpy(salto + 6, &alvo, 8);
+    salto[14] = salto[15] = salto[16] = 0x90;
+    if (!gravar_eboot(f, salto, sizeof salto)) {
+        gravar_eboot(f, esperado, sizeof esperado);
+        logf_("GANCHO_LISTA recusado=gravacao: as abas funcionam, a lista da liga fica sem filtro");
+        return;
+    }
     g_lista_ok = 1;
     logf_("GANCHO_LISTA ok rva=0x%llx", (unsigned long long)RVA_LISTA_LIGA);
+}
+
+static void desinstalar_lista(void)
+{
+    static const uint8_t esperado[17] = {0x55,0x48,0x89,0xe5,0x41,0x57,0x41,0x56,0x41,0x55,0x41,0x54,0x53,0x48,0x83,0xec,0x78};
+    if (g_lista_ok) { gravar_eboot(g_base + RVA_LISTA_LIGA, esperado, sizeof esperado); g_lista_ok = 0; }
 }
 
 static int aplicar(uint64_t db, copa_t *cp, int ano, int hoje, int ta, int tb)
@@ -539,7 +585,7 @@ static void *trabalho(void *arg)
     struct proc_info pi; memset(&pi, 0, sizeof pi);
     if (sys_sdk_proc_info(&pi) != 0) { logf_("ERRO proc_info"); return 0; }
     g_base = pi.base_address;
-    logf_("JK_SUPERCOPAS v1.03 titulo=%s versao=%s", pi.titleid, pi.version);
+    logf_("JK_SUPERCOPAS v1.03b titulo=%s versao=%s", pi.titleid, pi.version);
     if (strncmp(pi.titleid, "CUSA18676", 9) != 0) { logf_("titulo diferente: parado"); return 0; }
     if (!g_lista_ok) logf_("GANCHO_LISTA nao instalado");
 
@@ -572,7 +618,7 @@ int32_t attr_public plugin_unload(int32_t argc, const char *argv[])
 {
     (void)argc; (void)argv;
     g_rodando = 0;
-    if (g_lista_ok) { Detour_RestoreFunction(&g_det_lista); g_lista_ok = 0; }
+    desinstalar_lista();
     return 0;
 }
 
