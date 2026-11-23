@@ -21,7 +21,7 @@
 attr_public const char *g_pluginName = "jk_sonda";
 attr_public const char *g_pluginDesc = "JK PATCHS - sonda da Master League (so leitura)";
 attr_public const char *g_pluginAuth = "JK PATCHS";
-attr_public uint32_t g_pluginVersion = 0x00000100;
+attr_public uint32_t g_pluginVersion = 0x00000200;
 
 /* nome proprio para nao conflitar com a declaracao do toolchain */
 int jk_qmp(void *addr, void **start, void **end, int *prot) __asm__("sceKernelQueryMemoryProtection");
@@ -139,6 +139,71 @@ static void copiar(uint64_t db, int num)
     logf_("COPIA_GRAVADA %s bytes=%llu", nome, (unsigned long long)feito);
 }
 
+
+/* ---------- v2.00: copia do executavel (qualquer titulo) e assinaturas ---------- */
+static int ler_k(uint64_t src, void *dest, uint64_t n)
+{
+    struct proc_rw rw; memset(&rw, 0, sizeof rw);
+    rw.address = src; rw.data = dest; rw.length = n; rw.write_flags = 0;
+    return sys_sdk_proc_rw(&rw) == 0;
+}
+static void hexlog(const char *nome, uint64_t rva, int n)
+{
+    uint8_t b[32] = {0}; char o[128]; int p = 0;
+    int ok = ler_k(g_base + rva, b, n);
+    for (int i = 0; i < n; i++) p += snprintf(o + p, sizeof o - p, "%02x ", b[i]);
+    logf_("ASSINATURA %s rva=0x%llx %s: %s", nome, (unsigned long long)rva, ok ? "ok" : "falhou", o);
+}
+static uint8_t g_buf[0x100000];
+static void copiar_executavel(const char *titulo)
+{
+    char nome[96], marca[96];
+    snprintf(nome, sizeof nome, PASTA "/eboot_%.9s.bin", titulo);
+    snprintf(marca, sizeof marca, PASTA "/eboot_%.9s.ok", titulo);
+    if (existe(marca)) { logf_("EBOOT copia ja existe (%s); apague o .ok para copiar de novo", nome); return; }
+    /* mapa das regioes a partir da base */
+    uint64_t a = g_base, fim = g_base; int nreg = 0;
+    while (nreg < 128 && a < g_base + 0x10000000ULL) {
+        void *s = 0, *e = 0; int pr = 0;
+        if (jk_qmp((void *)a, &s, &e, &pr) != 0) break;
+        if ((uint64_t)s > a + 0x4000000ULL) break;          /* buraco grande: fim do modulo */
+        logf_("REGIAO %d inicio=+0x%llx fim=+0x%llx prot=%d", nreg, (unsigned long long)((uint64_t)s - g_base),
+              (unsigned long long)((uint64_t)e - g_base), pr);
+        if ((uint64_t)e <= a) break;
+        fim = (uint64_t)e; a = (uint64_t)e; nreg++;
+    }
+    uint64_t total = fim - g_base;
+    if (total > 0xC000000ULL) total = 0xC000000ULL;          /* teto 192 MB */
+    int fd = sceKernelOpen(nome, 0x0001 | 0x0200 | 0x0400, 0666);
+    if (fd < 0) { logf_("ERRO abrir %s 0x%x", nome, fd); return; }
+    uint64_t feito = 0, falhas = 0;
+    while (feito < total) {
+        uint64_t n = total - feito; if (n > sizeof g_buf) n = sizeof g_buf;
+        if (!ler_k(g_base + feito, g_buf, n)) {
+            /* pedaco com buraco: tenta de 64 KB em 64 KB, o que falhar vira zero */
+            for (uint64_t k = 0; k < n; k += 0x10000) {
+                uint64_t m = n - k < 0x10000 ? n - k : 0x10000;
+                if (!ler_k(g_base + feito + k, g_buf + k, m)) { memset(g_buf + k, 0, m); falhas++; }
+            }
+        }
+        int w = sceKernelWrite(fd, g_buf, n);
+        if (w <= 0) { logf_("ERRO gravar em 0x%llx", (unsigned long long)feito); break; }
+        feito += (uint64_t)w;
+    }
+    sceKernelClose(fd);
+    logf_("EBOOT_GRAVADO %s bytes=%llu blocos_vazios=%llu", nome, (unsigned long long)feito, (unsigned long long)falhas);
+    if (feito == total) { int m = sceKernelOpen(marca, 0x0001 | 0x0200 | 0x0400, 0666); if (m >= 0) sceKernelClose(m); }
+}
+static void assinaturas(void)
+{
+    hexlog("CHAVEAMENTO", 0xd69053ULL, 16);
+    hexlog("OITAVAS", 0xd6908bULL, 16);
+    hexlog("QUEDA_ELIM", 0xd694c0ULL, 16);
+    hexlog("LISTA_LIGA", 0xfee0f0ULL, 24);
+    hexlog("CARREIRA_PTR", RVA_CARREIRA_PTR, 8);
+    hexlog("TAB_COPAS", RVA_TAB_COPAS, 16);
+}
+
 static void *trabalho(void *arg)
 {
     (void)arg;
@@ -147,8 +212,11 @@ static void *trabalho(void *arg)
     struct proc_info pi; memset(&pi, 0, sizeof pi);
     if (sys_sdk_proc_info(&pi) != 0) { logf_("ERRO proc_info"); return 0; }
     g_base = pi.base_address;
-    logf_("JK_SONDA v1.00 titulo=%s versao=%s base=0x%llx", pi.titleid, pi.version, (unsigned long long)g_base);
-    if (strncmp(pi.titleid, "CUSA18676", 9) != 0) { logf_("titulo diferente: sonda parada"); return 0; }
+    logf_("JK_SONDA v2.00 titulo=%s versao=%s base=0x%llx", pi.titleid, pi.version, (unsigned long long)g_base);
+    sceKernelUsleep(15000000);   /* deixa o jogo abrir o menu antes de copiar */
+    assinaturas();
+    copiar_executavel(pi.titleid);
+    logf_("PRONTO: pode mandar o sonda.log e o eboot_%.9s.bin (o ml_N.bin sai quando abrir a ML)", pi.titleid);
 
     int num = 0, auto_feito = 0, estavel = 0;
     uint64_t ultimo = 0;
