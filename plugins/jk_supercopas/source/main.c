@@ -8,6 +8,8 @@
  * Troca os 2 clubes no jogo marcado (antes da data), no confronto, na lista de inscritos e no nome.
  * Se o clube do usuario entrar, grava o jogo na agenda dele.
  *
+ * v1.03e: o primeiro codigo do .prx volta a ser o plugin_load (o console executa o endereco 0 ao carregar;
+ *        na v1.03b/c/d ali estava o trecho em assembly do gancho e o jogo caia ao abrir).
  * v1.03d: plugin_load igual ao da v1.02 (so cria a thread); v1.03/b/c travavam ao abrir o jogo por trabalhar no plugin_load.
  * v1.03c: gancho instalado so com a ML aberta (nada na abertura do jogo) e log de cada passo.
  * v1.03b: gancho gravado pelo kernel do GoldHEN (proc_rw), como o do RB; a v1.03 travava ao abrir o jogo.
@@ -40,7 +42,7 @@
 attr_public const char *g_pluginName = "jk_supercopas";
 attr_public const char *g_pluginDesc = "JK PATCHS - Supercopa Rei e Recopa na Master League";
 attr_public const char *g_pluginAuth = "JK PATCHS";
-attr_public uint32_t g_pluginVersion = 0x00000106;
+attr_public uint32_t g_pluginVersion = 0x00000107;
 
 int jk_qmp(void *addr, void **start, void **end, int *prot) __asm__("sceKernelQueryMemoryProtection");
 
@@ -243,22 +245,10 @@ static void categoria(uint64_t db, copa_t *cp, int nova)
  * do mesmo jeito que o plugin do RB grava os ganchos dele. Sem mprotect e sem memoria executavel nova:
  * o comeco original da funcao (17 bytes) fica copiado aqui no proprio plugin (jk_lista_orig). */
 __attribute__((visibility("hidden"))) uint64_t g_lista_volta;   /* eboot+0xfee101 */
-void *jk_lista_orig(void *saida, uint32_t liga);
-__asm__(
-    ".text\n"
-    ".p2align 4\n"
-    ".globl jk_lista_orig\n"
-    ".hidden jk_lista_orig\n"
-    "jk_lista_orig:\n"
-    "  push %rbp\n"
-    "  mov %rsp,%rbp\n"
-    "  push %r15\n"
-    "  push %r14\n"
-    "  push %r13\n"
-    "  push %r12\n"
-    "  push %rbx\n"
-    "  sub $0x78,%rsp\n"
-    "  jmp *g_lista_volta(%rip)\n");
+static void *jk_lista_orig(void *saida, uint32_t liga);
+/* jk_lista_orig fica no FIM do arquivo: o console executa o primeiro codigo do .prx ao carregar,
+ * e ele tem que ser o plugin_load (como na v1.02). */
+
 
 static int g_lista_ok = 0;
 static volatile uint32_t g_lista_tiradas = 0;
@@ -591,7 +581,7 @@ static void *trabalho(void *arg)
     struct proc_info pi; memset(&pi, 0, sizeof pi);
     if (sys_sdk_proc_info(&pi) != 0) { logf_("ERRO proc_info"); return 0; }
     g_base = pi.base_address;
-    logf_("JK_SUPERCOPAS v1.03d titulo=%s versao=%s", pi.titleid, pi.version);
+    logf_("JK_SUPERCOPAS v1.03e titulo=%s versao=%s", pi.titleid, pi.version);
     if (strncmp(pi.titleid, "CUSA18676", 9) != 0) { logf_("titulo diferente: parado"); return 0; }
 
     uint64_t ultimo = 0;
@@ -624,3 +614,18 @@ int32_t attr_public plugin_unload(int32_t argc, const char *argv[])
 
 int32_t attr_module_hidden module_start(size_t argc, const void *args) { (void)argc; (void)args; return 0; }
 int32_t attr_module_hidden module_stop(size_t argc, const void *args) { (void)argc; (void)args; return 0; }
+
+/* comeco original da funcao do jogo (17 bytes) + salto de volta para eboot+0xfee101 */
+__attribute__((naked, noinline, used)) static void *jk_lista_orig(void *saida, uint32_t liga)
+{
+    __asm__ volatile(
+        "push %rbp\n"
+        "mov %rsp,%rbp\n"
+        "push %r15\n"
+        "push %r14\n"
+        "push %r13\n"
+        "push %r12\n"
+        "push %rbx\n"
+        "sub $0x78,%rsp\n"
+        "jmp *g_lista_volta(%rip)\n");
+}
