@@ -1,5 +1,5 @@
 /*
- * JK SUPERCOPAS v1.02 - PES 2021 (CUSA18676, eboot 01.08 Mega/Brasfoot)
+ * JK SUPERCOPAS v1.03 - PES 2021 (CUSA18676, eboot 01.08 Mega/Brasfoot)
  *
  * Aproveita duas supercopas nativas da Master League (jogo unico, penaltis e taca do proprio jogo):
  *   Supercopa Uruguaya (chave 0xa5, 1 de fevereiro)   -> "Supercopa Rei"   (campeao brasileiro x campeao da Copa do Brasil)
@@ -8,6 +8,10 @@
  * Troca os 2 clubes no jogo marcado (antes da data), no confronto, na lista de inscritos e no nome.
  * Se o clube do usuario entrar, grava o jogo na agenda dele.
  *
+ * v1.03: categoria no menu "Categoria de competicao": Supercopa Rei na aba BRASIL e Recopa nos INTERNACIONAIS
+ *        (junto da Sul-Americana). A lista de 6 copas de cada liga (onde o plugin do RB encaixa a Sula)
+ *        nao recebe as nossas copas, para a Sula nunca perder o lugar. Em dezembro (virada da temporada)
+ *        as duas voltam para a categoria original por seguranca e retornam em janeiro.
  * v1.02: Libertadores pelo mata-mata (chave 0x0a) e regra do gol fora no empate do agregado.
  * v1.01: os campeoes de cada temporada sao descobertos SOZINHOS na ML e gravados em campeoes-ANO.txt
  *        (Brasileirao: tabela final; Copa do Brasil e Libertadores: final com agregado/prorrogacao/penaltis;
@@ -25,6 +29,7 @@
 #include <string.h>
 #include <orbis/libkernel.h>
 #include "GoldHEN.h"
+#include "Detour.h"
 
 #define attr_public __attribute__((visibility("default")))
 #define attr_module_hidden __attribute__((weak)) __attribute__((visibility("hidden")))
@@ -32,7 +37,7 @@
 attr_public const char *g_pluginName = "jk_supercopas";
 attr_public const char *g_pluginDesc = "JK PATCHS - Supercopa Rei e Recopa na Master League";
 attr_public const char *g_pluginAuth = "JK PATCHS";
-attr_public uint32_t g_pluginVersion = 0x00000102;
+attr_public uint32_t g_pluginVersion = 0x00000103;
 
 int jk_qmp(void *addr, void **start, void **end, int *prot) __asm__("sceKernelQueryMemoryProtection");
 
@@ -46,6 +51,10 @@ int jk_qmp(void *addr, void **start, void **end, int *prot) __asm__("sceKernelQu
 #define COMP_NOME1       0x02
 #define COMP_NOME2       0x75
 #define COMP_NOME_TAM    0x73
+#define COMP_CATEG       0x380          /* u16: bits 7..12 = categoria do menu (1 internacional, 16 Brasil, 19 Colombia, 28 Uruguai) */
+#define CATEG(v)         (((v) >> 7) & 0x3f)
+#define RVA_LISTA_LIGA   0xfee0f0ULL    /* monta a lista (6 copas) de uma liga; o plugin do RB chama esta funcao */
+#define DIA_VOLTA_CATEG  334            /* a partir de 1 de dezembro: categoria original ate virar o ano */
 #define DB_CONFRONTOS    0x12cd5d4ULL
 #define DB_JOGOS         0x1407580ULL
 #define JOGO_STRIDE      0x254
@@ -181,11 +190,13 @@ typedef struct {
     const char *nome_original;
     const char *rotulo;
     int feito_ano;       /* ultimo ano ja aplicado/verificado */
+    int regra;           /* id da regra (lista de copas) */
+    int cat_nova, cat_original;
 } copa_t;
 
 static copa_t g_copas[2] = {
-    { 0xa5, "Supercopa Rei",   "Supercopa Uruguaya",            "SUPERCOPA", 0 },
-    { 0x83, "CONMEBOL Recopa", "Super Ta\xc3\xa7" "a Colombiana", "RECOPA",    0 },
+    { 0xa5, "Supercopa Rei",   "Supercopa Uruguaya",            "SUPERCOPA", 0, 141, 16, 28 },
+    { 0x83, "CONMEBOL Recopa", "Super Ta\xc3\xa7" "a Colombiana", "RECOPA",    0, 124,  1, 19 },
 };
 
 static void renomear(uint64_t db, uint16_t chave, const char *nome)
@@ -199,6 +210,67 @@ static void renomear(uint64_t db, uint16_t chave, const char *nome)
             escrever_nome(c + COMP_NOME2, nome);
         }
     }
+}
+
+/* categoria do menu "Categoria de competicao" (so mexe se estiver na original ou na nova) */
+static void categoria(uint64_t db, copa_t *cp, int nova)
+{
+    static int avisado[2][64];
+    int qual = (cp == &g_copas[0]) ? 0 : 1;
+    int alvo = nova ? cp->cat_nova : cp->cat_original;
+    uint32_t n = U32(db + DB_COMP_N);
+    for (uint32_t i = 0; i < n; i++) {
+        uint64_t c = db + DB_COMP_TAB + (uint64_t)i * COMP_STRIDE;
+        if ((U16(c) & 0x3ff) != cp->chave) continue;
+        uint16_t v = U16(c + COMP_CATEG);
+        int atual = CATEG(v);
+        if (atual == alvo) continue;
+        if (atual != cp->cat_nova && atual != cp->cat_original) {
+            if (!avisado[qual][atual]) { avisado[qual][atual] = 1; logf_("CATEGORIA %s chave=0x%x categoria=%d desconhecida: nao mexi", cp->rotulo, U16(c), atual); }
+            continue;
+        }
+        U16(c + COMP_CATEG) = (uint16_t)((v & ~(0x3f << 7)) | (alvo << 7));
+        logf_("CATEGORIA %s chave=0x%x %d -> %d (%s)", cp->rotulo, U16(c), atual, alvo,
+              alvo == 16 ? "aba BRASIL" : alvo == 1 ? "INTERNACIONAIS" : "original");
+    }
+}
+
+/* ---------- lista de copas de cada liga: tira as nossas para nao ocupar a vaga da Sula ---------- */
+typedef void *(*lista_liga_t)(void *saida, uint32_t liga);
+static Detour g_det_lista;
+static int g_lista_ok = 0;
+static volatile uint32_t g_lista_tiradas = 0;
+
+static void *lista_liga_hook(void *saida, uint32_t liga)
+{
+    void *r = Detour_Stub(&g_det_lista, lista_liga_t, saida, liga);
+    if (saida && liga != (uint32_t)g_copas[0].regra && liga != (uint32_t)g_copas[1].regra) {
+        int32_t *l = (int32_t *)saida + 1;          /* [0] = liga, [1..6] = copas */
+        int k = 0, tirou = 0;
+        for (int i = 0; i < 6; i++) {
+            if (l[i] == g_copas[0].regra || l[i] == g_copas[1].regra) { tirou = 1; continue; }
+            l[k++] = l[i];
+        }
+        while (k < 6) l[k++] = -1;
+        if (tirou) g_lista_tiradas++;
+    }
+    return r;
+}
+
+static void instalar_lista(void)
+{
+    static const uint8_t esperado[17] = {0x55,0x48,0x89,0xe5,0x41,0x57,0x41,0x56,0x41,0x55,0x41,0x54,0x53,0x48,0x83,0xec,0x78};
+    uint64_t f = g_base + RVA_LISTA_LIGA;
+    if (!legivel(f, sizeof esperado) || memcmp((const void *)f, esperado, sizeof esperado) != 0) {
+        const uint8_t *b = (const uint8_t *)f;
+        logf_("GANCHO_LISTA recusado=bytes_diferentes (%02x %02x %02x %02x): a categoria funciona, a lista da liga fica sem filtro",
+              legivel(f, 4) ? b[0] : 0, legivel(f, 4) ? b[1] : 0, legivel(f, 4) ? b[2] : 0, legivel(f, 4) ? b[3] : 0);
+        return;
+    }
+    Detour_Construct(&g_det_lista, DetourMode_x64);
+    if (!Detour_DetourFunction(&g_det_lista, f, (void *)lista_liga_hook)) { logf_("GANCHO_LISTA recusado=detour"); return; }
+    g_lista_ok = 1;
+    logf_("GANCHO_LISTA ok rva=0x%llx", (unsigned long long)RVA_LISTA_LIGA);
 }
 
 static int aplicar(uint64_t db, copa_t *cp, int ano, int hoje, int ta, int tb)
@@ -447,6 +519,14 @@ static void ciclo(uint64_t db)
     int ok_rec = g_camp_ok && c->lib && c->sula && c->lib != c->sula;
     renomear(db, g_copas[0].chave, ok_sup ? g_copas[0].nome : g_copas[0].nome_original);
     renomear(db, g_copas[1].chave, ok_rec ? g_copas[1].nome : g_copas[1].nome_original);
+    int dezembro = hoje >= DIA_VOLTA_CATEG;                 /* virada da temporada: categoria original */
+    categoria(db, &g_copas[0], ok_sup && !dezembro);
+    categoria(db, &g_copas[1], ok_rec && !dezembro);
+    static uint32_t tiradas_log = 0;
+    if (g_lista_tiradas != tiradas_log && (tiradas_log == 0 || g_lista_tiradas >= tiradas_log * 10)) {
+        tiradas_log = g_lista_tiradas;
+        logf_("LISTA_LIGA nossas copas fora da lista da liga vezes=%u", tiradas_log);
+    }
     if (ok_sup) aplicar(db, &g_copas[0], ano, hoje, c->br, b_sup);
     if (ok_rec) aplicar(db, &g_copas[1], ano, hoje, c->lib, c->sula);
 }
@@ -459,8 +539,9 @@ static void *trabalho(void *arg)
     struct proc_info pi; memset(&pi, 0, sizeof pi);
     if (sys_sdk_proc_info(&pi) != 0) { logf_("ERRO proc_info"); return 0; }
     g_base = pi.base_address;
-    logf_("JK_SUPERCOPAS v1.02 titulo=%s versao=%s", pi.titleid, pi.version);
+    logf_("JK_SUPERCOPAS v1.03 titulo=%s versao=%s", pi.titleid, pi.version);
     if (strncmp(pi.titleid, "CUSA18676", 9) != 0) { logf_("titulo diferente: parado"); return 0; }
+    if (!g_lista_ok) logf_("GANCHO_LISTA nao instalado");
 
     uint64_t ultimo = 0;
     while (g_rodando) {
@@ -476,6 +557,13 @@ static void *trabalho(void *arg)
 int32_t attr_public plugin_load(int32_t argc, const char *argv[])
 {
     (void)argc; (void)argv;
+    struct proc_info pi; memset(&pi, 0, sizeof pi);
+    if (sys_sdk_proc_info(&pi) == 0 && strncmp(pi.titleid, "CUSA18676", 9) == 0) {
+        g_base = pi.base_address;
+        sceKernelMkdir("/data/jk", 0777);
+        sceKernelMkdir(PASTA, 0777);
+        instalar_lista();                                   /* antes do jogo abrir os menus */
+    }
     scePthreadCreate(&g_thr, 0, trabalho, 0, "jk_supercopas");
     return 0;
 }
@@ -484,6 +572,7 @@ int32_t attr_public plugin_unload(int32_t argc, const char *argv[])
 {
     (void)argc; (void)argv;
     g_rodando = 0;
+    if (g_lista_ok) { Detour_RestoreFunction(&g_det_lista); g_lista_ok = 0; }
     return 0;
 }
 
