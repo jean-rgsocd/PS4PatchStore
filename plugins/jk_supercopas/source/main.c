@@ -8,6 +8,11 @@
  * Troca os 2 clubes no jogo marcado (antes da data), no confronto, na lista de inscritos e no nome.
  * Se o clube do usuario entrar, grava o jogo na agenda dele.
  *
+ * v1.05: CAUSA da queda nas Eliminatorias da Sula (queda.log, eboot 0xd694c0): a primeira fase (0xe)
+ *        era tipo 3 e vinha antes do mata-mata na tabela. Ela vira tipo 2 enquanto o mata-mata tem
+ *        confrontos. Chaves "a definir" desligadas (com_chaves.txt liga). Desligar tudo: sem_fase.txt.
+ * v1.04d: causa achada pelo queda.log (eboot 0xd694c0): a Sula tinha 2 fases "mata-mata principal";
+ *         a primeira fase (0xe) vira preliminar. A ligacao +0xec volta a ser a do RB (nao era a causa).
  * v1.04c: Sula - o mata-mata deixa de apontar para a fase de grupos da Libertadores (+0xec);
  *         chaves "a definir" ligadas de novo. Desligar: sem_chaves.txt.
  * v1.04b: grava /data/jk/super/queda.log quando o jogo cai (endereco, registradores, pilha).
@@ -50,7 +55,7 @@
 attr_public const char *g_pluginName = "jk_supercopas";
 attr_public const char *g_pluginDesc = "JK PATCHS - Supercopa Rei e Recopa na Master League";
 attr_public const char *g_pluginAuth = "JK PATCHS";
-attr_public uint32_t g_pluginVersion = 0x0000010b;
+attr_public uint32_t g_pluginVersion = 0x0000010d;
 
 int jk_qmp(void *addr, void **start, void **end, int *prot) __asm__("sceKernelQueryMemoryProtection");
 
@@ -557,7 +562,7 @@ static void acompanhar(uint64_t db, int ano, int hoje)
  * Quando o RB publica a rodada de verdade, ele grava por cima. */
 #define RODADA_STRIDE 0x208
 #define SULA_REGRA    6
-static int g_sem_chaves = -1;
+static int g_sem_chaves = -1, g_com_chaves = 0;
 static uint32_t ref_fase(int idx, int fase, uint32_t chave) { return ((uint32_t)((idx << 6) | fase) << 16) | (chave & 0xffff); }
 static int vagas_do_codigo(int cod)
 {
@@ -569,31 +574,61 @@ static void chaves_sula(uint64_t db)
     static int conta = 0;
     if (g_sem_chaves < 0 || ++conta >= 15) {
         conta = 0;
-        int s = existe(PASTA "/sem_chaves.txt");
-        if (s != g_sem_chaves) logf_(s ? "CHAVES_SULA desligado (sem_chaves.txt)" : "CHAVES_SULA ligado");
+        int s = existe(PASTA "/sem_fase.txt");
+        if (s != g_sem_chaves) logf_(s ? "FASE_SULA desligado (sem_fase.txt)" : "FASE_SULA ligado");
+        int c = existe(PASTA "/com_chaves.txt");
+        if (c != g_com_chaves) logf_(c ? "CHAVES_SULA ligado (com_chaves.txt)" : "CHAVES_SULA desligado");
+        g_com_chaves = c;
         g_sem_chaves = s;
     }
     if (g_sem_chaves) return;
     uint32_t n = U32(db + DB_COMP_N);
     if (n > 400) return;
+    /* CAUSA DA QUEDA (queda.log: eboot 0xd694c0, leitura em ponteiro nulo).
+     * A tela de chaveamento (eboot 0xd68fc0) pega o mata-mata da copa por dois caminhos:
+     *   0x1b15f80 -> a PRIMEIRA competicao tipo 3 da regra, na ordem da tabela;
+     *   0x1b23370 -> a fase ATUAL (a primeira ainda nao terminada).
+     * Se nao forem a mesma, ela segue com ponteiro nulo e o jogo cai.
+     * Na Libertadores a unica tipo 3 da familia e o mata-mata (0xa). Na Sula do RB existem duas:
+     * a primeira fase (0xe, posicao 199) vem antes do mata-mata (0xd, posicao 209), entao com o
+     * mata-mata em andamento os dois caminhos discordam.
+     * Correcao: enquanto o mata-mata tem confrontos publicados, a primeira fase (ja encerrada) fica
+     * marcada como tipo 2 (fase sem jogos proprios, como a fase-mae dos grupos). Quando o mata-mata
+     * fica vazio (nova temporada), ela volta a tipo 3. */
+    {
+        uint64_t mata = 0; int mais = -1;
+        for (uint32_t i = 0; i < n; i++) {
+            uint64_t cp = db + DB_COMP_TAB + (uint64_t)i * COMP_STRIDE;
+            if (U32(cp + 0xf4) != SULA_REGRA) continue;
+            uint32_t t = U32(cp + 0xf8);
+            if (t != 3 && !(t == 2 && U32(cp + 0xfc) != 0xffffffff)) continue;
+            int nr = 0; while (nr < 8 && U32(cp + 0xfc + 4 * nr) != 0xffffffff) nr++;
+            if (nr > mais) { mais = nr; mata = cp; }
+        }
+        int publicado = 0;
+        if (mata && mais >= 2) {
+            uint32_t r0 = U32(mata + 0xfc);
+            if (r0 < 0x2000) publicado = *(volatile uint8_t *)(db + DB_CONFRONTOS + (uint64_t)r0 * RODADA_STRIDE + 0x204) != 0;
+        }
+        for (uint32_t i = 0; mata && i < n; i++) {
+            uint64_t cp = db + DB_COMP_TAB + (uint64_t)i * COMP_STRIDE;
+            if (cp == mata || U32(cp + 0xf4) != SULA_REGRA) continue;
+            if (U32(cp + 0xfc) == 0xffffffff) continue;              /* so fases com rodadas proprias (a primeira fase) */
+            uint32_t t = U32(cp + 0xf8), quer = publicado && cp < mata ? 2 : 3;
+            if (t != 2 && t != 3) continue;
+            if (t == 2 && U32(cp + 0xfc) == 0xffffffff) continue;
+            if (t != quer) {
+                U32(cp + 0xf8) = quer;
+                logf_("FASE_SULA comp=%u chave=0x%x tipo %u -> %u (%s); mata-mata = chave 0x%x",
+                      i, U16(cp), t, quer, quer == 2 ? "primeira fase encerrada, chaveamento do mata-mata liberado" : "primeira fase de volta",
+                      U16(mata));
+            }
+        }
+    }
+    if (!g_com_chaves) return;
     for (uint32_t i = 0; i < n; i++) {
         uint64_t cp = db + DB_COMP_TAB + (uint64_t)i * COMP_STRIDE;
         if (U32(cp + 0xf4) != SULA_REGRA || U32(cp + 0xf8) != 3) continue;
-        /* ligacao de fase: o RB copiou o mata-mata da Libertadores e a Sula ficou apontando
-         * para a fase de grupos DA LIBERTADORES (+0xec = 9). A tela de chaveamento segue essa
-         * ligacao. Sem fase anterior (0xffff) a Sula fica como a Copa Argentina, que abre normal. */
-        uint16_t ant_comp = U16(cp + 0xec);
-        if (ant_comp != 0xffff) {
-            int outra_regra = 1;
-            for (uint32_t j = 0; j < n; j++) {
-                uint64_t q = db + DB_COMP_TAB + (uint64_t)j * COMP_STRIDE;
-                if (U16(q) == ant_comp) { outra_regra = U32(q + 0xf4) != SULA_REGRA; break; }
-            }
-            if (outra_regra) {
-                U16(cp + 0xec) = 0xffff;
-                logf_("LIGACAO_SULA comp=%u chave=0x%x fase_anterior 0x%x (outra copa) -> nenhuma", i, U16(cp), ant_comp);
-            }
-        }
         uint32_t rod[8]; int nr = 0;
         for (int k = 0; k < 8; k++) { uint32_t r = U32(cp + 0xfc + 4 * k); if (r == 0xffffffff) break; rod[nr++] = r; }
         if (nr < 2 || rod[0] > 0x2000) continue;
@@ -747,7 +782,7 @@ static void *trabalho(void *arg)
     struct proc_info pi; memset(&pi, 0, sizeof pi);
     if (sys_sdk_proc_info(&pi) != 0) { logf_("ERRO proc_info"); return 0; }
     g_base = pi.base_address;
-    logf_("JK_SUPERCOPAS v1.04c titulo=%s versao=%s", pi.titleid, pi.version);
+    logf_("JK_SUPERCOPAS v1.05 titulo=%s versao=%s", pi.titleid, pi.version);
     if (strncmp(pi.titleid, "CUSA18676", 9) != 0) { logf_("titulo diferente: parado"); return 0; }
 
     uint64_t ultimo = 0;
