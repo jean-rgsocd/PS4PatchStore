@@ -8,6 +8,8 @@
  * Troca os 2 clubes no jogo marcado (antes da data), no confronto, na lista de inscritos e no nome.
  * Se o clube do usuario entrar, grava o jogo na agenda dele.
  *
+ * v1.13: a aba (categoria) so muda depois que o jogo da copa existe no calendario: numa ML nova a Recopa
+ *        nos internacionais impedia o jogo de criar a partida dela.
  * v1.12: Eliminatorias da Sula antes do mata-mata (ex.: marco, entre a 1a fase e os grupos) caiam:
  *        a correcao do chaveamento agora troca de modo conforme a fase (byte 0xd69054).
  * v1.11: quando a competicao nao tem jogo na temporada, grava SEM_JOGO e lista (DIAG) os jogos dela.
@@ -69,7 +71,7 @@
 attr_public const char *g_pluginName = "jk_supercopas";
 attr_public const char *g_pluginDesc = "JK PATCHS - Supercopa Rei e Recopa na Master League";
 attr_public const char *g_pluginAuth = "JK PATCHS";
-attr_public uint32_t g_pluginVersion = 0x00000114;
+attr_public uint32_t g_pluginVersion = 0x00000115;
 
 int jk_qmp(void *addr, void **start, void **end, int *prot) __asm__("sceKernelQueryMemoryProtection");
 
@@ -877,6 +879,15 @@ static void ajustar_chaveamento(uint64_t db, int ano)
 
 static int g_camp_ano = 0, g_camp_ok = 0;
 
+static int tem_jogo(uint64_t db, uint16_t chave, int ano)
+{
+    for (int i = 0; i < JOGOS_MAX; i++) {
+        uint64_t j = db + DB_JOGOS + (uint64_t)i * JOGO_STRIDE;
+        if (U16(j + 2) == chave && U16(j + 8) == ano) return 1;
+    }
+    return 0;
+}
+
 static void ciclo(uint64_t db)
 {
     int hoje = U16(db + DB_DATA);
@@ -915,8 +926,11 @@ static void ciclo(uint64_t db)
         sem_cat = s2;
     }
     if (sem_cat) dezembro = 1;
-    categoria(db, &g_copas[0], ok_sup && !dezembro);
-    categoria(db, &g_copas[1], ok_rec && !dezembro);
+    /* v1.13: so muda a aba depois que o jogo da copa ja existe no calendario da temporada. Numa ML nova o
+     * calendario e gerado depois que o plugin ja esta rodando; com a Recopa ja nos internacionais (categoria 1)
+     * o jogo NAO cria a partida da Super Taca Colombiana. Com a categoria original ele cria, e ai a gente troca. */
+    categoria(db, &g_copas[0], ok_sup && !dezembro && tem_jogo(db, g_copas[0].chave, ano));
+    categoria(db, &g_copas[1], ok_rec && !dezembro && tem_jogo(db, g_copas[1].chave, ano));
     static uint32_t tiradas_log = 0;
     if (g_lista_tiradas != tiradas_log && (tiradas_log == 0 || g_lista_tiradas >= tiradas_log * 10)) {
         tiradas_log = g_lista_tiradas;
@@ -934,7 +948,7 @@ static void *trabalho(void *arg)
     struct proc_info pi; memset(&pi, 0, sizeof pi);
     if (sys_sdk_proc_info(&pi) != 0) { logf_("ERRO proc_info"); return 0; }
     g_base = pi.base_address;
-    logf_("JK_SUPERCOPAS v1.12 titulo=%s versao=%s", pi.titleid, pi.version);
+    logf_("JK_SUPERCOPAS v1.13 titulo=%s versao=%s", pi.titleid, pi.version);
     if (strncmp(pi.titleid, "CUSA18676", 9) != 0) { logf_("titulo diferente: parado"); return 0; }
 
     uint64_t ultimo = 0;
