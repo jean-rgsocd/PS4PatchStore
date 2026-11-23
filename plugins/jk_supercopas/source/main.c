@@ -8,6 +8,8 @@
  * Troca os 2 clubes no jogo marcado (antes da data), no confronto, na lista de inscritos e no nome.
  * Se o clube do usuario entrar, grava o jogo na agenda dele.
  *
+ * v1.08: chaveamento da Sula com 5 colunas (playoff, oitavas, quartas, semi, final): eboot 0xd6908b.
+ *        Desligar: sem_oitavas.txt.
  * v1.07: Eliminatorias da Sula ABREM (testado no console): correcao do chaveamento (v1.06) +
  *        chaves "a definir" ligadas por padrao. Desligar as chaves: sem_chaves.txt.
  * v1.06: corrige a tela de chaveamento no proprio jogo (eboot 0xd69053, 5 bytes, conferidos antes)
@@ -59,7 +61,7 @@
 attr_public const char *g_pluginName = "jk_supercopas";
 attr_public const char *g_pluginDesc = "JK PATCHS - Supercopa Rei e Recopa na Master League";
 attr_public const char *g_pluginAuth = "JK PATCHS";
-attr_public uint32_t g_pluginVersion = 0x0000010f;
+attr_public uint32_t g_pluginVersion = 0x00000110;
 
 int jk_qmp(void *addr, void **start, void **end, int *prot) __asm__("sceKernelQueryMemoryProtection");
 
@@ -712,7 +714,15 @@ static void instalar_queda(void)
  *   0xd69053: 66 89 01   mov %ax,(%rcx)
  *   0xd69056: 90 90      nop nop
  * Na Libertadores e nas outras copas os dois ja sao iguais: nada muda para elas. */
-#define RVA_CHAVE_CMP 0xd69053ULL
+typedef struct { uint64_t rva; uint8_t n; uint8_t orig[9]; uint8_t novo[9]; const char *nome; const char *desliga; } remendo_t;
+static const remendo_t g_remendos[2] = {
+    /* tela de chaveamento: usa sempre a fase atual da copa (era: ponteiro nulo -> queda) */
+    { 0xd69053ULL, 5, {0x66,0x3b,0x01,0x75,0x10}, {0x66,0x89,0x01,0x90,0x90}, "CHAVEAMENTO", "sem_chaveamento.txt" },
+    /* colunas do chaveamento (0xd6908b): a regra 6 (Sula) passa a usar a lista de 5 fases
+     * (playoff, oitavas, quartas, semi, final) que o jogo ja tem para a regra 3. A regra 2 continua
+     * na lista padrao de 4 fases, como antes:  cmp $2 / je padrao  ->  cmp $6 / je 5_fases */
+    { 0xd6908bULL, 9, {0x83,0xf8,0x02,0x0f,0x84,0xa4,0x00,0x00,0x00}, {0x83,0xf8,0x06,0x0f,0x84,0x09,0x00,0x00,0x00}, "OITAVAS", "sem_oitavas.txt" },
+};
 static int ler_eboot(uint64_t src, void *dest, uint64_t n)
 {
     struct proc_rw rw;
@@ -720,27 +730,29 @@ static int ler_eboot(uint64_t src, void *dest, uint64_t n)
     rw.address = src; rw.data = dest; rw.length = n; rw.write_flags = 0;
     return sys_sdk_proc_rw(&rw) == 0;
 }
-static void corrigir_chaveamento(void)
+static void aplicar_remendo(const remendo_t *r)
 {
-    static const uint8_t original[5] = {0x66, 0x3b, 0x01, 0x75, 0x10};
-    static const uint8_t novo[5]     = {0x66, 0x89, 0x01, 0x90, 0x90};
-    if (existe(PASTA "/sem_chaveamento.txt")) { logf_("CHAVEAMENTO desligado (sem_chaveamento.txt)"); return; }
-    uint64_t a = g_base + RVA_CHAVE_CMP;
-    uint8_t b[5] = {0};
-    if (!ler_eboot(a, b, 5)) { logf_("CHAVEAMENTO recusado=leitura"); return; }
-    if (memcmp(b, novo, 5) == 0) { logf_("CHAVEAMENTO ja corrigido"); return; }
-    if (memcmp(b, original, 5) != 0) {
-        logf_("CHAVEAMENTO recusado=bytes_diferentes (%02x %02x %02x %02x %02x)", b[0], b[1], b[2], b[3], b[4]);
+    char sw[96]; snprintf(sw, sizeof sw, PASTA "/%s", r->desliga);
+    if (existe(sw)) { logf_("%s desligado (%s)", r->nome, r->desliga); return; }
+    uint64_t a = g_base + r->rva;
+    uint8_t b[9] = {0};
+    if (!ler_eboot(a, b, r->n)) { logf_("%s recusado=leitura", r->nome); return; }
+    if (memcmp(b, r->novo, r->n) == 0) { logf_("%s ja aplicado", r->nome); return; }
+    if (memcmp(b, r->orig, r->n) != 0) {
+        logf_("%s recusado=bytes_diferentes (%02x %02x %02x %02x %02x)", r->nome, b[0], b[1], b[2], b[3], b[4]);
         return;
     }
     struct proc_rw rw;
     memset(&rw, 0, sizeof rw);
-    rw.address = a; rw.data = (void *)novo; rw.length = 5; rw.write_flags = 1;
-    if (sys_sdk_proc_rw(&rw) != 0) { logf_("CHAVEAMENTO recusado=gravacao"); return; }
-    memset(b, 0, 5);
-    int ok = ler_eboot(a, b, 5) && memcmp(b, novo, 5) == 0;
-    logf_("CHAVEAMENTO %s rva=0x%llx (%02x %02x %02x %02x %02x)", ok ? "ok" : "conferencia_falhou",
-          (unsigned long long)RVA_CHAVE_CMP, b[0], b[1], b[2], b[3], b[4]);
+    rw.address = a; rw.data = (void *)r->novo; rw.length = r->n; rw.write_flags = 1;
+    if (sys_sdk_proc_rw(&rw) != 0) { logf_("%s recusado=gravacao", r->nome); return; }
+    memset(b, 0, sizeof b);
+    int ok = ler_eboot(a, b, r->n) && memcmp(b, r->novo, r->n) == 0;
+    logf_("%s %s rva=0x%llx", r->nome, ok ? "ok" : "conferencia_falhou", (unsigned long long)r->rva);
+}
+static void corrigir_chaveamento(void)
+{
+    for (int i = 0; i < (int)(sizeof g_remendos / sizeof g_remendos[0]); i++) aplicar_remendo(&g_remendos[i]);
 }
 
 static campeoes_t g_camp;
@@ -795,7 +807,7 @@ static void *trabalho(void *arg)
     struct proc_info pi; memset(&pi, 0, sizeof pi);
     if (sys_sdk_proc_info(&pi) != 0) { logf_("ERRO proc_info"); return 0; }
     g_base = pi.base_address;
-    logf_("JK_SUPERCOPAS v1.07 titulo=%s versao=%s", pi.titleid, pi.version);
+    logf_("JK_SUPERCOPAS v1.08 titulo=%s versao=%s", pi.titleid, pi.version);
     if (strncmp(pi.titleid, "CUSA18676", 9) != 0) { logf_("titulo diferente: parado"); return 0; }
 
     uint64_t ultimo = 0;
