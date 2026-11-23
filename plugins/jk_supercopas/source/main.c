@@ -1,5 +1,5 @@
 /*
- * JK SUPERCOPAS v1.01 - PES 2021 (CUSA18676, eboot 01.08 Mega/Brasfoot)
+ * JK SUPERCOPAS v1.02 - PES 2021 (CUSA18676, eboot 01.08 Mega/Brasfoot)
  *
  * Aproveita duas supercopas nativas da Master League (jogo unico, penaltis e taca do proprio jogo):
  *   Supercopa Uruguaya (chave 0xa5, 1 de fevereiro)   -> "Supercopa Rei"   (campeao brasileiro x campeao da Copa do Brasil)
@@ -8,6 +8,7 @@
  * Troca os 2 clubes no jogo marcado (antes da data), no confronto, na lista de inscritos e no nome.
  * Se o clube do usuario entrar, grava o jogo na agenda dele.
  *
+ * v1.02: Libertadores pelo mata-mata (chave 0x0a) e regra do gol fora no empate do agregado.
  * v1.01: os campeoes de cada temporada sao descobertos SOZINHOS na ML e gravados em campeoes-ANO.txt
  *        (Brasileirao: tabela final; Copa do Brasil e Libertadores: final com agregado/prorrogacao/penaltis;
  *         Sul-Americana: /data/PES21/sulamericana/campeoes.txt do plugin do RB, ou a final dela).
@@ -31,7 +32,7 @@
 attr_public const char *g_pluginName = "jk_supercopas";
 attr_public const char *g_pluginDesc = "JK PATCHS - Supercopa Rei e Recopa na Master League";
 attr_public const char *g_pluginAuth = "JK PATCHS";
-attr_public uint32_t g_pluginVersion = 0x00000101;
+attr_public uint32_t g_pluginVersion = 0x00000102;
 
 int jk_qmp(void *addr, void **start, void **end, int *prot) __asm__("sceKernelQueryMemoryProtection");
 
@@ -317,6 +318,8 @@ static int campeao_mata(uint64_t db, uint16_t comp, int ano, const char **metodo
         int ty = ida.ag + ida.aet + f.hg + f.het;
         if (tx != ty) { *metodo = "agregado"; return tx > ty ? f.a : f.h; }
         if (f.ph != f.pa) { *metodo = "penaltis"; return f.ph > f.pa ? f.h : f.a; }
+        int fx = f.ag + f.aet, fy = ida.ag + ida.aet;           /* gols fora (o jogo usa essa regra nas eliminatorias) */
+        if (fx != fy) { *metodo = "gol_fora"; return fx > fy ? f.a : f.h; }
         *metodo = "empate_sem_penaltis"; return 0;
     }
     int th = f.hg + f.het, ta = f.ag + f.aet;
@@ -409,7 +412,7 @@ static void acompanhar(uint64_t db, int ano, int hoje)
     int vice = 0, br = campeao_liga(db, 0x1d, ano, &vice);
     if (br) { c.br = br; c.vice_br = vice; }
     int cdb = campeao_mata(db, 0x1f, ano, &m1); if (cdb) c.cdb = cdb;
-    int lib = campeao_mata(db, 0x09, ano, &m2); if (lib) c.lib = lib;
+    int lib = campeao_mata(db, 0x0a, ano, &m2);   /* 0x09 = grupos; 0x0a = mata-mata e final */ if (lib) c.lib = lib;
     int sula = sula_do_rb(ano);
     if (!sula) { sula = campeao_mata(db, 0x0c, ano, &m3); }
     if (sula) c.sula = sula;
@@ -456,7 +459,7 @@ static void *trabalho(void *arg)
     struct proc_info pi; memset(&pi, 0, sizeof pi);
     if (sys_sdk_proc_info(&pi) != 0) { logf_("ERRO proc_info"); return 0; }
     g_base = pi.base_address;
-    logf_("JK_SUPERCOPAS v1.01 titulo=%s versao=%s", pi.titleid, pi.version);
+    logf_("JK_SUPERCOPAS v1.02 titulo=%s versao=%s", pi.titleid, pi.version);
     if (strncmp(pi.titleid, "CUSA18676", 9) != 0) { logf_("titulo diferente: parado"); return 0; }
 
     uint64_t ultimo = 0;
