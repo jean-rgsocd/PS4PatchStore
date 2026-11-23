@@ -1,5 +1,5 @@
 /*
- * JK CRAQUE v1.01 - PES 2021 (Mega/Brasfoot CUSA18676 01.08 e Demisan CUSA22062)
+ * JK CRAQUE v1.02 - PES 2021 (Mega/Brasfoot CUSA18676 01.08 e Demisan CUSA22062)
  *
  * "Craque do Jogo": a cerimonia de melhor da partida (JK_CRAQUE.cpk) tem dois visuais no mesmo CPK:
  *   - Craque Betano  (Brasileirao, Copa do Brasil e o resto): pastas OP-04_POTM1_TROPHY, OP-04_BOARD_POTM1, OP-04_BOARD_1
@@ -11,6 +11,9 @@
  *
  * Config (opcional): /data/jk/craque.txt   linha  lib=5   (ids separados por virgula que usam o visual 2)
  * Desligar: /data/jk/craque_off.txt
+ * v1.02: 3 visuais: 1 Craque Betano (betano=21,24 Brasileirao e Copa do Brasil), 2 Libertadores (lib=5),
+ *        3 JK PATCHS (todas as outras competicoes e partidas): pastas OP-04_POTM3_TROPHY, OP-04_BOARD_POTM3, OP-04_BOARD_3.
+ *        craque.txt aceita as linhas  lib=5  e  betano=21,24
  * v1.01: na hora da cena de fim de jogo a competicao ja volta a 0; o plugin guarda a ultima competicao
  *        diferente de 0 vista durante a partida (amostra a cada 0,2 s) e usa essa.
  * Log: /data/jk/craque.log  (caminhos das pastas OP-04 pedidos, competicao e se trocou)
@@ -29,7 +32,7 @@
 attr_public const char *g_pluginName = "jk_craque";
 attr_public const char *g_pluginDesc = "JK PATCHS - Craque do Jogo por competicao";
 attr_public const char *g_pluginAuth = "JK PATCHS";
-attr_public uint32_t g_pluginVersion = 0x00000101;
+attr_public uint32_t g_pluginVersion = 0x00000102;
 
 #define RVA_ARQUIVO   0x1a522e0ULL     /* executa um pedido de arquivo: rdi = pedido, caminho (std::string) em +0x20 */
 #define RVA_COMPET    0x5bff80cULL     /* int: competicao da partida atual (-1 amistoso) */
@@ -39,6 +42,7 @@ static uint64_t g_base;
 static volatile int g_rodando = 1;
 static OrbisPthread g_thr;
 static int g_libs[16] = {5}; static int g_nlibs = 1;
+static int g_bets[16] = {21, 24}; static int g_nbets = 2;
 static volatile int g_comp_partida = 0x7fffffff;   /* ultima competicao != 0 vista */
 
 __attribute__((visibility("hidden"))) uint64_t g_arq_volta;
@@ -72,18 +76,20 @@ static int tem_op04(const char *p, uint64_t n)
     return 0;
 }
 static int eh_lib(int c) { for (int i = 0; i < g_nlibs; i++) if (g_libs[i] == c) return 1; return 0; }
+static int eh_bet(int c) { for (int i = 0; i < g_nbets; i++) if (g_bets[i] == c) return 1; return 0; }
+static char visual(int c) { return eh_lib(c) ? '2' : eh_bet(c) ? '1' : '3'; }
+static const char *nome_visual(char v) { return v == '2' ? "LIBERTADORES" : v == '1' ? "BETANO" : "JK PATCHS"; }
 
-/* troca no lugar (mesmo tamanho): POTM1<->POTM2 e BOARD_1<->BOARD_2, so dentro de pastas "OP-04_" */
-static int ajustar(char *p, uint64_t n, int lib)
+/* troca no lugar (mesmo tamanho): POTMx e BOARD_x -> visual (1, 2 ou 3), so dentro de pastas "OP-04_" */
+static int ajustar(char *p, uint64_t n, char para)
 {
     int mudou = 0;
-    char de = lib ? '1' : '2', para = lib ? '2' : '1';
     for (uint64_t i = 0; i + 6 <= n; i++) {
         if (p[i] != 'O' || memcmp(p + i, "OP-04_", 6) != 0) continue;
         uint64_t j = i + 6;
         while (j < n && p[j] != '/' && p[j] != 0) {
-            if (j + 5 <= n && memcmp(p + j, "POTM", 4) == 0 && p[j + 4] == de) { p[j + 4] = para; mudou = 1; }
-            if (j + 7 <= n && memcmp(p + j, "BOARD_", 6) == 0 && p[j + 6] == de && (j + 7 == n || p[j + 7] == '/' || p[j + 7] == 0)) { p[j + 6] = para; mudou = 1; }
+            if (j + 5 <= n && memcmp(p + j, "POTM", 4) == 0 && p[j + 4] >= '1' && p[j + 4] <= '3' && p[j + 4] != para) { p[j + 4] = para; mudou = 1; }
+            if (j + 7 <= n && memcmp(p + j, "BOARD_", 6) == 0 && p[j + 6] >= '1' && p[j + 6] <= '3' && (j + 7 == n || p[j + 7] == '/' || p[j + 7] == 0) && p[j + 6] != para) { p[j + 6] = para; mudou = 1; }
             j++;
         }
         i = j;
@@ -102,8 +108,7 @@ static uint64_t arquivo_hook(uint64_t a, uint64_t b, uint64_t c, uint64_t d, uin
             int agora = *(volatile int32_t *)(g_base + RVA_COMPET);
             if (agora != 0) g_comp_partida = agora;
             int comp = g_comp_partida;
-            int lib = eh_lib(comp);
-            int t = ajustar(p, len, lib);
+            int t = ajustar(p, len, visual(comp));
             if (t) g_trocas++;
             g_vistos++;
             uint32_t k = g_anel_pos % ANEL;
@@ -143,27 +148,36 @@ static void instalar(void)
     logf_("GANCHO ok eboot+0x%llx", (unsigned long long)RVA_ARQUIVO);
 }
 
+static int ler_lista(const char *t, const char *chave, int *v, int max)
+{
+    const char *p = strstr(t, chave);
+    if (!p) return -1;
+    p += strlen(chave); int n = 0;
+    while (*p && *p != '\n' && *p != '\r' && n < max) {
+        int neg = 0, x = 0, tem = 0;
+        if (*p == '-') { neg = 1; p++; }
+        while (*p >= '0' && *p <= '9') { x = x * 10 + (*p - '0'); p++; tem = 1; }
+        if (tem) v[n++] = neg ? -x : x;
+        if (*p == ',' || *p == ' ') p++; else if (!tem) break;
+    }
+    return n;
+}
+
 static void ler_config(void)
 {
     int fd = sceKernelOpen(PASTA "/craque.txt", 0, 0);
-    if (fd < 0) { logf_("CONFIG padrao: lib=5"); return; }
-    char t[512]; int n = sceKernelRead(fd, t, sizeof t - 1); sceKernelClose(fd);
-    if (n < 0) n = 0;
-    t[n] = 0;
-    char *p = strstr(t, "lib=");
-    if (!p) { logf_("CONFIG sem 'lib=': padrao lib=5"); return; }
-    p += 4; g_nlibs = 0;
-    while (*p && *p != '\n' && *p != '\r' && g_nlibs < 16) {
-        int neg = 0, v = 0, tem = 0;
-        if (*p == '-') { neg = 1; p++; }
-        while (*p >= '0' && *p <= '9') { v = v * 10 + (*p - '0'); p++; tem = 1; }
-        if (tem) g_libs[g_nlibs++] = neg ? -v : v;
-        if (*p == ',' || *p == ' ') p++; else if (!tem) break;
+    if (fd >= 0) {
+        char t[512]; int n = sceKernelRead(fd, t, sizeof t - 1); sceKernelClose(fd);
+        if (n < 0) n = 0;
+        t[n] = 0;
+        int a[16], k;
+        if ((k = ler_lista(t, "lib=", a, 16)) > 0) { memcpy(g_libs, a, k * sizeof(int)); g_nlibs = k; }
+        if ((k = ler_lista(t, "betano=", a, 16)) >= 0) { memcpy(g_bets, a, (k > 0 ? k : 0) * sizeof(int)); g_nbets = k; }
     }
-    if (!g_nlibs) { g_libs[0] = 5; g_nlibs = 1; }
-    char s[128]; int k = 0;
-    for (int i = 0; i < g_nlibs; i++) k += snprintf(s + k, sizeof s - k, "%s%d", i ? "," : "", g_libs[i]);
-    logf_("CONFIG lib=%s", s);
+    char s1[128], s2[128]; int k1 = 0, k2 = 0; s1[0] = s2[0] = 0;
+    for (int i = 0; i < g_nlibs; i++) k1 += snprintf(s1 + k1, sizeof s1 - k1, "%s%d", i ? "," : "", g_libs[i]);
+    for (int i = 0; i < g_nbets; i++) k2 += snprintf(s2 + k2, sizeof s2 - k2, "%s%d", i ? "," : "", g_bets[i]);
+    logf_("CONFIG %s lib=%s betano=%s (resto: JK PATCHS)", fd >= 0 ? "craque.txt" : "padrao", s1, s2);
 }
 
 static void *trabalho(void *arg)
@@ -173,9 +187,9 @@ static void *trabalho(void *arg)
     struct proc_info pi; memset(&pi, 0, sizeof pi);
     if (sys_sdk_proc_info(&pi) != 0) { logf_("ERRO proc_info"); return 0; }
     g_base = pi.base_address;
-    logf_("JK_CRAQUE v1.01 titulo=%s versao=%s", pi.titleid, pi.version);
+    logf_("JK_CRAQUE v1.02 titulo=%s versao=%s", pi.titleid, pi.version);
     if (strncmp(pi.titleid, "CUSA18676", 9) != 0 && strncmp(pi.titleid, "CUSA22062", 9) != 0) { logf_("titulo diferente: parado"); return 0; }
-    if (existe(PASTA "/craque_off.txt")) { logf_("DESLIGADO (craque_off.txt): todas as partidas com o Craque Betano"); return 0; }
+    if (existe(PASTA "/craque_off.txt")) { logf_("DESLIGADO (craque_off.txt): o jogo pede sempre as pastas 1 (Craque Betano)"); return 0; }
     ler_config();
     sceKernelUsleep(3000000);              /* deixa o jogo subir antes de gravar no executavel */
     instalar();
@@ -185,7 +199,7 @@ static void *trabalho(void *arg)
         int comp = *(volatile int32_t *)(g_base + RVA_COMPET);
         if (comp != 0) g_comp_partida = comp;
         if (comp != comp_ant) { logf_("t=%ds COMPETICAO agora=%d", tic / 5, comp); comp_ant = comp; }
-        if (g_comp_partida != part_ant) { part_ant = g_comp_partida; logf_("t=%ds PARTIDA competicao=%d -> visual %s", tic / 5, part_ant, eh_lib(part_ant) ? "LIBERTADORES" : "BETANO"); }
+        if (g_comp_partida != part_ant) { part_ant = g_comp_partida; logf_("t=%ds PARTIDA competicao=%d -> visual %s", tic / 5, part_ant, nome_visual(visual(part_ant))); }
         tic++;
         while (g_anel_lido != g_anel_pos) {
             if (g_anel_pos - g_anel_lido > ANEL) g_anel_lido = g_anel_pos - ANEL;
