@@ -8,6 +8,11 @@
  * Troca os 2 clubes no jogo marcado (antes da data), no confronto, na lista de inscritos e no nome.
  * Se o clube do usuario entrar, grava o jogo na agenda dele.
  *
+ * v1.04: Sula - as rodadas vazias do mata-mata (oitavas, quartas, semi, final) recebem confrontos
+ *        "a definir" como nas copas do jogo; sem isso a tela Eliminatorias caia (CE-34878-0).
+ *        Desligar: /data/jk/super/sem_chaves.txt. O gancho da lista fica desligado (so com com_gancho.txt).
+ * v1.03f: confere os bytes do jogo lendo direto (a v1.03e recusava o gancho com 00 00 00 00).
+ * v1.03f: /data/jk/super/sem_categoria.txt devolve as duas copas a categoria original (teste).
  * v1.03e: o primeiro codigo do .prx volta a ser o plugin_load (o console executa o endereco 0 ao carregar;
  *        na v1.03b/c/d ali estava o trecho em assembly do gancho e o jogo caia ao abrir).
  * v1.03d: plugin_load igual ao da v1.02 (so cria a thread); v1.03/b/c travavam ao abrir o jogo por trabalhar no plugin_load.
@@ -42,7 +47,7 @@
 attr_public const char *g_pluginName = "jk_supercopas";
 attr_public const char *g_pluginDesc = "JK PATCHS - Supercopa Rei e Recopa na Master League";
 attr_public const char *g_pluginAuth = "JK PATCHS";
-attr_public uint32_t g_pluginVersion = 0x00000107;
+attr_public uint32_t g_pluginVersion = 0x00000109;
 
 int jk_qmp(void *addr, void **start, void **end, int *prot) __asm__("sceKernelQueryMemoryProtection");
 
@@ -283,13 +288,15 @@ static int gravar_eboot(uint64_t dest, const void *src, uint64_t n)
 static void instalar_lista(void)
 {
     static const uint8_t esperado[17] = {0x55,0x48,0x89,0xe5,0x41,0x57,0x41,0x56,0x41,0x55,0x41,0x54,0x53,0x48,0x83,0xec,0x78};
-    if (existe(PASTA "/sem_gancho.txt")) { logf_("GANCHO_LISTA desligado (sem_gancho.txt)"); return; }
+    if (!existe(PASTA "/com_gancho.txt")) { logf_("GANCHO_LISTA desligado (padrao da v1.04; criar com_gancho.txt para testar)"); return; }
     uint64_t f = g_base + RVA_LISTA_LIGA;
-    if (!legivel(f, sizeof esperado) || memcmp((const void *)f, esperado, sizeof esperado) != 0) {
-        const uint8_t *b = (const uint8_t *)f;
-        int ok = legivel(f, 4);
+    /* codigo do jogo: sempre mapeado e legivel (o legivel() so serve para os dados do save) */
+    const volatile uint8_t *b = (const volatile uint8_t *)f;
+    int iguais = 1;
+    for (int i = 0; i < (int)sizeof esperado; i++) if (b[i] != esperado[i]) { iguais = 0; break; }
+    if (!iguais) {
         logf_("GANCHO_LISTA recusado=bytes_diferentes (%02x %02x %02x %02x): as abas funcionam, a lista da liga fica sem filtro",
-              ok ? b[0] : 0, ok ? b[1] : 0, ok ? b[2] : 0, ok ? b[3] : 0);
+              b[0], b[1], b[2], b[3]);
         return;
     }
     logf_("GANCHO_LISTA passo=bytes_conferidos");
@@ -538,6 +545,71 @@ static void acompanhar(uint64_t db, int ano, int hoje)
     }
 }
 
+
+/* ---- Sula: chaves vazias das eliminatorias ----
+ * O plugin do RB cria o mata-mata da Sula (regra 6) com 5 rodadas, mas so publica a
+ * primeira (playoff). As outras ficam com 0 confrontos e a tela "Eliminatorias" do jogo
+ * cai (CE-34878-0). Aqui as rodadas vazias recebem confrontos "a definir" no mesmo
+ * formato que o jogo usa nas copas dele (times ffffffff, sem jogos, ligacoes entre fases).
+ * Quando o RB publica a rodada de verdade, ele grava por cima. */
+#define RODADA_STRIDE 0x208
+#define SULA_REGRA    6
+static int g_sem_chaves = -1;
+static uint32_t ref_fase(int idx, int fase, uint32_t chave) { return ((uint32_t)((idx << 6) | fase) << 16) | (chave & 0xffff); }
+static int vagas_do_codigo(int cod)
+{
+    switch (cod) { case 0xbc: case 0xc0: return 8; case 0xcc: return 4; case 0xd0: return 2; case 0xd4: return 1; }
+    return 0;
+}
+static void chaves_sula(uint64_t db)
+{
+    static int conta = 0;
+    if (g_sem_chaves < 0 || ++conta >= 15) {
+        conta = 0;
+        int s = existe(PASTA "/sem_chaves.txt");
+        if (s != g_sem_chaves) logf_(s ? "CHAVES_SULA desligado (sem_chaves.txt)" : "CHAVES_SULA ligado");
+        g_sem_chaves = s;
+    }
+    if (g_sem_chaves) return;
+    uint32_t n = U32(db + DB_COMP_N);
+    if (n > 400) return;
+    for (uint32_t i = 0; i < n; i++) {
+        uint64_t cp = db + DB_COMP_TAB + (uint64_t)i * COMP_STRIDE;
+        if (U32(cp + 0xf4) != SULA_REGRA || U32(cp + 0xf8) != 3) continue;
+        uint32_t rod[8]; int nr = 0;
+        for (int k = 0; k < 8; k++) { uint32_t r = U32(cp + 0xfc + 4 * k); if (r == 0xffffffff) break; rod[nr++] = r; }
+        if (nr < 2 || rod[0] > 0x2000) continue;
+        uint64_t r0 = db + DB_CONFRONTOS + (uint64_t)rod[0] * RODADA_STRIDE;
+        if (*(volatile uint8_t *)(r0 + 0x204) == 0) continue;      /* playoff ainda nao publicado */
+        for (int k = 1; k < nr; k++) {
+            if (rod[k] > 0x2000) break;
+            uint64_t r = db + DB_CONFRONTOS + (uint64_t)rod[k] * RODADA_STRIDE;
+            volatile uint8_t *cnt = (volatile uint8_t *)(r + 0x204);
+            int cod = *(volatile uint8_t *)(r + 0x207);
+            if (*cnt != 0) continue;                                 /* ja publicada (pelo RB ou por nos) */
+            int vagas = vagas_do_codigo(cod), fase = cod >> 2;
+            if (!vagas) continue;
+            int livre = 1;
+            for (int t = 0; t < 16; t++) if (U32(r + 4 + t * 0x20) != 0xffffffff || U32(r + 8 + t * 0x20) != 0xffffffff) livre = 0;
+            if (!livre) continue;
+            uint32_t chave = U32(r);
+            int prox = (k + 1 < nr) ? (*(volatile uint8_t *)(db + DB_CONFRONTOS + (uint64_t)rod[k + 1] * RODADA_STRIDE + 0x207) >> 2) : -1;
+            int ant = (k - 1 >= 1) ? (*(volatile uint8_t *)(db + DB_CONFRONTOS + (uint64_t)rod[k - 1] * RODADA_STRIDE + 0x207) >> 2) : -1;
+            for (int t = 0; t < vagas; t++) {
+                uint64_t c = r + 4 + t * 0x20;
+                U32(c + 0x00) = 0xffffffff;  U32(c + 0x04) = 0xffffffff;  U32(c + 0x08) = 0xffffffff;
+                U32(c + 0x0c) = ref_fase(t, fase, chave);
+                U32(c + 0x10) = (prox >= 0 && cod != 0xd4) ? ref_fase(t >> 1, prox, chave) : 0x07f7ffff;
+                U32(c + 0x14) = 0x07f7ffff;
+                U32(c + 0x18) = (ant >= 0) ? ref_fase(2 * t, ant, chave) : 0x07f7ffff;
+                U32(c + 0x1c) = (ant >= 0) ? ref_fase(2 * t + 1, ant, chave) : 0x07f7ffff;
+            }
+            *cnt = (uint8_t)vagas;
+            logf_("CHAVES_SULA comp=%u rodada=0x%x codigo=0x%02x vagas=%d a definir", i, rod[k], cod, vagas);
+        }
+    }
+}
+
 static campeoes_t g_camp;
 static int g_camp_ano = 0, g_camp_ok = 0;
 
@@ -548,6 +620,7 @@ static void ciclo(uint64_t db)
     if (ano < 2000 || ano > 2100 || hoje > 365) return;   /* carreira ainda nao comecou */
 
     acompanhar(db, ano, hoje);
+    chaves_sula(db);
 
     if (g_camp_ano != ano) {                               /* le os campeoes da temporada anterior 1x */
         g_camp_ano = ano;
@@ -562,6 +635,14 @@ static void ciclo(uint64_t db)
     renomear(db, g_copas[0].chave, ok_sup ? g_copas[0].nome : g_copas[0].nome_original);
     renomear(db, g_copas[1].chave, ok_rec ? g_copas[1].nome : g_copas[1].nome_original);
     int dezembro = hoje >= DIA_VOLTA_CATEG;                 /* virada da temporada: categoria original */
+    static int sem_cat = -1, conta = 0;
+    if (sem_cat < 0 || ++conta >= 15) {                     /* confere o arquivo a cada ~30 s */
+        conta = 0;
+        int s2 = existe(PASTA "/sem_categoria.txt");
+        if (s2 != sem_cat) logf_(s2 ? "CATEGORIA desligada (sem_categoria.txt): copas na categoria original" : "CATEGORIA ligada");
+        sem_cat = s2;
+    }
+    if (sem_cat) dezembro = 1;
     categoria(db, &g_copas[0], ok_sup && !dezembro);
     categoria(db, &g_copas[1], ok_rec && !dezembro);
     static uint32_t tiradas_log = 0;
@@ -581,7 +662,7 @@ static void *trabalho(void *arg)
     struct proc_info pi; memset(&pi, 0, sizeof pi);
     if (sys_sdk_proc_info(&pi) != 0) { logf_("ERRO proc_info"); return 0; }
     g_base = pi.base_address;
-    logf_("JK_SUPERCOPAS v1.03e titulo=%s versao=%s", pi.titleid, pi.version);
+    logf_("JK_SUPERCOPAS v1.04 titulo=%s versao=%s", pi.titleid, pi.version);
     if (strncmp(pi.titleid, "CUSA18676", 9) != 0) { logf_("titulo diferente: parado"); return 0; }
 
     uint64_t ultimo = 0;
