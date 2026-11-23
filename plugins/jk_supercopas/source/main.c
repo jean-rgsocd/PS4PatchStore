@@ -8,6 +8,8 @@
  * Troca os 2 clubes no jogo marcado (antes da data), no confronto, na lista de inscritos e no nome.
  * Se o clube do usuario entrar, grava o jogo na agenda dele.
  *
+ * v1.07: Eliminatorias da Sula ABREM (testado no console): correcao do chaveamento (v1.06) +
+ *        chaves "a definir" ligadas por padrao. Desligar as chaves: sem_chaves.txt.
  * v1.06: corrige a tela de chaveamento no proprio jogo (eboot 0xd69053, 5 bytes, conferidos antes)
  *        e desfaz o ajuste de tipo da v1.05. Desligar: sem_chaveamento.txt.
  * v1.05: CAUSA da queda nas Eliminatorias da Sula (queda.log, eboot 0xd694c0): a primeira fase (0xe)
@@ -57,7 +59,7 @@
 attr_public const char *g_pluginName = "jk_supercopas";
 attr_public const char *g_pluginDesc = "JK PATCHS - Supercopa Rei e Recopa na Master League";
 attr_public const char *g_pluginAuth = "JK PATCHS";
-attr_public uint32_t g_pluginVersion = 0x0000010e;
+attr_public uint32_t g_pluginVersion = 0x0000010f;
 
 int jk_qmp(void *addr, void **start, void **end, int *prot) __asm__("sceKernelQueryMemoryProtection");
 
@@ -564,7 +566,7 @@ static void acompanhar(uint64_t db, int ano, int hoje)
  * Quando o RB publica a rodada de verdade, ele grava por cima. */
 #define RODADA_STRIDE 0x208
 #define SULA_REGRA    6
-static int g_sem_chaves = -1, g_com_chaves = 0;
+static int g_sem_chaves = -1, g_com_chaves = -1;
 static uint32_t ref_fase(int idx, int fase, uint32_t chave) { return ((uint32_t)((idx << 6) | fase) << 16) | (chave & 0xffff); }
 static int vagas_do_codigo(int cod)
 {
@@ -578,8 +580,8 @@ static void chaves_sula(uint64_t db)
         conta = 0;
         int s = existe(PASTA "/sem_fase.txt");
         if (s != g_sem_chaves) logf_(s ? "FASE_SULA desligado (sem_fase.txt)" : "FASE_SULA ligado");
-        int c = existe(PASTA "/com_chaves.txt");
-        if (c != g_com_chaves) logf_(c ? "CHAVES_SULA ligado (com_chaves.txt)" : "CHAVES_SULA desligado");
+        int c = !existe(PASTA "/sem_chaves.txt");             /* v1.07: ligado por padrao (sem isso o chaveamento cai) */
+        if (c != g_com_chaves) logf_(c ? "CHAVES_SULA ligado" : "CHAVES_SULA desligado (sem_chaves.txt)");
         g_com_chaves = c;
         g_sem_chaves = s;
     }
@@ -793,7 +795,7 @@ static void *trabalho(void *arg)
     struct proc_info pi; memset(&pi, 0, sizeof pi);
     if (sys_sdk_proc_info(&pi) != 0) { logf_("ERRO proc_info"); return 0; }
     g_base = pi.base_address;
-    logf_("JK_SUPERCOPAS v1.06 titulo=%s versao=%s", pi.titleid, pi.version);
+    logf_("JK_SUPERCOPAS v1.07 titulo=%s versao=%s", pi.titleid, pi.version);
     if (strncmp(pi.titleid, "CUSA18676", 9) != 0) { logf_("titulo diferente: parado"); return 0; }
 
     uint64_t ultimo = 0;
