@@ -1,5 +1,5 @@
 /*
- * JK SUPERCOPAS v1.00 - PES 2021 (CUSA18676, eboot 01.08 Mega/Brasfoot)
+ * JK SUPERCOPAS v1.01 - PES 2021 (CUSA18676, eboot 01.08 Mega/Brasfoot)
  *
  * Aproveita duas supercopas nativas da Master League (jogo unico, penaltis e taca do proprio jogo):
  *   Supercopa Uruguaya (chave 0xa5, 1 de fevereiro)   -> "Supercopa Rei"   (campeao brasileiro x campeao da Copa do Brasil)
@@ -8,6 +8,10 @@
  * Troca os 2 clubes no jogo marcado (antes da data), no confronto, na lista de inscritos e no nome.
  * Se o clube do usuario entrar, grava o jogo na agenda dele.
  *
+ * v1.01: os campeoes de cada temporada sao descobertos SOZINHOS na ML e gravados em campeoes-ANO.txt
+ *        (Brasileirao: tabela final; Copa do Brasil e Libertadores: final com agregado/prorrogacao/penaltis;
+ *         Sul-Americana: /data/PES21/sulamericana/campeoes.txt do plugin do RB, ou a final dela).
+ *        Sem campeoes, as duas copas voltam ao nome original (nunca "Supercopa Rei" com outros clubes).
  * Campeoes: /data/jk/super/campeoes-ANO.txt (ANO = temporada anterior). Sem arquivo, 2025 usa os campeoes reais:
  *   BRASILEIRO=1248 (Flamengo)  VICE_BRASILEIRO=137 (Palmeiras)  COPA_DO_BRASIL=1247 (Corinthians)
  *   LIBERTADORES=1248 (Flamengo)  SULAMERICANA=1929 (Lanus)
@@ -27,7 +31,7 @@
 attr_public const char *g_pluginName = "jk_supercopas";
 attr_public const char *g_pluginDesc = "JK PATCHS - Supercopa Rei e Recopa na Master League";
 attr_public const char *g_pluginAuth = "JK PATCHS";
-attr_public uint32_t g_pluginVersion = 0x00000100;
+attr_public uint32_t g_pluginVersion = 0x00000101;
 
 int jk_qmp(void *addr, void **start, void **end, int *prot) __asm__("sceKernelQueryMemoryProtection");
 
@@ -103,6 +107,8 @@ static uint64_t carreira(void)
     return db;
 }
 
+static int existe(const char *p) { OrbisKernelStat st; return sceKernelStat(p, &st) == 0; }
+
 static const uint16_t g_mes_ini[12] = {0,31,59,90,120,151,181,212,243,273,304,334};
 static int dia_do_ano(int mes, int dia) { if (mes < 1 || mes > 12) return -1; return g_mes_ini[mes - 1] + dia - 1; }
 
@@ -171,13 +177,14 @@ static void escrever_nome(uint64_t campo, const char *nome)
 typedef struct {
     uint16_t chave;      /* competicao nativa reaproveitada */
     const char *nome;
+    const char *nome_original;
     const char *rotulo;
     int feito_ano;       /* ultimo ano ja aplicado/verificado */
 } copa_t;
 
 static copa_t g_copas[2] = {
-    { 0xa5, "Supercopa Rei",   "SUPERCOPA", 0 },
-    { 0x83, "CONMEBOL Recopa", "RECOPA",    0 },
+    { 0xa5, "Supercopa Rei",   "Supercopa Uruguaya",            "SUPERCOPA", 0 },
+    { 0x83, "CONMEBOL Recopa", "Super Ta\xc3\xa7" "a Colombiana", "RECOPA",    0 },
 };
 
 static void renomear(uint64_t db, uint16_t chave, const char *nome)
@@ -264,6 +271,156 @@ static int aplicar(uint64_t db, copa_t *cp, int ano, int hoje, int ta, int tb)
     return 1;
 }
 
+
+/* ---------- campeoes da temporada atual, achados na propria ML ---------- */
+typedef struct { int idx, doy, ok, h, a, hg, ag, het, aet, ph, pa; uint16_t k; } jogo_t;
+
+static int ler_jogo(uint64_t db, int i, jogo_t *g)
+{
+    uint64_t j = db + DB_JOGOS + (uint64_t)i * JOGO_STRIDE;
+    volatile uint8_t *b = (volatile uint8_t *)(j + 0x1c);
+    g->idx = i; g->k = U16(j + 2);
+    g->doy = dia_do_ano(*(volatile uint8_t *)(j + 10), *(volatile uint8_t *)(j + 11));
+    g->ok = (U16(j + 4) & 0x4000) != 0;                       /* jogo disputado */
+    g->h = (U32(j + 0x14) >> 14) & 0x1ffff; g->a = (U32(j + 0x18) >> 14) & 0x1ffff;
+    g->hg = b[0]; g->het = b[1]; g->ph = b[2];                 /* mesmo layout que o plugin da Sula usa */
+    g->ag = b[3]; g->aet = b[4]; g->pa = b[5];
+    return 1;
+}
+
+/* campeao de um mata-mata (final em jogo unico ou ida e volta). 0 = ainda nao terminou ou indefinido */
+static int campeao_mata(uint64_t db, uint16_t comp, int ano, const char **metodo)
+{
+    int total = 0, pend = 0, ultimo = -1, nult = 0;
+    jogo_t f; memset(&f, 0, sizeof f);
+    for (int i = 0; i < JOGOS_MAX; i++) {
+        uint64_t j = db + DB_JOGOS + (uint64_t)i * JOGO_STRIDE;
+        if ((U16(j + 2) & 0x3ff) != comp || U16(j + 8) != ano) continue;
+        jogo_t g; ler_jogo(db, i, &g); total++;
+        if (!g.ok || g.h >= 0x1ffff || g.a >= 0x1ffff || !g.h || !g.a) { pend++; continue; }   /* sem clube definido = fase ainda por vir */
+        if (g.doy > ultimo) { ultimo = g.doy; nult = 1; f = g; } else if (g.doy == ultimo) nult++;
+    }
+    *metodo = "nada";
+    if (!total) return 0;
+    if (pend) { *metodo = "em_andamento"; return 0; }
+    if (nult != 1) { *metodo = "final_ambigua"; return 0; }
+    /* ida: mesmo confronto invertido, mesma fase, ate 21 dias antes */
+    jogo_t ida; int tem_ida = 0;
+    for (int i = 0; i < JOGOS_MAX; i++) {
+        uint64_t j = db + DB_JOGOS + (uint64_t)i * JOGO_STRIDE;
+        if (U16(j + 2) != f.k || U16(j + 8) != ano) continue;
+        jogo_t g; ler_jogo(db, i, &g);
+        if (g.h == f.a && g.a == f.h && g.ok && g.doy < f.doy && f.doy - g.doy <= 21 && (!tem_ida || g.doy > ida.doy)) { ida = g; tem_ida = 1; }
+    }
+    if (tem_ida) {
+        int tx = ida.hg + ida.het + f.ag + f.aet;              /* x = mandante da ida = visitante da volta */
+        int ty = ida.ag + ida.aet + f.hg + f.het;
+        if (tx != ty) { *metodo = "agregado"; return tx > ty ? f.a : f.h; }
+        if (f.ph != f.pa) { *metodo = "penaltis"; return f.ph > f.pa ? f.h : f.a; }
+        *metodo = "empate_sem_penaltis"; return 0;
+    }
+    int th = f.hg + f.het, ta = f.ag + f.aet;
+    if (th != ta) { *metodo = "jogo_unico"; return th > ta ? f.h : f.a; }
+    if (f.ph != f.pa) { *metodo = "penaltis"; return f.ph > f.pa ? f.h : f.a; }
+    *metodo = "empate_sem_penaltis"; return 0;
+}
+
+/* campeao e vice de liga pontos corridos (chave completa, ex.: 0x1d). 0 = ainda falta jogo */
+typedef struct { int id, pts, v, sg, gp; } linha_t;
+static int campeao_liga(uint64_t db, uint16_t chave, int ano, int *vice)
+{
+    static linha_t t[64]; int n = 0, jogos = 0;
+    *vice = 0;
+    for (int i = 0; i < JOGOS_MAX; i++) {
+        uint64_t j = db + DB_JOGOS + (uint64_t)i * JOGO_STRIDE;
+        if (U16(j + 2) != chave || U16(j + 8) != ano) continue;
+        jogo_t g; ler_jogo(db, i, &g); jogos++;
+        if (!g.ok || g.h >= 0x1ffff || g.a >= 0x1ffff || !g.h || !g.a) return 0;
+        int ids[2] = { g.h, g.a }, gf[2] = { g.hg, g.ag };
+        for (int s = 0; s < 2; s++) {
+            int k = 0; while (k < n && t[k].id != ids[s]) k++;
+            if (k == n) { if (n >= 64) return 0; memset(&t[n], 0, sizeof t[n]); t[n].id = ids[s]; n++; }
+            int a = gf[s], b = gf[1 - s];
+            t[k].pts += a > b ? 3 : a == b ? 1 : 0; t[k].v += a > b; t[k].sg += a - b; t[k].gp += a;
+        }
+    }
+    if (jogos < 10 || n < 2) return 0;
+    int p1 = -1, p2 = -1;
+    for (int k = 0; k < n; k++) {
+        #define MELHOR(x, y) (t[x].pts != t[y].pts ? t[x].pts > t[y].pts : t[x].v != t[y].v ? t[x].v > t[y].v : t[x].sg != t[y].sg ? t[x].sg > t[y].sg : t[x].gp > t[y].gp)
+        if (p1 < 0 || MELHOR(k, p1)) { p2 = p1; p1 = k; }
+        else if (p2 < 0 || MELHOR(k, p2)) p2 = k;
+    }
+    *vice = p2 >= 0 ? t[p2].id : 0;
+    return t[p1].id;
+}
+
+/* campeao da Sula gravado pelo plugin do RB: linhas "ANO=2026 CAMPEAO=1929 ..." */
+static int sula_do_rb(int ano)
+{
+    int fd = sceKernelOpen("/data/PES21/sulamericana/campeoes.txt", 0, 0);
+    if (fd < 0) return 0;
+    static char t[8192]; int n = (int)sceKernelRead(fd, t, sizeof t - 1); sceKernelClose(fd);
+    if (n <= 0) return 0;
+    t[n] = 0;
+    int achado = 0; char *p = t;
+    while (*p) {
+        char *e = p; while (*e && *e != '\n') e++;
+        char sv = *e; *e = 0;
+        char *pa = strstr(p, "ANO="), *pc = strstr(p, "CAMPEAO=");
+        if (pa && pc) {
+            int a = 0, c = 0;
+            for (char *q = pa + 4; *q >= '0' && *q <= '9'; q++) a = a * 10 + (*q - '0');
+            for (char *q = pc + 8; *q >= '0' && *q <= '9'; q++) c = c * 10 + (*q - '0');
+            if (a == ano && c) achado = c > 0x1ffff ? (c >> 14) & 0x1ffff : c;
+        }
+        *e = sv; p = *e ? e + 1 : e;
+    }
+    return achado;
+}
+
+static campeoes_t g_atual; static int g_atual_ano = 0;
+
+static void gravar_campeoes(int ano, const campeoes_t *c)
+{
+    char nome[96]; snprintf(nome, sizeof nome, PASTA "/campeoes-%d.txt", ano);
+    char t[512];
+    int n = snprintf(t, sizeof t, "# gravado sozinho pelo jk_supercopas (temporada %d)\nBRASILEIRO=%d\nVICE_BRASILEIRO=%d\nCOPA_DO_BRASIL=%d\nLIBERTADORES=%d\nSULAMERICANA=%d\n",
+                     ano, c->br, c->vice_br, c->cdb, c->lib, c->sula);
+    int fd = sceKernelOpen(nome, 0x0001 | 0x0200 | 0x0400, 0666);
+    if (fd >= 0) { sceKernelWrite(fd, t, n); sceKernelClose(fd); }
+}
+
+/* roda a cada ciclo: quando um titulo da temporada atual fica definido, grava no arquivo */
+static void acompanhar(uint64_t db, int ano, int hoje)
+{
+    static int ultimo_hoje = -1;
+    if (g_atual_ano != ano) {                 /* comeca com o que ja estiver gravado desta temporada */
+        g_atual_ano = ano; memset(&g_atual, 0, sizeof g_atual);
+        campeoes_t c;
+        char nome[96]; snprintf(nome, sizeof nome, PASTA "/campeoes-%d.txt", ano);
+        if (existe(nome) && ler_campeoes(ano, &c)) g_atual = c;
+        ultimo_hoje = -1;
+    }
+    if (hoje == ultimo_hoje) return;          /* so recalcula quando o dia muda */
+    ultimo_hoje = hoje;
+    if (hoje < 240) return;                   /* titulos so se definem no 2o semestre */
+    campeoes_t c = g_atual; const char *m1 = "", *m2 = "", *m3 = "";
+    int vice = 0, br = campeao_liga(db, 0x1d, ano, &vice);
+    if (br) { c.br = br; c.vice_br = vice; }
+    int cdb = campeao_mata(db, 0x1f, ano, &m1); if (cdb) c.cdb = cdb;
+    int lib = campeao_mata(db, 0x09, ano, &m2); if (lib) c.lib = lib;
+    int sula = sula_do_rb(ano);
+    if (!sula) { sula = campeao_mata(db, 0x0c, ano, &m3); }
+    if (sula) c.sula = sula;
+    if (memcmp(&c, &g_atual, sizeof c) != 0) {
+        g_atual = c;
+        gravar_campeoes(ano, &c);
+        logf_("CAMPEOES_DA_TEMPORADA ano=%d br=%d vice=%d cdb=%d(%s) lib=%d(%s) sula=%d%s",
+              ano, c.br, c.vice_br, c.cdb, m1, c.lib, m2, c.sula, *m3 ? " (final da ML)" : " (plugin da Sula)");
+    }
+}
+
 static campeoes_t g_camp;
 static int g_camp_ano = 0, g_camp_ok = 0;
 
@@ -273,19 +430,22 @@ static void ciclo(uint64_t db)
     int ano = U16(db + DB_DATA + 2);
     if (ano < 2000 || ano > 2100 || hoje > 365) return;   /* carreira ainda nao comecou */
 
-    for (int k = 0; k < 2; k++) renomear(db, g_copas[k].chave, g_copas[k].nome);
+    acompanhar(db, ano, hoje);
 
-    if (g_camp_ano != ano) {                               /* le o arquivo 1x por temporada */
+    if (g_camp_ano != ano) {                               /* le os campeoes da temporada anterior 1x */
         g_camp_ano = ano;
         g_camp_ok = ler_campeoes(ano - 1, &g_camp);
-        if (!g_camp_ok) logf_("AGUARDANDO campeoes-%d.txt (sem campeoes da temporada anterior)", ano - 1);
+        if (!g_camp_ok) logf_("SEM_CAMPEOES de %d: as duas copas ficam com o nome e os clubes originais nesta temporada", ano - 1);
         g_copas[0].feito_ano = g_copas[1].feito_ano = 0;
     }
-    if (!g_camp_ok) return;
     campeoes_t *c = &g_camp;
     int b_sup = (c->cdb == c->br) ? c->vice_br : c->cdb;
-    if (c->br && b_sup && c->br != b_sup) aplicar(db, &g_copas[0], ano, hoje, c->br, b_sup);
-    if (c->lib && c->sula && c->lib != c->sula) aplicar(db, &g_copas[1], ano, hoje, c->lib, c->sula);
+    int ok_sup = g_camp_ok && c->br && b_sup && c->br != b_sup;
+    int ok_rec = g_camp_ok && c->lib && c->sula && c->lib != c->sula;
+    renomear(db, g_copas[0].chave, ok_sup ? g_copas[0].nome : g_copas[0].nome_original);
+    renomear(db, g_copas[1].chave, ok_rec ? g_copas[1].nome : g_copas[1].nome_original);
+    if (ok_sup) aplicar(db, &g_copas[0], ano, hoje, c->br, b_sup);
+    if (ok_rec) aplicar(db, &g_copas[1], ano, hoje, c->lib, c->sula);
 }
 
 static void *trabalho(void *arg)
@@ -296,7 +456,7 @@ static void *trabalho(void *arg)
     struct proc_info pi; memset(&pi, 0, sizeof pi);
     if (sys_sdk_proc_info(&pi) != 0) { logf_("ERRO proc_info"); return 0; }
     g_base = pi.base_address;
-    logf_("JK_SUPERCOPAS v1.00 titulo=%s versao=%s", pi.titleid, pi.version);
+    logf_("JK_SUPERCOPAS v1.01 titulo=%s versao=%s", pi.titleid, pi.version);
     if (strncmp(pi.titleid, "CUSA18676", 9) != 0) { logf_("titulo diferente: parado"); return 0; }
 
     uint64_t ultimo = 0;
