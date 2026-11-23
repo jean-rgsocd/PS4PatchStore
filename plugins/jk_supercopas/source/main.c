@@ -8,6 +8,7 @@
  * Troca os 2 clubes no jogo marcado (antes da data), no confronto, na lista de inscritos e no nome.
  * Se o clube do usuario entrar, grava o jogo na agenda dele.
  *
+ * v1.03c: gancho instalado so com a ML aberta (nada na abertura do jogo) e log de cada passo.
  * v1.03b: gancho gravado pelo kernel do GoldHEN (proc_rw), como o do RB; a v1.03 travava ao abrir o jogo.
  *        Para desligar o gancho: criar /data/jk/super/sem_gancho.txt
  * v1.03: categoria no menu "Categoria de competicao": Supercopa Rei na aba BRASIL e Recopa nos INTERNACIONAIS
@@ -38,7 +39,7 @@
 attr_public const char *g_pluginName = "jk_supercopas";
 attr_public const char *g_pluginDesc = "JK PATCHS - Supercopa Rei e Recopa na Master League";
 attr_public const char *g_pluginAuth = "JK PATCHS";
-attr_public uint32_t g_pluginVersion = 0x00000104;
+attr_public uint32_t g_pluginVersion = 0x00000105;
 
 int jk_qmp(void *addr, void **start, void **end, int *prot) __asm__("sceKernelQueryMemoryProtection");
 
@@ -263,6 +264,8 @@ static volatile uint32_t g_lista_tiradas = 0;
 
 static void *lista_liga_hook(void *saida, uint32_t liga)
 {
+    static volatile int primeira = 1;
+    if (primeira) { primeira = 0; logf_("GANCHO_LISTA passo=primeira_chamada liga=%u", liga); }
     void *r = jk_lista_orig(saida, liga);
     if (saida && liga != (uint32_t)g_copas[0].regra && liga != (uint32_t)g_copas[1].regra) {
         int32_t *l = (int32_t *)saida + 1;          /* [0] = liga, [1..6] = copas */
@@ -298,12 +301,14 @@ static void instalar_lista(void)
               ok ? b[0] : 0, ok ? b[1] : 0, ok ? b[2] : 0, ok ? b[3] : 0);
         return;
     }
+    logf_("GANCHO_LISTA passo=bytes_conferidos");
     g_lista_volta = f + sizeof esperado;
     uint8_t salto[17];
     uint64_t alvo = (uint64_t)(void *)lista_liga_hook;
     salto[0] = 0xff; salto[1] = 0x25; salto[2] = salto[3] = salto[4] = salto[5] = 0;   /* jmp [rip+0] */
     memcpy(salto + 6, &alvo, 8);
     salto[14] = salto[15] = salto[16] = 0x90;
+    logf_("GANCHO_LISTA passo=gravando hook=%p volta=0x%llx", (void *)lista_liga_hook, (unsigned long long)g_lista_volta);
     if (!gravar_eboot(f, salto, sizeof salto)) {
         gravar_eboot(f, esperado, sizeof esperado);
         logf_("GANCHO_LISTA recusado=gravacao: as abas funcionam, a lista da liga fica sem filtro");
@@ -585,9 +590,8 @@ static void *trabalho(void *arg)
     struct proc_info pi; memset(&pi, 0, sizeof pi);
     if (sys_sdk_proc_info(&pi) != 0) { logf_("ERRO proc_info"); return 0; }
     g_base = pi.base_address;
-    logf_("JK_SUPERCOPAS v1.03b titulo=%s versao=%s", pi.titleid, pi.version);
+    logf_("JK_SUPERCOPAS v1.03c titulo=%s versao=%s", pi.titleid, pi.version);
     if (strncmp(pi.titleid, "CUSA18676", 9) != 0) { logf_("titulo diferente: parado"); return 0; }
-    if (!g_lista_ok) logf_("GANCHO_LISTA nao instalado");
 
     uint64_t ultimo = 0;
     while (g_rodando) {
@@ -595,6 +599,8 @@ static void *trabalho(void *arg)
         uint64_t db = carreira();
         if (!db) { if (ultimo) { g_copas[0].feito_ano = g_copas[1].feito_ano = 0; g_camp_ano = 0; ultimo = 0; } continue; }
         ultimo = db;
+        static int tentou_gancho = 0, espera = 0;
+        if (!tentou_gancho && ++espera >= 3) { tentou_gancho = 1; logf_("GANCHO_LISTA passo=inicio"); instalar_lista(); }
         ciclo(db);
     }
     return 0;
@@ -608,7 +614,7 @@ int32_t attr_public plugin_load(int32_t argc, const char *argv[])
         g_base = pi.base_address;
         sceKernelMkdir("/data/jk", 0777);
         sceKernelMkdir(PASTA, 0777);
-        instalar_lista();                                   /* antes do jogo abrir os menus */
+        logf_("JK_SUPERCOPAS v1.03c plugin_load (gancho so depois da ML aberta)");
     }
     scePthreadCreate(&g_thr, 0, trabalho, 0, "jk_supercopas");
     return 0;
