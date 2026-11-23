@@ -8,6 +8,9 @@
  * Troca os 2 clubes no jogo marcado (antes da data), no confronto, na lista de inscritos e no nome.
  * Se o clube do usuario entrar, grava o jogo na agenda dele.
  *
+ * v1.12: Eliminatorias da Sula antes do mata-mata (ex.: marco, entre a 1a fase e os grupos) caiam:
+ *        a correcao do chaveamento agora troca de modo conforme a fase (byte 0xd69054).
+ * v1.11: quando a competicao nao tem jogo na temporada, grava SEM_JOGO e lista (DIAG) os jogos dela.
  * v1.10: campeao da Sula: lia a competicao errada (0x0c = grupos; o mata-mata e 0x0d) e, se o arquivo
  *        da temporada ficou com SULAMERICANA=0, completa com o campeoes.txt do plugin do RB.
  * v1.09: CORRIGE a Sula parando no playoff: o RB le a contagem de confrontos de cada rodada para
@@ -66,7 +69,7 @@
 attr_public const char *g_pluginName = "jk_supercopas";
 attr_public const char *g_pluginDesc = "JK PATCHS - Supercopa Rei e Recopa na Master League";
 attr_public const char *g_pluginAuth = "JK PATCHS";
-attr_public uint32_t g_pluginVersion = 0x00000112;
+attr_public uint32_t g_pluginVersion = 0x00000114;
 
 int jk_qmp(void *addr, void **start, void **end, int *prot) __asm__("sceKernelQueryMemoryProtection");
 
@@ -221,6 +224,7 @@ typedef struct {
     int feito_ano;       /* ultimo ano ja aplicado/verificado */
     int regra;           /* id da regra (lista de copas) */
     int cat_nova, cat_original;
+    int diag_ano;        /* ultimo ano em que o diagnostico 'sem jogo' foi gravado (fica no fim: os inicializadores nao o citam) */
 } copa_t;
 
 static copa_t g_copas[2] = {
@@ -358,7 +362,24 @@ static int aplicar(uint64_t db, copa_t *cp, int ano, int hoje, int ta, int tb)
         idx = i; doy = dia_do_ano(*(volatile uint8_t *)(j + 10), *(volatile uint8_t *)(j + 11));
         break;
     }
-    if (idx < 0) return 0;                       /* calendario ainda nao gerado */
+    if (idx < 0) {                               /* calendario ainda nao gerado... ou o jogo nao existe nesta carreira */
+        int cal = 0;                             /* so diagnostica com o calendario da temporada ja carregado */
+        for (int i = 0; i < JOGOS_MAX && cal < 100; i++) { uint64_t g = db + DB_JOGOS + (uint64_t)i * JOGO_STRIDE; if (U16(g) == i && U16(g + 8) == ano) cal++; }
+        if (cp->diag_ano != ano && cal >= 100) {
+            cp->diag_ano = ano;
+            int n = 0;
+            for (int i = 0; i < JOGOS_MAX; i++) {
+                uint64_t g = db + DB_JOGOS + (uint64_t)i * JOGO_STRIDE;
+                if (U16(g) != i || (U16(g + 2) & 0x3ff) != (cp->chave & 0x3ff)) continue;
+                if (n++ < 8)
+                    logf_("%s DIAG jogo=%d comp=0x%x ano=%u mes=%u dia=%u %u-x-%u", cp->rotulo, i, U16(g + 2), U16(g + 8),
+                          *(volatile uint8_t *)(g + 10), *(volatile uint8_t *)(g + 11), (U32(g + 0x14) >> 14) & 0x1ffff, (U32(g + 0x18) >> 14) & 0x1ffff);
+            }
+            logf_("%s SEM_JOGO ano=%d hoje=%d: nenhum jogo da competicao 0x%x nesta temporada (jogos da competicao em qualquer ano: %d)",
+                  cp->rotulo, ano, hoje, cp->chave, n);
+        }
+        return 0;
+    }
     uint64_t j = db + DB_JOGOS + (uint64_t)idx * JOGO_STRIDE;
     uint32_t oa = U32(j + 0x14), ob = U32(j + 0x18);
     if (oa == va && ob == vb) return 1;          /* ja aplicado */
@@ -814,6 +835,46 @@ static void corrigir_chaveamento(void)
 }
 
 static campeoes_t g_camp;
+/* v1.12: o byte 0xd69054 escolhe qual fase a tela de chaveamento usa quando as duas buscas discordam:
+ *   0x89 (mov %ax,(%rcx))  -> usa a fase ATUAL   (certo quando o mata-mata da Sula esta rolando)
+ *   0x8b (mov (%rcx),%ax)  -> usa a 1a fase tipo 3 da copa (certo antes disso: mostra a primeira fase)
+ * Com a fase atual nos grupos, a versao 0x89 apontava para a fase-mae dos grupos e o jogo caia. */
+static int g_chave_modo = -1;
+static void ajustar_chaveamento(uint64_t db, int ano)
+{
+    if (existe(PASTA "/sem_chaveamento.txt")) return;
+    int ativo = 0;
+    uint32_t n = U32(db + DB_COMP_N);
+    for (uint32_t i = 0; i < n && i < 400; i++) {
+        uint64_t cp = db + DB_COMP_TAB + (uint64_t)i * COMP_STRIDE;
+        if (U32(cp + 0xf4) != SULA_REGRA || U32(cp + 0xf8) != 3) continue;
+        if (U32(cp + 0xfc) == 0xffffffff || U32(cp + 0x100) == 0xffffffff) continue;   /* so o mata-mata (2+ rodadas) */
+        uint32_t r0 = U32(cp + 0xfc); if (r0 > 0x2000) continue;
+        uint64_t r = db + DB_CONFRONTOS + (uint64_t)r0 * RODADA_STRIDE;
+        int nconf = *(volatile uint8_t *)(r + 0x204);
+        if (nconf <= 0 || nconf > 16) continue;
+        uint32_t id = U32(r + 4 + 8) & 0xffff;                     /* 1o jogo do 1o confronto */
+        if (id >= JOGOS_MAX) continue;
+        uint64_t g = db + DB_JOGOS + (uint64_t)id * JOGO_STRIDE;
+        if (U16(g) == id && U16(g + 8) == ano) ativo = 1;           /* mata-mata publicado nesta temporada */
+    }
+    uint8_t quer = ativo ? 0x89 : 0x8b;
+    if (g_chave_modo == quer) return;
+    uint64_t a = g_base + 0xd69054ULL;
+    uint8_t b[4] = {0};
+    if (!ler_eboot(a - 1, b, 4) || b[0] != 0x66 || b[2] != 0x01 || b[3] != 0x90 || (b[1] != 0x89 && b[1] != 0x8b)) {
+        if (g_chave_modo != -2) logf_("CHAVEAMENTO modo: bytes inesperados (%02x %02x %02x %02x), nao mexo", b[0], b[1], b[2], b[3]);
+        g_chave_modo = -2; return;
+    }
+    if (b[1] != quer) {
+        struct proc_rw rw; memset(&rw, 0, sizeof rw);
+        rw.address = a; rw.data = &quer; rw.length = 1; rw.write_flags = 1;
+        if (sys_sdk_proc_rw(&rw) != 0) { logf_("CHAVEAMENTO modo: gravacao recusada"); return; }
+    }
+    g_chave_modo = quer;
+    logf_("CHAVEAMENTO modo=%s", ativo ? "fase_atual (mata-mata da Sula rolando)" : "primeira_fase (antes do mata-mata)");
+}
+
 static int g_camp_ano = 0, g_camp_ok = 0;
 
 static void ciclo(uint64_t db)
@@ -824,6 +885,7 @@ static void ciclo(uint64_t db)
 
     acompanhar(db, ano, hoje);
     chaves_sula(db);
+    ajustar_chaveamento(db, ano);
 
     if (g_camp_ano != ano) {                               /* le os campeoes da temporada anterior 1x */
         g_camp_ano = ano;
@@ -872,7 +934,7 @@ static void *trabalho(void *arg)
     struct proc_info pi; memset(&pi, 0, sizeof pi);
     if (sys_sdk_proc_info(&pi) != 0) { logf_("ERRO proc_info"); return 0; }
     g_base = pi.base_address;
-    logf_("JK_SUPERCOPAS v1.10 titulo=%s versao=%s", pi.titleid, pi.version);
+    logf_("JK_SUPERCOPAS v1.12 titulo=%s versao=%s", pi.titleid, pi.version);
     if (strncmp(pi.titleid, "CUSA18676", 9) != 0) { logf_("titulo diferente: parado"); return 0; }
 
     uint64_t ultimo = 0;
