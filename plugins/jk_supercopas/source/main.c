@@ -8,6 +8,7 @@
  * Troca os 2 clubes no jogo marcado (antes da data), no confronto, na lista de inscritos e no nome.
  * Se o clube do usuario entrar, grava o jogo na agenda dele.
  *
+ * v1.15: aba Eliminatorias: liga o bit 0x100 (+0x378) do mata-mata da Sula, que o jogo le no menu.
  * v1.14: aba Eliminatorias apagada no mata-mata: o "a definir" nao aponta mais para rodada ja sorteada pelo RB.
  * v1.13: a aba (categoria) so muda depois que o jogo da copa existe no calendario: numa ML nova a Recopa
  *        nos internacionais impedia o jogo de criar a partida dela.
@@ -72,7 +73,7 @@
 attr_public const char *g_pluginName = "jk_supercopas";
 attr_public const char *g_pluginDesc = "JK PATCHS - Supercopa Rei e Recopa na Master League";
 attr_public const char *g_pluginAuth = "JK PATCHS";
-attr_public uint32_t g_pluginVersion = 0x00000116;
+attr_public uint32_t g_pluginVersion = 0x00000117;
 
 int jk_qmp(void *addr, void **start, void **end, int *prot) __asm__("sceKernelQueryMemoryProtection");
 
@@ -673,6 +674,15 @@ static void chaves_sula(uint64_t db)
         if (nr < 2 || rod[0] > 0x2000) continue;
         uint64_t r0 = db + DB_CONFRONTOS + (uint64_t)rod[0] * RODADA_STRIDE;
         if (*(volatile uint8_t *)(r0 + 0x204) == 0) continue;      /* playoff ainda nao publicado */
+        /* v1.15: o menu da copa (eboot 0x1b27cb7) so deixa a aba Eliminatorias clicavel se a fase atual
+         * tiver o bit 0x100 em +0x378. O jogo liga esse bit sozinho na Libertadores quando o mata-mata
+         * comeca; no mata-mata da Sula (criado pelo RB) ninguem liga. ML antiga: 0x0002dd08 (abria);
+         * ML nova: 0x0002dc08 (aba apagada). */
+        if (!(U32(cp + 0x378) & 0x100)) {
+            uint32_t antes = U32(cp + 0x378);
+            U32(cp + 0x378) = antes | 0x100;
+            logf_("CHAVES_SULA comp=%u aba Eliminatorias liberada (+0x378 0x%08x -> 0x%08x)", i, antes, antes | 0x100);
+        }
         for (int k = 1; k < nr; k++) {
             if (rod[k] > 0x2000 || rod[k - 1] > 0x2000) break;
             uint64_t r = db + DB_CONFRONTOS + (uint64_t)rod[k] * RODADA_STRIDE;
@@ -960,7 +970,7 @@ static void *trabalho(void *arg)
     struct proc_info pi; memset(&pi, 0, sizeof pi);
     if (sys_sdk_proc_info(&pi) != 0) { logf_("ERRO proc_info"); return 0; }
     g_base = pi.base_address;
-    logf_("JK_SUPERCOPAS v1.14 titulo=%s versao=%s", pi.titleid, pi.version);
+    logf_("JK_SUPERCOPAS v1.15 titulo=%s versao=%s", pi.titleid, pi.version);
     if (strncmp(pi.titleid, "CUSA18676", 9) != 0) { logf_("titulo diferente: parado"); return 0; }
 
     uint64_t ultimo = 0;
