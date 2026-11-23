@@ -8,6 +8,7 @@
  * Troca os 2 clubes no jogo marcado (antes da data), no confronto, na lista de inscritos e no nome.
  * Se o clube do usuario entrar, grava o jogo na agenda dele.
  *
+ * v1.14: aba Eliminatorias apagada no mata-mata: o "a definir" nao aponta mais para rodada ja sorteada pelo RB.
  * v1.13: a aba (categoria) so muda depois que o jogo da copa existe no calendario: numa ML nova a Recopa
  *        nos internacionais impedia o jogo de criar a partida dela.
  * v1.12: Eliminatorias da Sula antes do mata-mata (ex.: marco, entre a 1a fase e os grupos) caiam:
@@ -71,7 +72,7 @@
 attr_public const char *g_pluginName = "jk_supercopas";
 attr_public const char *g_pluginDesc = "JK PATCHS - Supercopa Rei e Recopa na Master League";
 attr_public const char *g_pluginAuth = "JK PATCHS";
-attr_public uint32_t g_pluginVersion = 0x00000115;
+attr_public uint32_t g_pluginVersion = 0x00000116;
 
 int jk_qmp(void *addr, void **start, void **end, int *prot) __asm__("sceKernelQueryMemoryProtection");
 
@@ -681,6 +682,17 @@ static void chaves_sula(uint64_t db)
             int vagas = vagas_do_codigo(cod), fase = cod >> 2;
             if (!vagas) continue;
             int anterior_terminou = rodada_terminada(db, ra);
+            if (*cnt != 0 && k >= 2 && rodada_a_definir(r) && !rodada_a_definir(ra)) {
+                /* v1.14: rodada anterior ja sorteada pelo RB (sem ligacao para frente). O nosso "a definir"
+                 * nao pode apontar para ela (+0x18/+0x1c), senao o jogo ve o chaveamento quebrado e apaga
+                 * a aba Eliminatorias. Fica igual ao das oitavas: sem ligacao para tras. */
+                int mudou = 0;
+                for (int t = 0; t < *cnt && t < 16; t++) {
+                    uint64_t c = r + 4 + t * 0x20;
+                    if (U32(c + 0x18) != 0x07f7ffff || U32(c + 0x1c) != 0x07f7ffff) { U32(c + 0x18) = 0x07f7ffff; U32(c + 0x1c) = 0x07f7ffff; mudou = 1; }
+                }
+                if (mudou) logf_("CHAVES_SULA comp=%u rodada=0x%x ligacao com a fase anterior (sorteada pelo RB) limpa", i, rod[k]);
+            }
             if (*cnt != 0) {
                 /* "a definir" nosso numa rodada que o RB precisa sortear agora: esvazia */
                 if (anterior_terminou && rodada_a_definir(r)) {
@@ -701,7 +713,7 @@ static void chaves_sula(uint64_t db)
             if (!livre) continue;
             uint32_t chave = U32(r);
             int prox = (k + 1 < nr) ? (*(volatile uint8_t *)(db + DB_CONFRONTOS + (uint64_t)rod[k + 1] * RODADA_STRIDE + 0x207) >> 2) : -1;
-            int ant = (k - 1 >= 1) ? (*(volatile uint8_t *)(ra + 0x207) >> 2) : -1;
+            int ant = (k - 1 >= 1 && rodada_a_definir(ra)) ? (*(volatile uint8_t *)(ra + 0x207) >> 2) : -1;   /* v1.14: so liga com "a definir" nosso */
             for (int t = 0; t < vagas; t++) {
                 uint64_t c = r + 4 + t * 0x20;
                 U32(c + 0x00) = 0xffffffff;  U32(c + 0x04) = 0xffffffff;  U32(c + 0x08) = 0xffffffff;
@@ -948,7 +960,7 @@ static void *trabalho(void *arg)
     struct proc_info pi; memset(&pi, 0, sizeof pi);
     if (sys_sdk_proc_info(&pi) != 0) { logf_("ERRO proc_info"); return 0; }
     g_base = pi.base_address;
-    logf_("JK_SUPERCOPAS v1.13 titulo=%s versao=%s", pi.titleid, pi.version);
+    logf_("JK_SUPERCOPAS v1.14 titulo=%s versao=%s", pi.titleid, pi.version);
     if (strncmp(pi.titleid, "CUSA18676", 9) != 0) { logf_("titulo diferente: parado"); return 0; }
 
     uint64_t ultimo = 0;
