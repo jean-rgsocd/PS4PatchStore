@@ -8,6 +8,8 @@
  * Troca os 2 clubes no jogo marcado (antes da data), no confronto, na lista de inscritos e no nome.
  * Se o clube do usuario entrar, grava o jogo na agenda dele.
  *
+ * v1.10: campeao da Sula: lia a competicao errada (0x0c = grupos; o mata-mata e 0x0d) e, se o arquivo
+ *        da temporada ficou com SULAMERICANA=0, completa com o campeoes.txt do plugin do RB.
  * v1.09: CORRIGE a Sula parando no playoff: o RB le a contagem de confrontos de cada rodada para
  *        saber o que sortear; os "a definir" faziam ele achar que tudo estava sorteado. Agora a rodada
  *        seguinte a uma fase terminada fica vazia para o RB sortear.
@@ -64,7 +66,7 @@
 attr_public const char *g_pluginName = "jk_supercopas";
 attr_public const char *g_pluginDesc = "JK PATCHS - Supercopa Rei e Recopa na Master League";
 attr_public const char *g_pluginAuth = "JK PATCHS";
-attr_public uint32_t g_pluginVersion = 0x00000111;
+attr_public uint32_t g_pluginVersion = 0x00000112;
 
 int jk_qmp(void *addr, void **start, void **end, int *prot) __asm__("sceKernelQueryMemoryProtection");
 
@@ -552,7 +554,7 @@ static void acompanhar(uint64_t db, int ano, int hoje)
     int cdb = campeao_mata(db, 0x1f, ano, &m1); if (cdb) c.cdb = cdb;
     int lib = campeao_mata(db, 0x0a, ano, &m2);   /* 0x09 = grupos; 0x0a = mata-mata e final */ if (lib) c.lib = lib;
     int sula = sula_do_rb(ano);
-    if (!sula) { sula = campeao_mata(db, 0x0c, ano, &m3); }
+    if (!sula) { sula = campeao_mata(db, 0x0d, ano, &m3); }   /* 0x0d = mata-mata da Sula (0x0c sao os grupos) */
     if (sula) c.sula = sula;
     if (memcmp(&c, &g_atual, sizeof c) != 0) {
         g_atual = c;
@@ -826,6 +828,13 @@ static void ciclo(uint64_t db)
     if (g_camp_ano != ano) {                               /* le os campeoes da temporada anterior 1x */
         g_camp_ano = ano;
         g_camp_ok = ler_campeoes(ano - 1, &g_camp);
+        if (g_camp_ok && !g_camp.sula) {                   /* final da Sula decidida depois do arquivo: pega do plugin do RB */
+            int s = sula_do_rb(ano - 1);
+            if (s) {
+                g_camp.sula = s; gravar_campeoes(ano - 1, &g_camp);
+                logf_("CAMPEOES ano=%d sula=%d (do campeoes.txt do plugin da Sula; arquivo corrigido)", ano - 1, s);
+            }
+        }
         if (!g_camp_ok) logf_("SEM_CAMPEOES de %d: as duas copas ficam com o nome e os clubes originais nesta temporada", ano - 1);
         g_copas[0].feito_ano = g_copas[1].feito_ano = 0;
     }
@@ -863,7 +872,7 @@ static void *trabalho(void *arg)
     struct proc_info pi; memset(&pi, 0, sizeof pi);
     if (sys_sdk_proc_info(&pi) != 0) { logf_("ERRO proc_info"); return 0; }
     g_base = pi.base_address;
-    logf_("JK_SUPERCOPAS v1.09 titulo=%s versao=%s", pi.titleid, pi.version);
+    logf_("JK_SUPERCOPAS v1.10 titulo=%s versao=%s", pi.titleid, pi.version);
     if (strncmp(pi.titleid, "CUSA18676", 9) != 0) { logf_("titulo diferente: parado"); return 0; }
 
     uint64_t ultimo = 0;
