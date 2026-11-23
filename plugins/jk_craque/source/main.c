@@ -1,5 +1,5 @@
 /*
- * JK CRAQUE v1.02 - PES 2021 (Mega/Brasfoot CUSA18676 01.08 e Demisan CUSA22062)
+ * JK CRAQUE v1.03 - PES 2021 (Mega/Brasfoot CUSA18676 01.08 e Demisan CUSA22062)
  *
  * "Craque do Jogo": a cerimonia de melhor da partida (JK_CRAQUE.cpk) tem dois visuais no mesmo CPK:
  *   - Craque Betano  (Brasileirao, Copa do Brasil e o resto): pastas OP-04_POTM1_TROPHY, OP-04_BOARD_POTM1, OP-04_BOARD_1
@@ -11,6 +11,9 @@
  *
  * Config (opcional): /data/jk/craque.txt   linha  lib=5   (ids separados por virgula que usam o visual 2)
  * Desligar: /data/jk/craque_off.txt
+ * v1.03: a competicao certa vem do mesmo lugar que o jk_licencas usa: *( *( *(eboot+0x5b4e398) +0x60) +0x358d0).
+ *        O int em eboot+0x5bff80c (usado ate a v1.02) e a LICENCA do placar (6 = Brazil), nao a competicao;
+ *        fica so como reserva quando o ponteiro nao existe (Brazil/Spain -> Betano, Italy -> Libertadores).
  * v1.02: 3 visuais: 1 Craque Betano (betano=21,24 Brasileirao e Copa do Brasil), 2 Libertadores (lib=5),
  *        3 JK PATCHS (todas as outras competicoes e partidas): pastas OP-04_POTM3_TROPHY, OP-04_BOARD_POTM3, OP-04_BOARD_3.
  *        craque.txt aceita as linhas  lib=5  e  betano=21,24
@@ -32,10 +35,11 @@
 attr_public const char *g_pluginName = "jk_craque";
 attr_public const char *g_pluginDesc = "JK PATCHS - Craque do Jogo por competicao";
 attr_public const char *g_pluginAuth = "JK PATCHS";
-attr_public uint32_t g_pluginVersion = 0x00000102;
+attr_public uint32_t g_pluginVersion = 0x00000103;
 
 #define RVA_ARQUIVO   0x1a522e0ULL     /* executa um pedido de arquivo: rdi = pedido, caminho (std::string) em +0x20 */
-#define RVA_COMPET    0x5bff80cULL     /* int: competicao da partida atual (-1 amistoso) */
+#define RVA_LICENCA   0x5bff80cULL     /* int: licenca do placar (0 Pes,1 Ucl,2 England,3 France,4 Italy,5 Spain,6 Brazil,7 Acl,8 Euro) */
+#define RVA_CARREIRA  0x5b4e398ULL     /* ponteiro; +0x60 -> partida; +0x358d0 = competicao (como o jk_licencas) */
 #define PASTA         "/data/jk"
 
 static uint64_t g_base;
@@ -43,7 +47,31 @@ static volatile int g_rodando = 1;
 static OrbisPthread g_thr;
 static int g_libs[16] = {5}; static int g_nlibs = 1;
 static int g_bets[16] = {21, 24}; static int g_nbets = 2;
+int jk_qmp(void *addr, void **start, void **end, int *prot) __asm__("sceKernelQueryMemoryProtection");
+static int legivel(uint64_t a, uint64_t n)
+{
+    if (a < 0x10000) return 0;
+    void *st = 0, *e = 0; int p = 0;
+    if (jk_qmp((void *)a, &st, &e, &p) != 0 || !(p & 1)) return 0;
+    return (uint64_t)e >= a + n;
+}
 static volatile int g_comp_partida = 0x7fffffff;   /* ultima competicao != 0 vista */
+static volatile int g_fonte = 0;                     /* 1 = competicao real, 2 = reserva pela licenca */
+
+/* competicao da partida: ponteiro do jk_licencas; sem ele, -1000-licenca (reserva) */
+static int ler_competicao(void)
+{
+    uint64_t p = g_base + RVA_CARREIRA;
+    if (legivel(p, 8)) {
+        uint64_t o = *(volatile uint64_t *)p;
+        if (o && legivel(o + 0x60, 8)) {
+            uint64_t m = *(volatile uint64_t *)(o + 0x60);
+            if (m && legivel(m + 0x358d0, 4)) { g_fonte = 1; return *(volatile int32_t *)(m + 0x358d0); }
+        }
+    }
+    g_fonte = 2;
+    return -1000 - *(volatile int32_t *)(g_base + RVA_LICENCA);
+}
 
 __attribute__((visibility("hidden"))) uint64_t g_arq_volta;
 static uint64_t jk_arq_orig(uint64_t a, uint64_t b, uint64_t c, uint64_t d, uint64_t e, uint64_t f);
@@ -77,7 +105,11 @@ static int tem_op04(const char *p, uint64_t n)
 }
 static int eh_lib(int c) { for (int i = 0; i < g_nlibs; i++) if (g_libs[i] == c) return 1; return 0; }
 static int eh_bet(int c) { for (int i = 0; i < g_nbets; i++) if (g_bets[i] == c) return 1; return 0; }
-static char visual(int c) { return eh_lib(c) ? '2' : eh_bet(c) ? '1' : '3'; }
+static char visual(int c)
+{
+    if (c <= -1000) { int l = -1000 - c; return l == 4 ? '2' : (l == 6 || l == 5) ? '1' : '3'; }   /* reserva: licenca */
+    return eh_lib(c) ? '2' : eh_bet(c) ? '1' : '3';
+}
 static const char *nome_visual(char v) { return v == '2' ? "LIBERTADORES" : v == '1' ? "BETANO" : "JK PATCHS"; }
 
 /* troca no lugar (mesmo tamanho): POTMx e BOARD_x -> visual (1, 2 ou 3), so dentro de pastas "OP-04_" */
@@ -105,7 +137,7 @@ static uint64_t arquivo_hook(uint64_t a, uint64_t b, uint64_t c, uint64_t d, uin
         uint64_t len = *(volatile uint64_t *)(req + 0x30);
         char *p = cap >= 0x10 ? *(char **)(req + 0x20) : (char *)(req + 0x20);
         if (p && len > 6 && len < 4096 && tem_op04(p, len)) {
-            int agora = *(volatile int32_t *)(g_base + RVA_COMPET);
+            int agora = ler_competicao();
             if (agora != 0) g_comp_partida = agora;
             int comp = g_comp_partida;
             int t = ajustar(p, len, visual(comp));
@@ -187,7 +219,7 @@ static void *trabalho(void *arg)
     struct proc_info pi; memset(&pi, 0, sizeof pi);
     if (sys_sdk_proc_info(&pi) != 0) { logf_("ERRO proc_info"); return 0; }
     g_base = pi.base_address;
-    logf_("JK_CRAQUE v1.02 titulo=%s versao=%s", pi.titleid, pi.version);
+    logf_("JK_CRAQUE v1.03 titulo=%s versao=%s", pi.titleid, pi.version);
     if (strncmp(pi.titleid, "CUSA18676", 9) != 0 && strncmp(pi.titleid, "CUSA22062", 9) != 0) { logf_("titulo diferente: parado"); return 0; }
     if (existe(PASTA "/craque_off.txt")) { logf_("DESLIGADO (craque_off.txt): o jogo pede sempre as pastas 1 (Craque Betano)"); return 0; }
     ler_config();
@@ -196,9 +228,9 @@ static void *trabalho(void *arg)
     int comp_ant = 0x7fffffff, part_ant = 0x7fffffff, tic = 0;
     while (g_rodando) {
         sceKernelUsleep(200000);
-        int comp = *(volatile int32_t *)(g_base + RVA_COMPET);
+        int comp = ler_competicao();
         if (comp != 0) g_comp_partida = comp;
-        if (comp != comp_ant) { logf_("t=%ds COMPETICAO agora=%d", tic / 5, comp); comp_ant = comp; }
+        if (comp != comp_ant) { logf_("t=%ds COMPETICAO agora=%d (%s) licenca=%d", tic / 5, comp, g_fonte == 1 ? "partida" : "reserva pela licenca", *(volatile int32_t *)(g_base + RVA_LICENCA)); comp_ant = comp; }
         if (g_comp_partida != part_ant) { part_ant = g_comp_partida; logf_("t=%ds PARTIDA competicao=%d -> visual %s", tic / 5, part_ant, nome_visual(visual(part_ant))); }
         tic++;
         while (g_anel_lido != g_anel_pos) {
