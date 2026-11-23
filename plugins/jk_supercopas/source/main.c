@@ -8,6 +8,7 @@
  * Troca os 2 clubes no jogo marcado (antes da data), no confronto, na lista de inscritos e no nome.
  * Se o clube do usuario entrar, grava o jogo na agenda dele.
  *
+ * v1.03d: plugin_load igual ao da v1.02 (so cria a thread); v1.03/b/c travavam ao abrir o jogo por trabalhar no plugin_load.
  * v1.03c: gancho instalado so com a ML aberta (nada na abertura do jogo) e log de cada passo.
  * v1.03b: gancho gravado pelo kernel do GoldHEN (proc_rw), como o do RB; a v1.03 travava ao abrir o jogo.
  *        Para desligar o gancho: criar /data/jk/super/sem_gancho.txt
@@ -39,7 +40,7 @@
 attr_public const char *g_pluginName = "jk_supercopas";
 attr_public const char *g_pluginDesc = "JK PATCHS - Supercopa Rei e Recopa na Master League";
 attr_public const char *g_pluginAuth = "JK PATCHS";
-attr_public uint32_t g_pluginVersion = 0x00000105;
+attr_public uint32_t g_pluginVersion = 0x00000106;
 
 int jk_qmp(void *addr, void **start, void **end, int *prot) __asm__("sceKernelQueryMemoryProtection");
 
@@ -590,7 +591,7 @@ static void *trabalho(void *arg)
     struct proc_info pi; memset(&pi, 0, sizeof pi);
     if (sys_sdk_proc_info(&pi) != 0) { logf_("ERRO proc_info"); return 0; }
     g_base = pi.base_address;
-    logf_("JK_SUPERCOPAS v1.03c titulo=%s versao=%s", pi.titleid, pi.version);
+    logf_("JK_SUPERCOPAS v1.03d titulo=%s versao=%s", pi.titleid, pi.version);
     if (strncmp(pi.titleid, "CUSA18676", 9) != 0) { logf_("titulo diferente: parado"); return 0; }
 
     uint64_t ultimo = 0;
@@ -609,14 +610,7 @@ static void *trabalho(void *arg)
 int32_t attr_public plugin_load(int32_t argc, const char *argv[])
 {
     (void)argc; (void)argv;
-    struct proc_info pi; memset(&pi, 0, sizeof pi);
-    if (sys_sdk_proc_info(&pi) == 0 && strncmp(pi.titleid, "CUSA18676", 9) == 0) {
-        g_base = pi.base_address;
-        sceKernelMkdir("/data/jk", 0777);
-        sceKernelMkdir(PASTA, 0777);
-        logf_("JK_SUPERCOPAS v1.03c plugin_load (gancho so depois da ML aberta)");
-    }
-    scePthreadCreate(&g_thr, 0, trabalho, 0, "jk_supercopas");
+    scePthreadCreate(&g_thr, 0, trabalho, 0, "jk_supercopas");   /* igual a v1.02: nada mais aqui */
     return 0;
 }
 
