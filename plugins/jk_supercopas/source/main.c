@@ -8,6 +8,7 @@
  * Troca os 2 clubes no jogo marcado (antes da data), no confronto, na lista de inscritos e no nome.
  * Se o clube do usuario entrar, grava o jogo na agenda dele.
  *
+ * v1.04b: grava /data/jk/super/queda.log quando o jogo cai (endereco, registradores, pilha).
  * v1.04: Sula - as rodadas vazias do mata-mata (oitavas, quartas, semi, final) recebem confrontos
  *        "a definir" como nas copas do jogo; sem isso a tela Eliminatorias caia (CE-34878-0).
  *        Desligar: /data/jk/super/sem_chaves.txt. O gancho da lista fica desligado (so com com_gancho.txt).
@@ -47,7 +48,7 @@
 attr_public const char *g_pluginName = "jk_supercopas";
 attr_public const char *g_pluginDesc = "JK PATCHS - Supercopa Rei e Recopa na Master League";
 attr_public const char *g_pluginAuth = "JK PATCHS";
-attr_public uint32_t g_pluginVersion = 0x00000109;
+attr_public uint32_t g_pluginVersion = 0x0000010a;
 
 int jk_qmp(void *addr, void **start, void **end, int *prot) __asm__("sceKernelQueryMemoryProtection");
 
@@ -566,8 +567,8 @@ static void chaves_sula(uint64_t db)
     static int conta = 0;
     if (g_sem_chaves < 0 || ++conta >= 15) {
         conta = 0;
-        int s = existe(PASTA "/sem_chaves.txt");
-        if (s != g_sem_chaves) logf_(s ? "CHAVES_SULA desligado (sem_chaves.txt)" : "CHAVES_SULA ligado");
+        int s = !existe(PASTA "/com_chaves.txt");             /* v1.04b: desligado por padrao (nao resolveu a queda) */
+        if (s != g_sem_chaves) logf_(s ? "CHAVES_SULA desligado (criar com_chaves.txt para ligar)" : "CHAVES_SULA ligado (com_chaves.txt)");
         g_sem_chaves = s;
     }
     if (g_sem_chaves) return;
@@ -608,6 +609,67 @@ static void chaves_sula(uint64_t db)
             logf_("CHAVES_SULA comp=%u rodada=0x%x codigo=0x%02x vagas=%d a definir", i, rod[k], cod, vagas);
         }
     }
+}
+
+/* ---- registro de queda (v1.04b) ----
+ * Quando o jogo cai (CE-34878-0), grava em /data/jk/super/queda.log o endereco da instrucao
+ * que caiu, os registradores e a pilha. Nao evita a queda: so registra e devolve o erro ao jogo.
+ * Desligar: /data/jk/super/sem_queda.txt */
+struct jk_sigact { void *handler; int flags; uint32_t mask[4]; };
+int jk_sigaction(int sig, const struct jk_sigact *novo, struct jk_sigact *velho) __asm__("sigaction");
+#define JK_SA_SIGINFO 0x40
+static struct jk_sigact g_velho[16];
+static int g_queda_fd = -1;
+static volatile int g_caindo = 0;
+static int hexo(char *o, uint64_t v) { for (int i = 0; i < 16; i++) { int d = (v >> (60 - 4 * i)) & 15; o[i] = d < 10 ? '0' + d : 'a' + d - 10; } return 16; }
+static int txt(char *o, const char *s) { int n = 0; while (s[n]) { o[n] = s[n]; n++; } return n; }
+static void queda(int sig, void *info, void *uctx)
+{
+    if (!g_caindo && g_queda_fd >= 0) {
+        g_caindo = 1;
+        static char b[4096]; int n = 0;
+        uint64_t *mc = (uint64_t *)((uint8_t *)uctx + 0x10);   /* FreeBSD amd64 mcontext */
+        uint64_t rip = mc[0xa0 / 8], rsp = mc[0xb8 / 8];
+        uint64_t addr = info ? *(uint64_t *)((uint8_t *)info + 0x18) : 0;
+        n += txt(b + n, "QUEDA sinal="); b[n++] = '0' + sig / 10; b[n++] = '0' + sig % 10;
+        n += txt(b + n, " rip="); n += hexo(b + n, rip);
+        n += txt(b + n, " rip-base="); n += hexo(b + n, rip - g_base);
+        n += txt(b + n, " addr="); n += hexo(b + n, addr);
+        n += txt(b + n, " base="); n += hexo(b + n, g_base); b[n++] = '\n';
+        static const char *nm[16] = {"rdi","rsi","rdx","rcx","r8 ","r9 ","rax","rbx","rbp","r10","r11","r12","r13","r14","r15","rsp"};
+        for (int i = 0; i < 16; i++) {
+            n += txt(b + n, nm[i]); b[n++] = '=';
+            n += hexo(b + n, i < 15 ? mc[1 + i] : rsp); b[n++] = (i % 4 == 3) ? '\n' : ' ';
+        }
+        n += txt(b + n, "PILHA\n");
+        sceKernelWrite(g_queda_fd, b, n); n = 0;
+        uint64_t *sp = (uint64_t *)(rsp & ~7ULL);
+        for (int i = 0; i < 256; i++) {
+            if (!legivel((uint64_t)(sp + i), 8)) break;
+            uint64_t v = sp[i];
+            n += hexo(b + n, v); b[n++] = (i % 4 == 3) ? '\n' : ' ';
+            if (n > 3900) { sceKernelWrite(g_queda_fd, b, n); n = 0; }
+        }
+        n += txt(b + n, "\nFIM_QUEDA\n");
+        sceKernelWrite(g_queda_fd, b, n);
+    }
+    jk_sigaction(sig, &g_velho[sig & 15], 0);                 /* devolve o tratamento original: o jogo cai como sempre */
+}
+static void instalar_queda(void)
+{
+    static int feito = 0;
+    if (feito) return;
+    feito = 1;
+    if (existe(PASTA "/sem_queda.txt")) { logf_("QUEDA desligado (sem_queda.txt)"); return; }
+    g_queda_fd = sceKernelOpen(PASTA "/queda.log", 0x0001 | 0x0200 | 0x0008, 0666);
+    static const int sinais[5] = {4, 6, 8, 10, 11};            /* ILL ABRT FPE BUS SEGV */
+    int ok = 0;
+    for (int i = 0; i < 5; i++) {
+        struct jk_sigact a; memset(&a, 0, sizeof a);
+        a.handler = (void *)queda; a.flags = JK_SA_SIGINFO;
+        if (jk_sigaction(sinais[i], &a, &g_velho[sinais[i] & 15]) == 0) ok++;
+    }
+    logf_("QUEDA registro instalado sinais=%d/5 fd=%d", ok, g_queda_fd);
 }
 
 static campeoes_t g_camp;
@@ -662,7 +724,7 @@ static void *trabalho(void *arg)
     struct proc_info pi; memset(&pi, 0, sizeof pi);
     if (sys_sdk_proc_info(&pi) != 0) { logf_("ERRO proc_info"); return 0; }
     g_base = pi.base_address;
-    logf_("JK_SUPERCOPAS v1.04 titulo=%s versao=%s", pi.titleid, pi.version);
+    logf_("JK_SUPERCOPAS v1.04b titulo=%s versao=%s", pi.titleid, pi.version);
     if (strncmp(pi.titleid, "CUSA18676", 9) != 0) { logf_("titulo diferente: parado"); return 0; }
 
     uint64_t ultimo = 0;
@@ -672,7 +734,7 @@ static void *trabalho(void *arg)
         if (!db) { if (ultimo) { g_copas[0].feito_ano = g_copas[1].feito_ano = 0; g_camp_ano = 0; ultimo = 0; } continue; }
         ultimo = db;
         static int tentou_gancho = 0, espera = 0;
-        if (!tentou_gancho && ++espera >= 3) { tentou_gancho = 1; logf_("GANCHO_LISTA passo=inicio"); instalar_lista(); }
+        if (!tentou_gancho && ++espera >= 3) { instalar_queda(); tentou_gancho = 1; logf_("GANCHO_LISTA passo=inicio"); instalar_lista(); }
         ciclo(db);
     }
     return 0;
