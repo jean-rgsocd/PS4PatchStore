@@ -28,6 +28,22 @@ static int vw, vh, fps = 15, nframes, pos_frames;
 static Image *latest;
 static char cached_url[700];
 static int cached_ok;
+static char cached_path[300];          /* v1.47b: arquivo do video em cache_url */
+static volatile int keep_next;          /* v1.47b: o proximo vp_load guarda o video */
+
+/* v1.47b: caminho do video guardado: cache_dir/<hash do link>.jkv */
+static void keep_path(const char *url, char *out, int cap) {
+  unsigned long long h = 1469598103934665603ULL;
+  for (const char *p = url; *p; p++) { h ^= (unsigned char)*p; h *= 1099511628211ULL; }
+  snprintf(out, (size_t)cap, "%s/%016llx.jkv", P.cache_dir, h);
+}
+static int jkv_ok(const char *path) {      /* arquivo completo (o download grava .part e renomeia no fim) */
+  FILE *f = fopen(path, "rb");
+  if (!f) return 0;
+  unsigned char h[4]; int ok = fread(h, 1, 4, f) == 4 && !memcmp(h, "JKV1", 4);
+  fclose(f);
+  return ok;
+}
 
 static Item *ring[RING];
 static int r_head, r_count;          /* protegidos por mu */
@@ -152,8 +168,11 @@ static Item *pop(void) {
 
 static void *player_thread(void *arg) {
   char url[700];
-  snprintf(url, sizeof(url), "%s", (const char *)arg);
+  snprintf(url, sizeof(url), "%s", (const char *)arg + 1);
+  int keep = ((const char *)arg)[0] == 'K' && P.cache_dir && P.cache_dir[0];
   free(arg);
+  char path[300];
+  if (keep) keep_path(url, path, sizeof(path)); else snprintf(path, sizeof(path), "%s", P.tmp_path);
   FILE *f = NULL;
   int audio = 0;
   pthread_t pt;
@@ -161,24 +180,37 @@ static void *player_thread(void *arg) {
   Prod prod;
   char e[200] = "";
 
-  if (!(cached_ok && !strcmp(cached_url, url))) {
+  if (keep && jkv_ok(path)) {                                 /* v1.47b: ja guardado no console */
+    snprintf(cached_url, sizeof(cached_url), "%s", url); snprintf(cached_path, sizeof(cached_path), "%s", path); cached_ok = 1;
+  }
+  if (!(cached_ok && !strcmp(cached_url, url) && !strcmp(cached_path, path))) {
     cached_ok = 0;
     set_state(VP_DOWNLOADING);
     pct_done = 0;
-    if (!P.download || P.download(url, P.tmp_path, &pct_done, &cancel_flag, e, sizeof(e)) != 0) {
+    char part[310]; snprintf(part, sizeof(part), "%s%s", path, keep ? ".part" : "");
+    if (!P.download || P.download(url, part, &pct_done, &cancel_flag, e, sizeof(e)) != 0) {
+      if (keep) remove(part);
       if (cancel_flag) goto done;
       fail(e[0] ? e : "Não foi possível baixar o vídeo.");
       goto done;
     }
+    if (keep) {
+      remove(path);
+      if (rename(part, path) != 0) { remove(part); fail("Não foi possível guardar o vídeo."); goto done; }
+      char m[400]; snprintf(m, sizeof(m), "Video: guardado em %s", path); logm(m);
+    }
     snprintf(cached_url, sizeof(cached_url), "%s", url);
+    snprintf(cached_path, sizeof(cached_path), "%s", path);
     cached_ok = 1;
   }
   if (cancel_flag) goto done;
 
-  f = fopen(P.tmp_path, "rb");
+  f = fopen(path, "rb");
   unsigned char hd[24];
   if (!f || fread(hd, 1, 20, f) != 20 || memcmp(hd, "JKV1", 4) != 0) {
     cached_ok = 0;
+    if (f) { fclose(f); f = NULL; }
+    if (keep) remove(path);                                   /* v1.47b: guardado estragado: baixa de novo na proxima */
     fail("Arquivo de vídeo inválido (precisa ser .jkv; veja tools/mp4_to_jkv.py).");
     goto done;
   }
@@ -188,6 +220,7 @@ static void *player_thread(void *arg) {
     int nf = (int)rd32(hd + 12), spf = (int)rd32(hd + 16);
     if (w < 16 || h < 16 || w > 1920 || h > 1080 || fp < 1 || fp > 60 || ar != 24000 || spf < 64 || spf * 2 > MAX_SPF48) {
       cached_ok = 0;
+      if (keep) { fclose(f); f = NULL; remove(path); }
       fail("Cabeçalho do vídeo inválido.");
       goto done;
     }
@@ -291,7 +324,10 @@ int vp_load(const char *url) {
   cancel_flag = 0;
   paused = 0;
   pct_done = 0;
-  char *u = strdup(url);
+  size_t ul = strlen(url);
+  char *u = (char *)malloc(ul + 2);
+  if (u) { u[0] = keep_next ? 'K' : '-'; memcpy(u + 1, url, ul + 1); }
+  keep_next = 0;
   pthread_t t;
   pthread_attr_t at;
   pthread_attr_init(&at);
@@ -305,6 +341,13 @@ int vp_load(const char *url) {
     return -1;
   }
   return 0;
+}
+
+int vp_load_keep(const char *url) {
+  keep_next = 1;
+  int r = vp_load(url);
+  keep_next = 0;
+  return r;
 }
 
 void vp_stop(void) {

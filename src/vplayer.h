@@ -16,6 +16,7 @@ typedef struct {
   void (*sleep_us)(unsigned us);
   void (*log)(const char *msg);
   const char *tmp_path;                                   /* onde guardar o video baixado */
+  const char *cache_dir;                                  /* v1.47b: pasta dos videos guardados (vp_load_keep). NULL = nao guarda */
 } VpPlatform;
 
 enum { VP_IDLE = 0, VP_DOWNLOADING, VP_PLAYING, VP_ENDED, VP_ERROR };
@@ -23,6 +24,8 @@ enum { VP_IDLE = 0, VP_DOWNLOADING, VP_PLAYING, VP_ENDED, VP_ERROR };
 void vp_init(const VpPlatform *p);
 /* Comeca (download se preciso + reproducao). Falha (retorna -1) se ainda ha uma reproducao encerrando. */
 int  vp_load(const char *url);
+/* v1.47b: igual, mas guarda o video em cache_dir (nao baixa de novo na proxima abertura do app; trocar o link = baixa o novo) */
+int  vp_load_keep(const char *url);
 void vp_stop(void);                       /* cancela e para (volta a VP_IDLE quando as threads terminam) */
 void vp_set_paused(int paused);
 void vp_set_mute(int mute);             /* v1.47: 1 = sem som (o ritmo continua pelo audio) */

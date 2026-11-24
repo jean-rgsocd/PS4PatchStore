@@ -463,7 +463,7 @@ static void jkx_tri(UI *ui) {
     }
     vid_close(ui);
     ui->jx_vfail = -1;
-    vid_open_url(ui, x->name, x->video);
+    vid_open_url_ex(ui, x->name, x->video, 1);
     return;
   }
   if (jkx_aviso(x)) {
@@ -488,7 +488,7 @@ static void jx_card_video_tick(UI *ui) {
     return;
   }
   if (want == ui->jx_vfail || ui->frame - ui->jx_vfoc < 50 || vp_busy()) return;
-  vid_open_url(ui, ui->cat->jkx[want].name, ui->cat->jkx[want].video);
+  vid_open_url_ex(ui, ui->cat->jkx[want].name, ui->cat->jkx[want].video, 1);
   if (ui->vid_mode == 1) { ui->vid_mode = 3; vp_set_mute(1); ui->jx_vart = want; ui->base_stale = 1; }
 }
 

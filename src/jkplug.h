@@ -8,6 +8,7 @@ typedef void (*JkxLog)(const char *msg);
 /* lista "?list" (hinos): grava em paths os caminhos dos arquivos da lista (ate max) e devolve quantos. Pode ser NULL. */
 typedef int (*JkxListFn)(const char *url, const char *dir, char (*paths)[200], int max);
 
+void jkx_set_log(JkxLog log);                       /* v1.47b: log padrao (Ativar/Desativar da aba) */
 void jkx_set_root(const char *root);                 /* so o simulador: prefixo dos caminhos ("" no PS4) */
 void jkx_set_catalog(const Catalog *c);             /* copia os JKX e os quadros (a thread de download usa a copia) */
 int  jkx_state(const char *key, const char *cusa); /* -1 nunca mexeu, 0 desinstalado, 1 instalado pela aba */

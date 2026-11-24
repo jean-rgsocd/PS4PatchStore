@@ -805,7 +805,8 @@ static void vp_audio_close(void) {
 static void vp_sleep(unsigned us) { sceKernelUsleep(us); }
 
 static const VpPlatform VP_PLAT = {
-  auth_download, vp_audio_open, vp_audio_write, vp_audio_close, vp_sleep, install_log, "/data/jkpatchs_video.tmp"
+  auth_download, vp_audio_open, vp_audio_write, vp_audio_close, vp_sleep, install_log, "/data/jkpatchs_video.tmp",
+  "/data/jk/videos"                                       /* v1.47b: videos dos cards de plugin ficam guardados */
 };
 
 /* ------------------------------------------------------------------ video (navegador do PS4) */
@@ -1059,7 +1060,9 @@ int main(void) {
   present(screen);
   install_log("Video ok.");
 
+  mkdir("/data/jk", 0777); mkdir("/data/jk/videos", 0777);   /* v1.47b */
   vp_init(&VP_PLAT);
+  jkx_set_log(install_log);                                /* v1.47b: Ativar/Desativar aparece no log */
   install_start_server();
   pad_open();
   if (pad < 0) install_log("AVISO: controle nao abriu; tentando de novo.");

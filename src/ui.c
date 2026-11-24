@@ -160,6 +160,7 @@ struct UI {
   int jx_vart;                         /* v1.47: linha JKX do video tocando no card (-1 = nenhum) */
   unsigned jx_vfoc;                    /* v1.47: quadro em que o card com video ganhou o foco (espera antes de tocar) */
   int jx_vfail;                        /* v1.47: linha JKX cujo video falhou (nao tenta de novo sozinho) */
+  int vkeep;                           /* v1.47b: video atual fica guardado no console */
   const CatGame *jk_game;
   /* v1.41: card Duvidas em telas */
   int fq_i, fq_t, fq_pause;
@@ -978,6 +979,7 @@ static int is_jkv(const char *u);
 static void guide_open(UI *ui, const char *title, const char *url);
 static void vid_open(UI *ui, const CatGame *g);
 static void vid_open_url(UI *ui, const char *title, const char *url);
+static void vid_open_url_ex(UI *ui, const char *title, const char *url, int keep);
 
 static void trigger_install(UI *ui) {
   const CatGame *g = cur_game(ui);
@@ -1043,11 +1045,12 @@ static int is_jkv(const char *u) {
   return n > 4 && strcmp(u + n - 4, ".jkv") == 0;
 }
 
-static void vid_open_url(UI *ui, const char *title, const char *url) {
+static void vid_open_url_ex(UI *ui, const char *title, const char *url, int keep) {
   if (vp_busy()) { ui_toast(ui, "Aguarde o vídeo anterior terminar de fechar e tente de novo.", UI_TOAST_INFO); return; }
   snprintf(ui->vtitle, sizeof(ui->vtitle), "%s", title ? title : "Vídeo");
   snprintf(ui->vurl, sizeof(ui->vurl), "%s", url);
-  if (vp_load(url) != 0) { ui_toast(ui, "Não foi possível iniciar o vídeo.", UI_TOAST_ERR); return; }
+  ui->vkeep = keep;
+  if ((keep ? vp_load_keep(url) : vp_load(url)) != 0) { ui_toast(ui, "Não foi possível iniciar o vídeo.", UI_TOAST_ERR); return; }
   ui->vid_mode = 1;
   ui->vlast_state = -1;
   ui->vlast_pct = -1;
@@ -1055,6 +1058,8 @@ static void vid_open_url(UI *ui, const char *title, const char *url) {
   ui->base_stale = 1;
   ui->dirty = 1;
 }
+
+static void vid_open_url(UI *ui, const char *title, const char *url) { vid_open_url_ex(ui, title, url, 0); }
 
 static void vid_open(UI *ui, const CatGame *g) {
   if (g) vid_open_url(ui, g->title, g->video);
@@ -1071,7 +1076,7 @@ static void vid_key(UI *ui, int key) {
   if (key == UI_OPTIONS && ui->vid_mode == 2) { ui->vid_mode = 1; ui->base_stale = 1; ui->dirty = 1; return; }
   if (key == UI_OK && ui->vid_mode == 1) {
     if (st == VP_PLAYING) { vp_set_paused(!vp_paused()); ui->vdirty = 1; }
-    else if (st == VP_ENDED) { if (vp_busy() == 0) vp_load(ui->vurl); }
+    else if (st == VP_ENDED) { if (vp_busy() == 0) { if (ui->vkeep) vp_load_keep(ui->vurl); else vp_load(ui->vurl); } }
     else if (st == VP_ERROR) vid_close(ui);
   }
 }
@@ -1081,7 +1086,7 @@ static void vid_tick(UI *ui) {
   if (f) { if (ui->vframe) img_free(ui->vframe); ui->vframe = f; ui->vdirty = 1; }
   int st = vp_state();
   if (st == VP_IDLE && !vp_busy()) { vid_close(ui); return; }
-  if (ui->vid_mode == 3 && st == VP_ENDED && !vp_busy()) { vp_load(ui->vurl); vp_set_mute(1); }   /* v1.47: card repete o video */
+  if (ui->vid_mode == 3 && st == VP_ENDED && !vp_busy()) { vp_load_keep(ui->vurl); vp_set_mute(1); }   /* v1.47: card repete o video */
   int pct = vp_progress(), sec = (int)vp_position();
   if (st != ui->vlast_state || (st == VP_DOWNLOADING && pct != ui->vlast_pct) || (st == VP_PLAYING && sec != ui->vlast_sec)) {
     ui->vlast_state = st; ui->vlast_pct = pct; ui->vlast_sec = sec;

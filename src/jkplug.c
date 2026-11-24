@@ -76,6 +76,8 @@ static void logf_(JkxLog log, const char *a, const char *b) {
 
 /* ------------------------------------------------------------------ catalogo */
 void jkx_migrate(void);
+static JkxLog jx_log = NULL;                                /* v1.47b */
+void jkx_set_log(JkxLog log) { jx_log = log; }
 void jkx_set_root(const char *root) { snprintf(jx_root, sizeof(jx_root), "%s", root ? root : ""); }
 
 void jkx_set_catalog(const Catalog *c) {
@@ -627,6 +629,13 @@ void jkx_apply(JkxLog log) {
         if (x->prx[0] && !strchr(x->prx, '|') && !jkx_fixed_note(x)) {
           if (st == 2 && ini_get(g[k].cusa, x->prx) == 1) ini_set(g[k].cusa, x->prx, 0, log);
           if (st == 1 && !jkx_fixed(x) && fsize(x->prx) > 0 && ini_get(g[k].cusa, x->prx) != 1) ini_set(g[k].cusa, x->prx, 1, log);
+        } else if (x->prx[0] && !jkx_fixed_note(x)) {          /* v1.47b: "novo|antigo" (ex.: pcc_v305|comemorar): o 1o manda, os outros sao versoes antigas */
+          char a0[128], a[128];
+          if (prx_alt(x->prx, 0, a0, sizeof(a0)) && (st == 2 || fsize(a0) > 0)) {
+            if (st == 2) { if (ini_get(g[k].cusa, a0) == 1) ini_set(g[k].cusa, a0, 0, log); }
+            else if (ini_get(g[k].cusa, a0) != 1) ini_set(g[k].cusa, a0, 1, log);
+            for (int t = 1; prx_alt(x->prx, t, a, sizeof(a)); t++) if (ini_get(g[k].cusa, a) == 1) ini_set(g[k].cusa, a, 0, log);
+          }
         }
         continue;
       }
@@ -731,7 +740,8 @@ void jkx_migrate(void) {
 /* ------------------------------------------------------------------ v1.47: ATIVADO / DESATIVADO */
 int jkx_toggleable(const CatJkx *x) {
   if (!x || jkx_fixed_note(x)) return 0;
-  if (x->prx[0] && !strchr(x->prx, '|')) return 1;          /* um prx so (Gol Fora tem 2 alternativas: fica de fora) */
+  if (strstr(x->prx, "jk_placares")) return 0;                /* Gol Fora = plugin dos placares/licencas: nunca desliga */
+  if (x->prx[0]) return 1;                                   /* v1.47b: "novo|antigo" tambem (o 1o e o que liga) */
   Item it[MAXIT]; int n = items(x, "/data/x", it, MAXIT);
   for (int k = 0; k < n; k++) if (it[k].afr && !it[k].nodp && ends_cpk(it[k].path)) return 1;   /* CPK do DpFileList */
   return 0;
@@ -752,9 +762,8 @@ int jkx_fixed_present(const CatJkx *x, const CatPlBoard *b) {
   for (int i = 0; i < jx_n; i++) {
     const CatJkx *y = &jx_def[i];
     if (strcmp(y->key, x->key) || !jkx_for_board(y, b->id) || !y->prx[0]) continue;
-    int any = 0;
-    for (int k = 0; prx_alt(y->prx, k, a, sizeof(a)); k++) if (fsize(a) > 0) any = 1;
-    nprx++; if (!any) ok = 0;
+    nprx++;                                                  /* v1.47b: o 1o prx (a versao atual); os outros sao antigos */
+    if (!prx_alt(y->prx, 0, a, sizeof(a)) || fsize(a) <= 0) ok = 0;
   }
   if (!nprx) {
     Item it[MAXIT]; int n = items(x, b->dest, it, MAXIT);
@@ -781,12 +790,15 @@ int jkx_toggle(const CatJkx *x, const CatPlBoard *b, int on, JkxLog log) {
   if (!x || !b) return -1;
   pthread_mutex_lock(&jx_mu);
   int nv = on ? 1 : 2;
+  if (!log) log = jx_log;
+  { char m[200]; snprintf(m, sizeof(m), "Plugins: %s %s@%s (pela aba)", on ? "ATIVANDO" : "DESATIVANDO", x->key, b->id); if (log) log(m); }
   st_set(x->key, b->cusa, nv);
   if (nv == 1) {                                             /* liga o prx das linhas DESTE quadro (Financas Vivas: mega x brasfoot) */
     for (int i = 0; i < jx_n; i++) {
       const CatJkx *y = &jx_def[i];
-      if (strcmp(y->key, x->key) || !jkx_for_board(y, b->id) || !y->prx[0] || strchr(y->prx, '|')) continue;
-      if (fsize(y->prx) > 0 && ini_get(b->cusa, y->prx) != 1) ini_set(b->cusa, y->prx, 1, log);
+      char a0[128];
+      if (strcmp(y->key, x->key) || !jkx_for_board(y, b->id) || !prx_alt(y->prx, 0, a0, sizeof(a0))) continue;
+      if (fsize(a0) > 0 && ini_get(b->cusa, a0) != 1) ini_set(b->cusa, a0, 1, log);
     }
   }
   pthread_mutex_unlock(&jx_mu);
