@@ -155,6 +155,11 @@ struct UI {
   int jx_top;                          /* v1.43d: 1a linha visivel da grade de plugins (rolagem) */
   int jx_av[CAT_MAX_JKX];              /* v1.44: linha JKX -> indice da imagem do AVISO (-1 = sem) */
   int jx_modal;                        /* v1.44: AVISO aberto (linha JKX + 1; 0 = fechado) */
+  int jx_on[CAT_MAX_ART];              /* v1.47: 1 = ATIVADO, 0 = DESATIVADO (card instalado) */
+  int jx_tog[CAT_MAX_ART];             /* v1.47: card tem ATIVADO/DESATIVADO */
+  int jx_vart;                         /* v1.47: linha JKX do video tocando no card (-1 = nenhum) */
+  unsigned jx_vfoc;                    /* v1.47: quadro em que o card com video ganhou o foco (espera antes de tocar) */
+  int jx_vfail;                        /* v1.47: linha JKX cujo video falhou (nao tenta de novo sozinho) */
   const CatGame *jk_game;
   /* v1.41: card Duvidas em telas */
   int fq_i, fq_t, fq_pause;
@@ -620,6 +625,7 @@ UI *ui_create(Image *surface, const Catalog *cat, const char *assets_dir, UiInst
   ui->cat = cat;
   ui->fn = fn;
   ui->user = user;
+  ui->jx_vart = ui->jx_vfail = -1;                             /* v1.47 */
   snprintf(ui->assets, sizeof(ui->assets), "%s", assets_dir);
   {
     char lp[300];
@@ -1023,8 +1029,11 @@ static void trigger_install(UI *ui) {
 /* ------------------------------------------------------------------ video dentro do app */
 static void vid_close(UI *ui) {
   if (!ui->vid_mode) return;
+  if (ui->vid_mode == 1 || ui->vid_mode == 2) ui->jx_vfoc = ui->frame;   /* v1.47: fechou a janela: o card espera antes de tocar de novo */
   ui->vid_mode = 0;
+  ui->jx_vart = -1;
   vp_stop();
+  vp_set_mute(0);
   if (ui->vframe) { img_free(ui->vframe); ui->vframe = NULL; }
   ui->dirty = 1;
 }
@@ -1072,6 +1081,7 @@ static void vid_tick(UI *ui) {
   if (f) { if (ui->vframe) img_free(ui->vframe); ui->vframe = f; ui->vdirty = 1; }
   int st = vp_state();
   if (st == VP_IDLE && !vp_busy()) { vid_close(ui); return; }
+  if (ui->vid_mode == 3 && st == VP_ENDED && !vp_busy()) { vp_load(ui->vurl); vp_set_mute(1); }   /* v1.47: card repete o video */
   int pct = vp_progress(), sec = (int)vp_position();
   if (st != ui->vlast_state || (st == VP_DOWNLOADING && pct != ui->vlast_pct) || (st == VP_PLAYING && sec != ui->vlast_sec)) {
     ui->vlast_state = st; ui->vlast_pct = pct; ui->vlast_sec = sec;
@@ -1245,13 +1255,15 @@ void ui_key(UI *ui, int key) {
     return;
   }
   if (ui->shop) { shop_key(ui, key); return; }
-  if (key == UI_OPTIONS && !ui->vid_mode) {
+  if (key == UI_OPTIONS && (!ui->vid_mode || ui->vid_mode == 3)) {
+    if (ui->vid_mode == 3) vid_close(ui);
     if (ui->visitor) ui_toast(ui, "Entre ou cadastre-se para assinar um plano.", UI_TOAST_INFO);
     else if (ui->offline) ui_toast(ui, "Sem conexão com o servidor. Tente de novo quando a internet voltar.", UI_TOAST_INFO);
     else ui_open_shop(ui);
     return;
   }
   if (ui->vid_mode == 1 || (ui->vid_mode == 2 && (key == UI_TRIANGLE || key == UI_OPTIONS))) { vid_key(ui, key); return; }
+  if (key == UI_TRIANGLE && pl_active(ui) && ui->pl_cat == 3 && !ui->pl_ed && !ui->jx_modal) { pl_key(ui, key); return; }   /* v1.47: video/aviso do plugin */
   if (key == UI_TRIANGLE) {                                     /* sair da conta */
     if (ui->busy) { ui_toast(ui, "Aguarde o pedido atual terminar.", UI_TOAST_INFO); return; }
     vid_close(ui);
@@ -1423,6 +1435,7 @@ void ui_tick(UI *ui) {
   if (ui->pi_on && ui->frame % 120 == 0) plan_refresh(ui);
   cover_poll(ui);
   pl_tick(ui);
+  if (ui->vid_mode == 3 && !(pl_active(ui) && ui->pl_cat == 3)) { vid_close(ui); ui->jx_vart = -1; }   /* v1.47: saiu da aba: para o video do card */
   fq_tick(ui);
   th_step(ui);
   guide_tick(ui);
@@ -2401,6 +2414,24 @@ static void fmt_time(char *out, int cap, double sec) {
 static void draw_video_overlay(UI *ui) {
   Image *s = ui->s;
   int st = vp_state();
+  if (ui->vid_mode == 3) {                                      /* v1.47: video no card do plugin (sem som) */
+    int ax, ay, aw, ah;
+    if (!jx_video_rect(ui, &ax, &ay, &aw, &ah)) return;
+    int vw = 0, vh = 0;
+    if (ui->vframe && vp_aspect(&vw, &vh) && st == VP_PLAYING) {
+      gfx_fill(s, ax, ay, aw, ah, C_BLACK, 255);
+      int dw = aw, dh = aw * vh / vw;
+      if (dh > ah) { dh = ah; dw = ah * vw / vh; }
+      if (dw > 0 && dh > 0) gfx_blit_scaled(s, ui->vframe, ax + (aw - dw) / 2, ay + (ah - dh) / 2, dw, dh);
+      gfx_rrect(s, ax, ay, aw, ah, 10, C_CYAN, 200, 1);
+    } else if (st == VP_DOWNLOADING) {
+      int bw = aw - 40, by = ay + ah - 14;
+      gfx_rrect(s, ax + 20, by, bw, 6, 3, C_BLACK, 180, 0);
+      int fw = bw * vp_progress() / 100;
+      if (fw > 4) gfx_rrect(s, ax + 20, by, fw, 6, 3, C_ACCENT, 255, 0);
+    }
+    return;
+  }
   int win = ui->vid_mode == 1;
   int ax, ay, aw, ah;                                           /* area do video */
   if (win) { ax = 480; ay = 250; aw = 960; ah = 540; }

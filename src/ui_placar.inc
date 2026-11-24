@@ -333,8 +333,11 @@ static void jk_scan(UI *ui) {
     for (int n = 0; n < ui->jk_n; n++) {
       const CatJkx *xx = &ui->cat->jkx[ui->jk_art[n]];
       ui->jx_path[n][0] = 0; ui->jx_file[n][0] = 0;
+      ui->jx_tog[n] = jkx_toggleable(xx) && !jkx_fixed_note(xx);   /* v1.47 */
+      ui->jx_on[n] = 1;
       if (jkx_fixed(xx) && !strcmp(xx->files, "FIXO")) {        /* v1.43d: card FIXO so com prx (vem com o placar) */
-        ui->jk_inst[n] = b ? jkx_fixed_on(xx, b) : 0; ui->jk_b[n][1] = -1;
+        ui->jk_inst[n] = b ? jkx_fixed_present(xx, b) : 0; ui->jk_b[n][1] = -1;   /* v1.47: no console (ligado ou nao) */
+        ui->jx_on[n] = b ? jkx_fixed_active(xx, b) : 0;
         char f[64]; int k = 0;
         const char *s0 = xx->prx, *e0 = strchr(s0, '|'); if (!e0) e0 = s0 + strlen(s0);
         const char *nm = s0; for (const char *q = s0; q < e0; q++) if (*q == '/') nm = q + 1;
@@ -345,8 +348,9 @@ static void jk_scan(UI *ui) {
         continue;
       }
       int fx = jkx_fixed(xx);                                    /* v1.43e: FIXO com arquivos: mostra arquivo/pasta, sem botoes */
-      int in = b ? (fx ? jkx_fixed_on(xx, b) : jkx_installed(xx, b)) : 0;
-      ui->jk_inst[n] = in; ui->jk_b[n][1] = ((in && !fx) || jkx_aviso(xx)) ? 0 : -1;   /* v1.44: AVISO sempre clicavel */
+      int in = b ? (fx ? jkx_fixed_present(xx, b) : jkx_installed(xx, b)) : 0;
+      ui->jk_inst[n] = in; ui->jk_b[n][1] = (in && !fx) ? 0 : -1;   /* v1.47: AVISO saiu do botao (agora e o triangulo) */
+      ui->jx_on[n] = !b ? 0 : fx ? jkx_fixed_active(xx, b) : jkx_enabled(xx, b);
       if (b) {                                                   /* pastas para onde vai: "GoldHEN/plugins + PCC59" */
         static char ps[8][200];
         int np = jkx_paths(&ui->cat->jkx[ui->jk_art[n]], b, ps, 8);
@@ -405,19 +409,23 @@ static void jkx_go(UI *ui) {                                     /* v1.43: X na 
   int sel = ui->jk_sel;
   const CatJkx *x = &ui->cat->jkx[ui->jk_art[sel]];
   if (jkx_fixed_note(x)) { char t[160]; snprintf(t, sizeof(t), "%s: %s", x->name, jkx_fixed_note(x)); ui_toast(ui, t, UI_TOAST_INFO); return; }   /* v1.43g */
-  if (jkx_fixed(x)) {                                            /* v1.43d */
-    ui_toast(ui, ui->jk_inst[sel] ? "Vem junto com o JK-MOD e já está ativado." : "Vem junto com o JK-MOD: baixe um placar, narração ou Master League.", UI_TOAST_INFO);
+  int fx = jkx_fixed(x), in = ui->jk_inst[sel];
+  if (in && ui->jx_tog[sel] && (fx || ui->jk_btn == 0)) {        /* v1.47: ATIVADO <-> DESATIVADO (so o plugins.ini / DpFileList) */
+    if (ui->busy) { ui_toast(ui, "Aguarde o download terminar para ativar ou desativar.", UI_TOAST_INFO); return; }
+    int on = !ui->jx_on[sel];
+    jkx_toggle(x, b, on, NULL);
+    char t[160]; snprintf(t, sizeof(t), "%s %s. Feche e abra o PES para valer.", x->name, on ? "ATIVADO" : "DESATIVADO");
+    ui_toast(ui, t, on ? UI_TOAST_OK : UI_TOAST_INFO);
+    ui->jk_scanned = 0; ui->dirty = 1;
+    return;
+  }
+  if (fx && (in || !jkx_fixed_files(x, b))) {                    /* v1.43d */
+    ui_toast(ui, in ? "Vem junto com o JK-MOD e já está ativado." : "Vem junto com o JK-MOD: baixe um placar, narração ou Master League.", UI_TOAST_INFO);
     return;
   }
   if (ui->busy) { ui_toast(ui, "Já existe um pedido em andamento. Aguarde.", UI_TOAST_INFO); return; }
   static CatButton cb;
-  if (ui->jk_btn == 1 && jkx_aviso(x)) {                         /* v1.44: AVISO no lugar de DESINSTALAR */
-    int ai = ui->jx_av[ui->jk_art[sel]];
-    if (ai < 0 || !ui->pl_im[ai][0]) { ui_toast(ui, "Carregando o aviso... tente de novo em instantes.", UI_TOAST_INFO); return; }
-    ui->jx_modal = ui->jk_art[sel] + 1; ui->dirty = 1;
-    return;
-  }
-  if (ui->jk_btn == 1) {
+  if (ui->jk_btn == 1 && !fx) {
     if (!ui->jk_inst[sel]) return;
     if (ui->jx_arm != sel + 1 || ui->frame - ui->jx_arm_f > 240) {          /* 1o toque: so avisa */
       char t[160]; snprintf(t, sizeof(t), "Aperte X de novo para desinstalar: %s", x->name);
@@ -441,6 +449,57 @@ static void jkx_go(UI *ui) {                                     /* v1.43: X na 
   ui->updating = 0;
   ui->jk_scanned = 0;
   if (ui->fn) ui->fn(&cb, ui->user);
+}
+
+/* v1.47: triangulo na aba PLUGINS: video em tela cheia (se o card tem) ou o AVISO */
+static void jkx_tri(UI *ui) {
+  if (ui->jk_n <= 0) return;
+  const CatJkx *x = &ui->cat->jkx[ui->jk_art[ui->jk_sel]];
+  if (x->video[0]) {
+    if (ui->vid_mode == 3 && !strcmp(ui->vurl, x->video) && vp_state() != VP_ERROR) {   /* o do card vira a janela, sem recomecar */
+      snprintf(ui->vtitle, sizeof(ui->vtitle), "%s", x->name);
+      vp_set_mute(0); ui->vid_mode = 1; ui->base_stale = 1; ui->dirty = 1;
+      return;
+    }
+    vid_close(ui);
+    ui->jx_vfail = -1;
+    vid_open_url(ui, x->name, x->video);
+    return;
+  }
+  if (jkx_aviso(x)) {
+    int ai = ui->jx_av[ui->jk_art[ui->jk_sel]];
+    if (ai < 0 || !ui->pl_im[ai][0]) { ui_toast(ui, "Carregando o aviso... tente de novo em instantes.", UI_TOAST_INFO); return; }
+    ui->jx_modal = ui->jk_art[ui->jk_sel] + 1; ui->dirty = 1;
+  }
+}
+
+/* v1.47: video no card selecionado (sem som). Comeca depois de ~1 s parado no card; sai do card = para. */
+static void jx_card_video_tick(UI *ui) {
+  int want = -1;
+  if (ui->detail && ui->pl_cat == 3 && !ui->pl_ed && !ui->jx_modal && !ui->busy && ui->jk_n > 0 && ui->jk_sel < ui->jk_n) {
+    int a = ui->jk_art[ui->jk_sel];
+    if (ui->cat->jkx[a].video[0]) want = a;
+  }
+  if (ui->vid_mode == 1 || ui->vid_mode == 2) { ui->jx_vfoc = ui->frame; return; }   /* janela aberta: ela manda */
+  if (ui->vid_mode == 3 && want != ui->jx_vart) { vid_close(ui); ui->jx_vart = -1; }
+  if (want < 0) { ui->jx_vfoc = ui->frame; return; }
+  if (ui->vid_mode == 3) {
+    if (vp_state() == VP_ERROR) { ui->jx_vfail = want; vid_close(ui); ui->jx_vart = -1; }
+    return;
+  }
+  if (want == ui->jx_vfail || ui->frame - ui->jx_vfoc < 50 || vp_busy()) return;
+  vid_open_url(ui, ui->cat->jkx[want].name, ui->cat->jkx[want].video);
+  if (ui->vid_mode == 1) { ui->vid_mode = 3; vp_set_mute(1); ui->jx_vart = want; ui->base_stale = 1; }
+}
+
+/* v1.47: retangulo do video no card (topo do card, 16:9). 0 = card fora da tela */
+static void jk_pos(UI *ui, int i, int *px, int *py);
+static int jx_video_rect(UI *ui, int *x, int *y, int *w, int *h) {
+  if (ui->pl_cat != 3 || ui->jk_n <= 0) return 0;
+  int cx, cy; jk_pos(ui, ui->jk_sel, &cx, &cy);
+  if (cy < JK_Y0 || cy + JX_CH > 1000) return 0;
+  *x = cx + 6; *y = cy + 6; *w = JX_CW - 12; *h = (JX_CW - 12) * 9 / 16;
+  return 1;
 }
 
 static void jk_install(UI *ui) {
@@ -502,9 +561,11 @@ static void jk_key(UI *ui, int key) {
     case UI_OK: jk_install(ui); return;
     case UI_BACK: ui->detail = 0; ui->pl_ed = 0; ui->dirty = 1; rebuild_fbg(ui); return;
     case UI_SQUARE: trigger_update(ui); return;
+    case UI_TRIANGLE: if (ui->pl_cat == 3) jkx_tri(ui); return;   /* v1.47 */
     default: return;
   }
   if (n > 0 && sel >= 0 && sel < n) {
+    if (sel != ui->jk_sel) ui->jx_vfoc = ui->frame;              /* v1.47: video do card espera de novo */
     ui->jk_sel = sel; jk_fix_btn(ui); ui->dirty = 1;
     if (ui->pl_cat == 3) {                                       /* v1.43d: rola para a linha do item */
       int r = sel / cols;
@@ -546,6 +607,17 @@ static void jk_pill(UI *ui, int x, int y, int w, int h, const char *txt, int st)
   if (st == 2) gfx_rrect(s, x, y, w, h, 8, C_BASE_EDGE, 255, 2);
   else if (st == 0) gfx_rrect(s, x, y, w, h, 8, C_CYAN, 255, 1);
   text_draw_in(s, ui->fb, 14, x, w, y + h / 2 + 5, st == 2 ? "\xE2\x9C\x93 ATIVO" : txt, st == 1 ? C_BG : C_TEXT, 255, 0, 1);
+}
+
+/* v1.47: ATIVADO (verde) / DESATIVADO (vermelho). foc = em foco */
+static void jx_toggle_pill(UI *ui, int x, int y, int w, int h, int on, int foc) {
+  Image *s = ui->s;
+  uint32_t edge = on ? RGB(0x3c, 0xd2, 0x78) : RGB(0xe6, 0x5a, 0x64);
+  uint32_t bg = foc ? edge : on ? RGB(0x0e, 0x3a, 0x22) : RGB(0x46, 0x14, 0x1c);
+  gfx_rrect(s, x, y, w, h, 8, bg, 255, 0);
+  gfx_rrect(s, x, y, w, h, 8, edge, 255, foc ? 0 : 2);
+  int fs = w < 118 ? 12 : 15;
+  text_draw_in(s, ui->fb, fs, x, w, y + h / 2 + (fs == 12 ? 4 : 5), on ? "\xE2\x9C\x93 ATIVADO" : "\xE2\x9C\x97 DESATIVADO", foc ? C_BG : C_TEXT, 255, 0, 1);
 }
 
 /* v1.43: botoes do card de plugin. st: -1 apagado, 0 normal, 1 em foco, 2 instalado. red = DESINSTALAR */
@@ -632,17 +704,30 @@ static void jk_draw(UI *ui) {
         gfx_rrect(s, x + 16, y + 246, cw - 32, 34, 8, foc ? C_ERR : RGB(0x46, 0x14, 0x1c), 255, 0);
         gfx_rrect(s, x + 16, y + 246, cw - 32, 34, 8, RGB(0xe6, 0x5a, 0x64), 255, 1);
         text_draw_in(s, ui->fb, 13, x + 16, cw - 32, y + 268, nt, foc ? C_BG : C_TEXT, 255, 0, 1);
+      } else if (jkx_fixed(&ui->cat->jkx[ui->jk_art[i]]) && in && ui->jx_tog[i]) {   /* v1.47: FIXO com ATIVADO/DESATIVADO */
+        jx_toggle_pill(ui, x + 16, y + 246, cw - 32, 34, ui->jx_on[i], foc);
       } else if (jkx_fixed(&ui->cat->jkx[ui->jk_art[i]])) {      /* v1.43d: vem com o placar */
-        if (in) {
+        if (!in && jkx_fixed_files(&ui->cat->jkx[ui->jk_art[i]], pl_board_cur(ui))) jx_pill(ui, x + 16, y + 246, cw - 32, 34, "INSTALAR", foc ? 1 : 0, 0);   /* v1.47: baixa so ele */
+        else if (in && ui->jx_on[i]) {
           gfx_rrect(s, x + 16, y + 246, cw - 32, 34, 8, foc ? C_FOCUS : C_BASE, 255, 0);
           gfx_rrect(s, x + 16, y + 246, cw - 32, 34, 8, C_BASE_EDGE, 255, 2);
           text_draw_in(s, ui->fb, 15, x + 16, cw - 32, y + 269, "\xE2\x9C\x93 ATIVADO", foc ? C_BG : C_TEXT, 255, 0, 1);
         } else jk_pill(ui, x + 16, y + 246, cw - 32, 34, "VEM COM O JK-MOD", foc ? 0 : -1);
       } else {
         int pw = (cw - 40) / 2;
-        jx_pill(ui, x + 14, y + 246, pw, 34, "INSTALAR", foc && ui->jk_btn == 0 ? 1 : (in ? 2 : 0), 0);
-        if (jkx_aviso(&ui->cat->jkx[ui->jk_art[i]])) jx_pill(ui, x + 26 + pw, y + 246, pw, 34, "AVISO", foc && ui->jk_btn == 1 ? 1 : 0, 2);   /* v1.44 */
-        else jx_pill(ui, x + 26 + pw, y + 246, pw, 34, "DESINSTALAR", !in ? -1 : (foc && ui->jk_btn == 1 ? 1 : 0), 1);
+        if (in && ui->jx_tog[i]) jx_toggle_pill(ui, x + 14, y + 246, pw, 34, ui->jx_on[i], foc && ui->jk_btn == 0);   /* v1.47 */
+        else jx_pill(ui, x + 14, y + 246, pw, 34, "INSTALAR", foc && ui->jk_btn == 0 ? 1 : (in ? 2 : 0), 0);
+        jx_pill(ui, x + 26 + pw, y + 246, pw, 34, "DESINSTALAR", !in ? -1 : (foc && ui->jk_btn == 1 ? 1 : 0), 1);
+      }
+      {                                                          /* v1.47: triangulo = video / aviso */
+        const CatJkx *cx = &ui->cat->jkx[ui->jk_art[i]];
+        const char *tg = cx->video[0] ? "\xE2\x96\xB3 V\xC3\x8D" "DEO" : jkx_aviso(cx) ? "\xE2\x96\xB3 AVISO" : NULL;
+        if (tg) {
+          int bw = 96, bx = x + cw - bw - 10, by = y + 10;
+          gfx_rrect(s, bx, by, bw, 26, 8, cx->video[0] ? RGB(0x0c, 0x1e, 0x34) : RGB(0x3a, 0x2e, 0x08), 235, 0);
+          gfx_rrect(s, bx, by, bw, 26, 8, cx->video[0] ? C_CYAN : RGB(0xf5, 0xc5, 0x18), 255, 1);
+          text_draw_in(s, ui->fb, 13, bx, bw, by + 18, tg, cx->video[0] ? C_TEXT : RGB(0xff, 0xe0, 0x70), 255, 0, 1);
+        }
       }
     } else if (narr) {
       static const char *lab[2] = { "ORIGINAL", "ESTRANGEIRA" };
@@ -815,6 +900,7 @@ static void pl_tick(UI *ui) {
   pl_poll(ui);
   if (!ui->pl_scanned && !ui->busy) { pl_scan(ui); ui->dirty = 1; }
   if (ui->pl_cat > 0 && !ui->jk_scanned && !ui->busy) { jk_scan(ui); ui->dirty = 1; }
+  jx_card_video_tick(ui);                                        /* v1.47 */
 }
 
 /* ---- desenho */
@@ -1048,7 +1134,12 @@ static void pl_footer(UI *ui, int *px) {
     x = hint(ui, x, "O", "Voltar");
   } else if (ui->pl_cat > 0) {                                 /* v1.40 */
     x = hint(ui, x, "\xE2\x97\x80 \xE2\x96\xB2 \xE2\x96\xBC \xE2\x96\xB6", ui->pl_cat == 2 ? "Escolher clube" : "Escolher");
-    x = hint(ui, x, "X", ui->pl_cat == 3 ? "Instalar / Desinstalar" : ui->locked ? "Bloqueado" : "Baixar");
+    x = hint(ui, x, "X", ui->pl_cat == 3 ? "Instalar / Ativar" : ui->locked ? "Bloqueado" : "Baixar");
+    if (ui->pl_cat == 3 && ui->jk_n > 0) {                       /* v1.47 */
+      const CatJkx *fx = &ui->cat->jkx[ui->jk_art[ui->jk_sel]];
+      if (fx->video[0]) x = hint(ui, x, "\xE2\x96\xB3", "Vídeo");
+      else if (jkx_aviso(fx)) x = hint(ui, x, "\xE2\x96\xB3", "Aviso");
+    }
     x = hint(ui, x, "L2  R2", "Categoria");
     if (ui->cat && ui->cat->nplb > 1) x = hint(ui, x, "L1  R1", "Patch");
     x = hint(ui, x, "O", "Voltar");

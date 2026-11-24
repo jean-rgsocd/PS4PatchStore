@@ -21,7 +21,7 @@ typedef struct {
 static VpPlatform P;
 static pthread_mutex_t mu = PTHREAD_MUTEX_INITIALIZER;
 
-static volatile int cancel_flag, paused, pct_done;
+static volatile int cancel_flag, paused, pct_done, muted;   /* v1.47: muted = toca sem som (video do card) */
 static int state = VP_IDLE, alive = 0;
 static char err_msg[200];
 static int vw, vh, fps = 15, nframes, pos_frames;
@@ -245,7 +245,7 @@ static void *player_thread(void *arg) {
         pthread_mutex_lock(&mu); pos_frames++; pthread_mutex_unlock(&mu);
       }
       if (audio) {
-        memcpy(stage + sn, it->pcm, (size_t)it->n48 * 2);
+        if (muted) memset(stage + sn, 0, (size_t)it->n48 * 2); else memcpy(stage + sn, it->pcm, (size_t)it->n48 * 2);
         sn += it->n48;
         int off = 0;
         while (sn - off >= GRAIN && !cancel_flag && !paused) { P.audio_write(stage + off, GRAIN); off += GRAIN; }
@@ -314,6 +314,7 @@ void vp_stop(void) {
   pthread_mutex_unlock(&mu);
 }
 void vp_set_paused(int p) { paused = p ? 1 : 0; }
+void vp_set_mute(int m) { muted = m ? 1 : 0; }
 int vp_paused(void) { return paused; }
 int vp_state(void) { pthread_mutex_lock(&mu); int s = state; pthread_mutex_unlock(&mu); return s; }
 int vp_busy(void) { pthread_mutex_lock(&mu); int a = alive; pthread_mutex_unlock(&mu); return a; }

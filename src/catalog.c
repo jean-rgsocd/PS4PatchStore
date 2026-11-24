@@ -187,6 +187,8 @@ int catalog_parse(Catalog *c, char *text) {
         copy(x->prx, sizeof(x->prx), !strncmp(f[5], "/data/", 6) ? f[5] : "");
         copy(x->del, sizeof(x->del), strcmp(f[6], "-") ? f[6] : "");
         copy(x->files, sizeof(x->files), f[7]);
+        x->video[0] = 0;
+        if (n >= 9 && !strncmp(f[8], "https://", 8) && strstr(f[8], ".jkv")) copy(x->video, sizeof(x->video), f[8]);   /* v1.47 */
       }
     } else if (!strcmp(f[0], "JKG") && n >= 3) {
       if (c->njk < CAT_MAX_PLB) {

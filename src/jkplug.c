@@ -180,7 +180,7 @@ static int st_get(const char *key, const char *cusa) {      /* sem trava (quem c
   char k[64]; snprintf(k, sizeof(k), "%s@%s=", key, cusa);
   int v = -1;
   for (char *l = st_buf; *l;) {
-    if (!strncmp(l, k, strlen(k))) { v = l[strlen(k)] == '1' ? 1 : 0; }
+    if (!strncmp(l, k, strlen(k))) { char c = l[strlen(k)]; v = c == '1' ? 1 : c == '2' ? 2 : 0; }   /* v1.47: 2 = instalado mas DESATIVADO */
     char *e = strchr(l, '\n'); if (!e) break; l = e + 1;
   }
   return v;
@@ -202,7 +202,7 @@ static void st_set(const char *key, const char *cusa, int v) {
     if (!e) break;
     l = e + 1;
   }
-  o += (size_t)snprintf(out + o, sizeof(out) - o, "%s%d\n", k, v ? 1 : 0);
+  o += (size_t)snprintf(out + o, sizeof(out) - o, "%s%d\n", k, (v == 1 || v == 2) ? v : 0);
   memcpy(st_buf, out, o); st_buf[o] = 0;
   { char d[300]; P("/data/jk", d, sizeof(d)); mkdir(d, 0777); }
   writef(JKX_STATE, st_buf, (long long)o);
@@ -298,7 +298,7 @@ static int dp_should(const char *dir, const char *cusa, const char *name, int *m
     for (int k = 0; k < n; k++) {
       if (!it[k].afr || it[k].nodp || strcmp(it[k].path, p)) continue;
       *managed = 1;
-      if (jkx_fixed(x) || st_get(x->key, cusa) == 1) alguem = 1;   /* v1.45: o CPK fica se QUALQUER plugin que usa ele estiver instalado (ex.: placares da Sula) */
+      { int st = st_get(x->key, cusa); if ((jkx_fixed(x) && st != 2) || st == 1) alguem = 1; }   /* v1.47: DESATIVADO (2) sai do DpFileList, o arquivo fica */   /* v1.45: o CPK fica se QUALQUER plugin que usa ele estiver instalado (ex.: placares da Sula) */
     }
   }
   if (*managed && !alguem) want = 0;
@@ -390,7 +390,8 @@ static int files_ok(const CatJkx *x, const char *cusa, const char *dest) {
   return 1;
 }
 static int installed_nolock(const CatJkx *x, const char *cusa, const char *dest) {
-  if (st_get(x->key, cusa) != 1) return 0;                  /* v1.43: cada jogo tem o seu (Mega/Brasfoot x Demisan) */
+  int st = st_get(x->key, cusa);
+  if (st != 1 && st != 2) return 0;                         /* v1.43: cada jogo tem o seu (Mega/Brasfoot x Demisan). v1.47: 2 = desativado */
   Item it[MAXIT]; int n = items(x, dest, it, MAXIT);
   if (n <= 0) return 0;
   for (int k = 0; k < n; k++) {
@@ -398,7 +399,7 @@ static int installed_nolock(const CatJkx *x, const char *cusa, const char *dest)
     long long sz = fsize(it[k].path);
     if (sz <= 0 || (it[k].want > 0 && sz != it[k].want)) return 0;
   }
-  if (x->prx[0] && ini_get(cusa, x->prx) != 1) return 0;
+  if (st == 1 && x->prx[0] && ini_get(cusa, x->prx) != 1) return 0;
   return 1;
 }
 int jkx_installed(const CatJkx *x, const CatPlBoard *b) {
@@ -462,7 +463,7 @@ static int used_elsewhere(const char *key, const char *cusa) {
       if (!strcmp(b->cusa, cusa) || !jkx_for_board(x, b->id)) continue;
       char p[200]; snprintf(p, sizeof(p), "%s/DpFileList.bin", b->dest);
       if (fsize(p) <= 0) continue;
-      if (st_get(key, b->cusa) == 1) return 1;
+      { int st = st_get(key, b->cusa); if (st == 1 || st == 2) return 1; }
     }
   }
   return 0;
@@ -579,9 +580,20 @@ static void fixed_apply(JkxLog log) {
 static int afr_em_uso(const char *path, const char *dest, const char *cusa) {
   for (int i = 0; i < jx_n; i++) {
     const CatJkx *x = &jx_def[i];
-    if (!jkx_fixed(x) && st_get(x->key, cusa) != 1) continue;
+    { int st = st_get(x->key, cusa); if (!jkx_fixed(x) && st != 1 && st != 2) continue; }   /* v1.47: desativado ainda usa o arquivo */
     Item it[MAXIT]; int n = items(x, dest, it, MAXIT);
     for (int k = 0; k < n; k++) if (it[k].afr && !strcmp(it[k].path, path)) return 1;
+  }
+  return 0;
+}
+
+/* v1.47: linha sem FIXO de uma chave que tem card FIXO neste jogo (ex.: 2a linha do Orcamento = pes21_orcamento_tela) */
+static int companion(const CatJkx *x, const char *dest) {
+  if (jkx_fixed(x)) return 0;
+  for (int i = 0; i < jx_n; i++) {
+    const CatJkx *y = &jx_def[i];
+    if (y == x || !jkx_fixed(y) || strcmp(y->key, x->key)) continue;
+    for (int j = 0; j < jx_nb; j++) if (!strcmp(jx_b[j].dest, dest) && jkx_for_board(y, jx_b[j].id)) return 1;
   }
   return 0;
 }
@@ -609,8 +621,15 @@ void jkx_apply(JkxLog log) {
       const CatJkx *x = &jx_def[i];
       int aplica = 0;
       for (int j = 0; j < jx_nb; j++) if (!strcmp(jx_b[j].dest, g[k].dest) && jkx_for_board(x, jx_b[j].id)) aplica = 1;
-      if (!aplica || jkx_fixed(x)) continue;
+      if (!aplica) continue;
       int st = st_get(x->key, g[k].cusa);
+      if (jkx_fixed(x) || companion(x, g[k].dest)) {          /* v1.47: card FIXO (e a 2a linha dele): so o Ativado/Desativado da aba */
+        if (x->prx[0] && !strchr(x->prx, '|') && !jkx_fixed_note(x)) {
+          if (st == 2 && ini_get(g[k].cusa, x->prx) == 1) ini_set(g[k].cusa, x->prx, 0, log);
+          if (st == 1 && !jkx_fixed(x) && fsize(x->prx) > 0 && ini_get(g[k].cusa, x->prx) != 1) ini_set(g[k].cusa, x->prx, 1, log);
+        }
+        continue;
+      }
       if (x->prx[0]) {
         /* so carrega no jogo em que foi instalado pela aba (o plugins.ini dos botoes vem com tudo =true) */
         if ((st != 1 || fsize(x->prx) <= 0) && ini_get(g[k].cusa, x->prx) == 1) ini_set(g[k].cusa, x->prx, 0, log);
@@ -707,4 +726,70 @@ void jkx_migrate(void) {
     writef(JKX_STATE, st_buf, (long long)strlen(st_buf));
   }
   pthread_mutex_unlock(&jx_mu);
+}
+
+/* ------------------------------------------------------------------ v1.47: ATIVADO / DESATIVADO */
+int jkx_toggleable(const CatJkx *x) {
+  if (!x || jkx_fixed_note(x)) return 0;
+  if (x->prx[0] && !strchr(x->prx, '|')) return 1;          /* um prx so (Gol Fora tem 2 alternativas: fica de fora) */
+  Item it[MAXIT]; int n = items(x, "/data/x", it, MAXIT);
+  for (int k = 0; k < n; k++) if (it[k].afr && !it[k].nodp && ends_cpk(it[k].path)) return 1;   /* CPK do DpFileList */
+  return 0;
+}
+int jkx_enabled(const CatJkx *x, const CatPlBoard *b) {
+  if (!x || !b) return 0;
+  pthread_mutex_lock(&jx_mu);
+  int st = st_get(x->key, b->cusa);
+  pthread_mutex_unlock(&jx_mu);
+  return st != 2;
+}
+int jkx_fixed_present(const CatJkx *x, const CatPlBoard *b) {
+  /* card FIXO "no console": o prx de cada linha da chave neste quadro existe (Gol Fora: qualquer alternativa).
+   * Sem prx (Vestiario): os arquivos da linha. Nao olha o plugins.ini (desativado continua "no console"). */
+  if (!x || !b) return 0;
+  int ok = 1, nprx = 0; char a[128];
+  pthread_mutex_lock(&jx_mu);
+  for (int i = 0; i < jx_n; i++) {
+    const CatJkx *y = &jx_def[i];
+    if (strcmp(y->key, x->key) || !jkx_for_board(y, b->id) || !y->prx[0]) continue;
+    int any = 0;
+    for (int k = 0; prx_alt(y->prx, k, a, sizeof(a)); k++) if (fsize(a) > 0) any = 1;
+    nprx++; if (!any) ok = 0;
+  }
+  if (!nprx) {
+    Item it[MAXIT]; int n = items(x, b->dest, it, MAXIT);
+    if (n <= 0) ok = 0;
+    for (int k = 0; ok && k < n; k++) if (!it[k].list && fsize(it[k].path) <= 0) ok = 0;
+  }
+  pthread_mutex_unlock(&jx_mu);
+  return ok;
+}
+int jkx_fixed_active(const CatJkx *x, const CatPlBoard *b) {   /* v1.47: o prx do card esta ligado (sem prx: nao foi desativado) */
+  if (!x || !b) return 0;
+  char a[128]; int alts = 0, on = 0;
+  pthread_mutex_lock(&jx_mu);
+  for (int k = 0; prx_alt(x->prx, k, a, sizeof(a)); k++) { alts++; if (fsize(a) > 0 && ini_get(b->cusa, a) == 1) on = 1; }
+  if (!alts) on = st_get(x->key, b->cusa) != 2;
+  pthread_mutex_unlock(&jx_mu);
+  return on;
+}
+int jkx_fixed_files(const CatJkx *x, const CatPlBoard *b) {
+  if (!x || !b) return 0;
+  Item it[MAXIT]; return items(x, b->dest, it, MAXIT) > 0;
+}
+int jkx_toggle(const CatJkx *x, const CatPlBoard *b, int on, JkxLog log) {
+  if (!x || !b) return -1;
+  pthread_mutex_lock(&jx_mu);
+  int nv = on ? 1 : 2;
+  st_set(x->key, b->cusa, nv);
+  if (nv == 1) {                                             /* liga o prx das linhas DESTE quadro (Financas Vivas: mega x brasfoot) */
+    for (int i = 0; i < jx_n; i++) {
+      const CatJkx *y = &jx_def[i];
+      if (strcmp(y->key, x->key) || !jkx_for_board(y, b->id) || !y->prx[0] || strchr(y->prx, '|')) continue;
+      if (fsize(y->prx) > 0 && ini_get(b->cusa, y->prx) != 1) ini_set(b->cusa, y->prx, 1, log);
+    }
+  }
+  pthread_mutex_unlock(&jx_mu);
+  jkx_apply(log);
+  return nv;
 }

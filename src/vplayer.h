@@ -25,6 +25,7 @@ void vp_init(const VpPlatform *p);
 int  vp_load(const char *url);
 void vp_stop(void);                       /* cancela e para (volta a VP_IDLE quando as threads terminam) */
 void vp_set_paused(int paused);
+void vp_set_mute(int mute);             /* v1.47: 1 = sem som (o ritmo continua pelo audio) */
 int  vp_paused(void);
 int  vp_state(void);
 int  vp_busy(void);                       /* 1 enquanto alguma thread do player ainda roda */

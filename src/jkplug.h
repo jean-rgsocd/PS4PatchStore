@@ -41,4 +41,13 @@ void jkx_note_download(const char *path);
 /* caminhos no console dos arquivos do plugin (para mostrar na tela) */
 int  jkx_paths(const CatJkx *x, const CatPlBoard *b, char (*out)[200], int max);
 
+/* v1.47: ATIVADO / DESATIVADO na aba (estado 2 = instalado mas desligado: prx =false no plugins.ini e CPK fora do DpFileList;
+ * os arquivos ficam). Vale para os cards FIXO tambem. jkx_apply reaplica depois de todo download (o plugins.ini do R2 sobrescreve). */
+int  jkx_toggleable(const CatJkx *x);                       /* tem o que ligar/desligar (1 prx ou CPK do DpFileList) */
+int  jkx_enabled(const CatJkx *x, const CatPlBoard *b);    /* 0 = o usuario desativou */
+int  jkx_toggle(const CatJkx *x, const CatPlBoard *b, int on, JkxLog log);   /* on=1 ativa, 0 desativa; devolve o estado (1/2) */
+int  jkx_fixed_present(const CatJkx *x, const CatPlBoard *b);   /* card FIXO: arquivos no console (ligado ou nao) */
+int  jkx_fixed_active(const CatJkx *x, const CatPlBoard *b);    /* card FIXO ligado agora (prx =true no plugins.ini) */
+int  jkx_fixed_files(const CatJkx *x, const CatPlBoard *b);     /* card FIXO tem arquivos no catalogo (pode baixar pela aba) */
+
 #endif

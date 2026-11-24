@@ -91,7 +91,7 @@ typedef struct { char title[96]; char img[256]; char video[256]; } CatFaq;
  * A mesma chave pode ter varias linhas (uma por patch, quando os links mudam). Ordem = ordem dos cards.
  * (o app antigo ignora essas linhas) */
 #define CAT_MAX_JKX 40
-typedef struct { char key[32]; char name[64]; char img[256]; char boards[64]; char prx[128]; char del[512]; char files[2048]; } CatJkx;
+typedef struct { char key[32]; char name[64]; char img[256]; char boards[64]; char prx[128]; char del[512]; char files[2048]; char video[256]; } CatJkx;   /* v1.47: video = .jkv (9a coluna, opcional) */
 
 typedef struct {
   int locked;              /* 1 = catalogo "so olhar" (visitante / plano vencido ou pendente): sem links de download */
