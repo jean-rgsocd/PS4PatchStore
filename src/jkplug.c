@@ -313,6 +313,7 @@ static int dp_should(const char *dir, const char *cusa, const char *name, int *m
 }
 
 void jkx_dp_fix(const char *dir, const char *cusa, JkxLog log) {
+  static const char *PX[2] = { "JK_PLACAR_SUPER.cpk", "JK_PLACAR_RECOPA.cpk" };   /* v1.49 */
   static const char *PL[5] = { "JK_PLACAR_MUN.cpk", "JK_PLACAR_LIB.cpk", "JK_PLACAR_CDB.cpk", "JK_PLACAR_B.cpk", "JK_PLACAR_A.cpk" };
   char p[400];
   snprintf(p, sizeof(p), "%s/DpFileList.bin", dir);
@@ -329,6 +330,7 @@ void jkx_dp_fix(const char *dir, const char *cusa, JkxLog log) {
   for (int k = 0; k < no; k++) {                            /* 1) o que ja estava: tira JK_PLACAR e o que nao deve estar */
     int jk = 0, mg = 0;
     for (int j = 0; j < 5; j++) if (!strcmp(old[k], PL[j])) jk = 1;
+    for (int j = 0; j < 2; j++) if (!strcmp(old[k], PX[j])) jk = 1;     /* v1.49: Supercopa Rei / Recopa vem do Monte o seu */
     if (jk) continue;
     if (!dp_should(dir, cusa, old[k], &mg) && mg) continue;
     if (m < 230) memcpy(nw[m++], old[k], 32);
@@ -358,6 +360,7 @@ void jkx_dp_fix(const char *dir, const char *cusa, JkxLog log) {
   for (int j = 1; j < 5; j++) { snprintf(p, sizeof(p), "%s/%s", dir, PL[j]); if (fsize(p) <= 0) ok4 = 0; }
   snprintf(p, sizeof(p), "%s/%s", dir, PL[0]);
   if (fsize(p) > 0) { memset(nw[m], 0, 32); snprintf(nw[m], 32, "%s", PL[0]); m++; }
+  for (int j = 0; j < 2; j++) { snprintf(p, sizeof(p), "%s/%s", dir, PX[j]); if (fsize(p) > 0 && m < 230) { memset(nw[m], 0, 32); snprintf(nw[m], 32, "%s", PX[j]); m++; } }
   if (ok4) for (int j = 1; j < 5; j++) { memset(nw[m], 0, 32); snprintf(nw[m], 32, "%s", PL[j]); m++; }
   int dif = m != no;
   for (int k = 0; k < m && !dif; k++) if (strcmp(nw[k], old[k])) dif = 1;

@@ -34,6 +34,7 @@ static const char *PL_NOTE[8] = { "", "", "", "", "outras ligas e amistosos", "p
 static int pl_count(const CatPlBoard *b, int c);
 /* v1.43: tamanhos das imagens (menores quando o quadro tem a 5a linha) */
 static int pli_ih = PL_IH, pli_lw = PL_LW, pli_eih = PL_EIH, pli_elw = PL_ELW;
+static int pli_nobox = 0;                                        /* v1.49: 7/8 linhas: placar sem a caixa escura (preenche a linha) */
 
 static int is_plgrid(const CatGame *g) { return g && !strcmp(g->tag, "PLACARGRID"); }
 static int pl_active(UI *ui) { return ui->mode == MODE_CATALOG && ui->detail && is_plgrid(cur_game(ui)); }
@@ -163,7 +164,7 @@ static void pl_load_images(UI *ui) {
   if (!J) return;
   J->ui = ui; J->gen = gen;
   { int nc_ = pl_ncomp(b), five = nc_ >= 5;                      /* v1.43; v1.45: 6 linhas; v1.49: 7 e 8 */
-    pli_ih = PL_IH; pli_lw = PL_LW; pli_eih = nc_ >= 7 ? 54 : nc_ >= 6 ? 70 : five ? 84 : PL_EIH; pli_elw = nc_ >= 7 ? 54 : nc_ >= 6 ? 70 : five ? 84 : PL_ELW;   /* card do combo: sempre 4 linhas (barra grande) */
+    pli_ih = PL_IH; pli_lw = PL_LW; pli_eih = nc_ >= 7 ? 64 : nc_ >= 6 ? 70 : five ? 84 : PL_EIH; pli_elw = nc_ >= 7 ? 64 : nc_ >= 6 ? 70 : five ? 84 : PL_ELW;   /* card do combo: sempre 4 linhas (barra grande) */
     J->ih = pli_ih; J->lw = pli_lw; J->eih = pli_eih; J->elw = pli_elw; }
   for (int i = 0; i < b->nopt; i++) {                            /* primeiro as imagens dos placares, depois os logos */
     ui->pl_oi[i] = pl_url_add(ui, J, b->opt[i].img, 0);
@@ -786,9 +787,19 @@ static void pl_build_bg(UI *ui) {
 }
 
 /* ---- instalacao: 4 CPKs + arquivos comuns do quadro (plugin, regras, base do JK-MOD) */
-static void pl_install(UI *ui, const int *opt, const char *what) {
+/* v1.49: o Placar Mundial e obrigatorio (as outras ligas e amistosos usam a gaveta dele): sem escolha, fica o que ja esta instalado ou o 1o "MUNDIAL_" */
+static int pl_mun_default(UI *ui, const CatPlBoard *b) {
+  if (ui->pl_inst[4] >= 0) return ui->pl_inst[4];
+  int first = -1;
+  for (int i = 0; i < b->nopt; i++) if (b->opt[i].comp == 4) { if (first < 0) first = i; if (!strncmp(b->opt[i].id, "MUNDIAL_", 8)) return i; }
+  return first;
+}
+static void pl_install(UI *ui, const int *opt0, const char *what) {
   const CatPlBoard *b = pl_board_cur(ui);
   if (!b) return;
+  int opt[CAT_PL_COMPS];
+  for (int c = 0; c < CAT_PL_COMPS; c++) opt[c] = opt0[c];
+  if (opt[4] < 0) opt[4] = pl_mun_default(ui, b);
   if (ui->locked) {
     ui_toast(ui, ui->offline ? "Sem conexão com o servidor. Downloads indisponíveis agora." : "Ative seu plano para baixar.", UI_TOAST_ERR);
     return;
@@ -825,6 +836,7 @@ static void pl_ed_open(UI *ui) {
     ui->pl_pick[c] = p;
   }
   for (int c = 4; c < CAT_PL_COMPS; c++) ui->pl_pick[c] = ui->pl_inst[c];   /* v1.43: -1 = nao troca */
+  if (ui->pl_pick[4] < 0) ui->pl_pick[4] = pl_mun_default(ui, b);           /* v1.49: Placar Mundial obrigatorio */
   ui->pl_ed = 1; ui->pl_row = 0; ui->dirty = 1;
 }
 
@@ -833,7 +845,7 @@ static void pl_cycle(UI *ui, int c, int dir) {
   const CatPlBoard *b = pl_board_cur(ui);
   if (!b) return;
   int idx[CAT_MAX_PLO + 1], n = 0, at = 0;
-  if (c >= 4) idx[n++] = -1;                                    /* v1.43: "NAO TROCAR" (Mundial e Sula) */
+  if (c >= 5) idx[n++] = -1;                                    /* v1.43: "NAO TROCAR" (Sula, Supercopa, Recopa); v1.49: o Placar Mundial (4) e obrigatorio */
   for (int i = 0; i < b->nopt; i++) if (b->opt[i].comp == c) { if (i == ui->pl_pick[c]) at = n; idx[n++] = i; }
   if (n <= 0) return;
   at = (at + dir + n) % n;
@@ -930,7 +942,7 @@ static void pl_glow(Image *s, int x, int y, int w, int h, int r, uint32_t col) {
 /* imagem do placar + logo de uma opcao (placeholder com o nome enquanto a imagem nao chega) */
 static void pl_draw_opt(UI *ui, const CatPlOpt *o, int oi, int x, int y, int iw, int ih, int lw, int big) {
   Image *s = ui->s;
-  gfx_rrect(s, x, y, iw, ih, 10, C_DEEP, 255, 0);
+  if (!pli_nobox) gfx_rrect(s, x, y, iw, ih, 10, C_DEEP, 255, 0);
   int lx = x + iw + (big ? 74 : 8), ly = y + (ih - lw) / 2;
   gfx_rrect(s, lx, ly, lw, lw, 12, C_DEEP, 255, 0);
   gfx_rrect(s, lx, ly, lw, lw, 12, C_EDGE, 255, 1);
@@ -1073,8 +1085,8 @@ static void pl_draw_editor(UI *ui, const CatPlBoard *b) {
   int nc = pl_ncomp(b), five = nc >= 5, six = nc >= 6, seven = nc >= 7;   /* v1.43; v1.45: 6 linhas; v1.49: 7 e 8 */
   for (int k = 0; k < nc; k++) {
     int c = pl_row_comp(b, k);
-    int pitch = seven ? (nc == 7 ? 86 : 76) : six ? 102 : five ? 120 : 148;
-    int ry = py + 124 + k * pitch, rx = px + 40, rw = pw - 80, rh = pitch - 8;
+    int pitch = seven ? (nc == 7 ? 90 : 80) : six ? 102 : five ? 120 : 148;
+    int ry = py + (seven ? 112 : 124) + k * pitch, rx = px + 40, rw = pw - 80, rh = pitch - 8;
     int foc = ui->pl_row == k;
     gfx_rrect(s, rx, ry, rw, rh, 16, foc ? C_PANEL2 : C_DEEP, 255, 0);
     if (foc) pl_glow(s, rx, ry, rw, rh, 16, C_FOCUS); else gfx_rrect(s, rx, ry, rw, rh, 16, C_EDGE, 255, 1);
@@ -1092,20 +1104,22 @@ static void pl_draw_editor(UI *ui, const CatPlBoard *b) {
       char pos[24]; snprintf(pos, sizeof(pos), "%d de %d", at + 1, n);
       T(ui, 0, f3, rx + 28, y3, pos, C_MUTED, 255, 0);
       if (PL_NOTE[c][0]) { char nt[96]; int pw3 = TW(ui, 0, f3, pos, 0); text_fit(ui->f, f3, PL_NOTE[c], 290 - pw3, nt, sizeof(nt)); T(ui, 0, f3, rx + 28 + pw3 + 14, y3, nt, C_YELLOW, 255, 0); }
-    } else if (c >= 4) {
+    } else if (c >= 5) {
       T(ui, 1, fn, rx + 28, yn, "NÃO TROCAR", C_MUTED, 255, 0);
-      { char nt[96]; text_fit(ui->f, f3, c == 4 ? "outras ligas e amistosos: placar original" : PL_NOTE[c], 300, nt, sizeof(nt)); T(ui, 0, f3, rx + 28, y3, nt, C_YELLOW, 255, 0); }
+      { char nt[96]; text_fit(ui->f, f3, PL_NOTE[c], 300, nt, sizeof(nt)); T(ui, 0, f3, rx + 28, y3, nt, C_YELLOW, 255, 0); }
     }
     uint32_t ac = foc ? C_FOCUS : C_MUTED;
     text_draw_in(s, ui->fb, 34, rx + 330, 40, ry + rh / 2 + 12, "\xE2\x97\x80", ac, foc ? 255 : 120, 0, 1);
-    pl_draw_opt(ui, o, oi, rx + 380, ry + (seven ? 7 : 12), PL_EIW, pli_eih, pli_elw, 1);
+    pli_nobox = seven;
+    pl_draw_opt(ui, o, oi, rx + 380, ry + (seven ? 4 : 12), PL_EIW, pli_eih, pli_elw, 1);
+    pli_nobox = 0;
     text_draw_in(s, ui->fb, 34, rx + 380 + PL_EIW + 12, 40, ry + rh / 2 + 12, "\xE2\x96\xB6", ac, foc ? 255 : 120, 0, 1);
   }
   char t[64], mb[24];
   pl_mb(tot, mb, sizeof(mb));
   snprintf(t, sizeof(t), "BAIXAR MEU COMBO  \xC2\xB7  %s", mb);
   int bw = 560;
-  pl_button(ui, px + (pw - bw) / 2, py + ph - 78, bw, 56, t, 1, 0);
+  pl_button(ui, px + (pw - bw) / 2, py + ph - (seven ? 68 : 78), bw, 56, t, 1, 0);
 }
 
 static void pl_draw(UI *ui) {
