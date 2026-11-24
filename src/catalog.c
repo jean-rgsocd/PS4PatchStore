@@ -42,6 +42,8 @@ int catalog_pl_comp(const char *s) {
   if (!strcmp(s, "LIB")) return 3;
   if (!strcmp(s, "MUN")) return 4;                          /* v1.43 */
   if (!strcmp(s, "SULA")) return 5;                         /* v1.45 */
+  if (!strcmp(s, "SUPER")) return 6;                        /* v1.49 */
+  if (!strcmp(s, "RECOPA")) return 7;                       /* v1.49 */
   /* v1.43: "A+" "B+" "CDB+" "LIB+" = opcao nova so para o app novo (o 1.42 ignora): para testar antes de liberar */
   if (!strcmp(s, "A+")) return 0;
   if (!strcmp(s, "B+")) return 1;
@@ -220,7 +222,7 @@ int catalog_parse(Catalog *c, char *text) {
           if (oi < 0 || b->opt[oi].comp != k) ok = 0;   /* PLO precisa vir antes e ser da competicao certa */
           p.opt[k] = oi;
         }
-        p.opt[4] = -1; p.opt[5] = -1;                     /* v1.43: 5o placar (Mundial / Copas) e opcional; v1.45: 6o (Sula) so no Monte o seu */
+        p.opt[4] = -1; p.opt[5] = -1; p.opt[6] = -1; p.opt[7] = -1;                     /* v1.43: 5o placar (Mundial / Copas) e opcional; v1.45: 6o (Sula) so no Monte o seu */
         if (n >= 8 && f[7][0]) { int oi = pl_opt(b, f[7]); if (oi >= 0 && b->opt[oi].comp == 4) p.opt[4] = oi; }
         if (ok) b->pack[b->npack++] = p;
       }

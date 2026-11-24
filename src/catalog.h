@@ -54,10 +54,10 @@ typedef struct {
  * PLO <quadro> <id> <competicao A|B|CDB|LIB> <emissora> <url do cpk> <tamanho> <imagem do placar> <logo>
  * PLP <quadro> <nome do combo> <id A> <id B> <id CDB> <id LIB> [<id MUN> v1.43, opcional]
  * (o app antigo ignora essas linhas) */
-#define CAT_PL_COMPS  6          /* v1.45: + SULA (Sul-Americana, gaveta Euro) */
+#define CAT_PL_COMPS  8          /* v1.45: + SULA (gaveta Euro); v1.49: + SUPER (Supercopa Rei, gaveta Ucl) e RECOPA (gaveta England) */
 #define CAT_PL_COMPS_OLD 5          /* v1.43: + MUN (Mundial / Copas, placar "Pes" do jogo). O app antigo ignora PLO MUN */
 #define CAT_MAX_PLB   3
-#define CAT_MAX_PLO   40
+#define CAT_MAX_PLO   72
 #define CAT_MAX_PLP   16
 typedef struct { char id[32]; int comp; char name[48]; char url[256]; unsigned long long size; char img[256]; char logo[256]; } CatPlOpt;
 typedef struct { char name[64]; int opt[CAT_PL_COMPS]; } CatPlPack;
