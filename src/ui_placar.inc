@@ -112,7 +112,7 @@ static void *pl_worker(void *arg) {
     Image *a, *b;
     if (J->logo[k] == 2) { a = raw; b = NULL; raw = NULL; }
     else if (J->logo[k]) { a = pl_fit(raw, J->lw - 6, J->lw - 6); b = pl_fit(raw, J->elw - 14, J->elw - 14); }
-    else            { raw = pl_trim(raw); a = pl_fit(raw, PL_IW - 10, J->ih - 6);  b = pl_fit(raw, PL_EIW - 16, J->eih - 8); }
+    else            { raw = pl_trim(raw); a = pl_fit(raw, PL_IW - 10, J->ih - 6);  b = pl_fit(raw, PL_EIW - 16, J->eih >= 74 ? J->eih - 2 : J->eih - 8);   /* v1.50: 7/8 linhas: placar quase da altura da linha */ }
     if (raw) img_free(raw);
     pthread_mutex_lock(&pl_mu);
     if (plr_gen == J->gen) {
@@ -164,7 +164,7 @@ static void pl_load_images(UI *ui) {
   if (!J) return;
   J->ui = ui; J->gen = gen;
   { int nc_ = pl_ncomp(b), five = nc_ >= 5;                      /* v1.43; v1.45: 6 linhas; v1.49: 7 e 8 */
-    pli_ih = PL_IH; pli_lw = PL_LW; pli_eih = nc_ >= 7 ? 64 : nc_ >= 6 ? 70 : five ? 84 : PL_EIH; pli_elw = nc_ >= 7 ? 64 : nc_ >= 6 ? 70 : five ? 84 : PL_ELW;   /* card do combo: sempre 4 linhas (barra grande) */
+    pli_ih = PL_IH; pli_lw = PL_LW; pli_eih = nc_ >= 7 ? 74 : nc_ >= 6 ? 70 : five ? 84 : PL_EIH; pli_elw = nc_ >= 7 ? 74 : nc_ >= 6 ? 70 : five ? 84 : PL_ELW;   /* card do combo: sempre 4 linhas (barra grande) */
     J->ih = pli_ih; J->lw = pli_lw; J->eih = pli_eih; J->elw = pli_elw; }
   for (int i = 0; i < b->nopt; i++) {                            /* primeiro as imagens dos placares, depois os logos */
     ui->pl_oi[i] = pl_url_add(ui, J, b->opt[i].img, 0);
@@ -787,11 +787,12 @@ static void pl_build_bg(UI *ui) {
 }
 
 /* ---- instalacao: 4 CPKs + arquivos comuns do quadro (plugin, regras, base do JK-MOD) */
-/* v1.49: o Placar Mundial e obrigatorio (as outras ligas e amistosos usam a gaveta dele): sem escolha, fica o que ja esta instalado ou o 1o "MUNDIAL_" */
-static int pl_mun_default(UI *ui, const CatPlBoard *b) {
-  if (ui->pl_inst[4] >= 0) return ui->pl_inst[4];
+/* v1.49/1.50: Mundial, Sula, Supercopa e Recopa nao tem "NAO TROCAR": sem escolha, fica o que ja esta instalado ou o padrao ("MUNDIAL_" / "SULA_Caze" / o 1o) */
+static int pl_def_opt(UI *ui, const CatPlBoard *b, int c) {
+  if (ui->pl_inst[c] >= 0) return ui->pl_inst[c];
   int first = -1;
-  for (int i = 0; i < b->nopt; i++) if (b->opt[i].comp == 4) { if (first < 0) first = i; if (!strncmp(b->opt[i].id, "MUNDIAL_", 8)) return i; }
+  const char *pref = c == 4 ? "MUNDIAL_" : c == 5 ? "SULA_Caze" : "";
+  for (int i = 0; i < b->nopt; i++) if (b->opt[i].comp == c) { if (first < 0) first = i; if (pref[0] && !strncmp(b->opt[i].id, pref, strlen(pref)) && (c == 4 || !strcmp(b->opt[i].id, pref))) return i; }
   return first;
 }
 static void pl_install(UI *ui, const int *opt0, const char *what) {
@@ -799,7 +800,7 @@ static void pl_install(UI *ui, const int *opt0, const char *what) {
   if (!b) return;
   int opt[CAT_PL_COMPS];
   for (int c = 0; c < CAT_PL_COMPS; c++) opt[c] = opt0[c];
-  if (opt[4] < 0) opt[4] = pl_mun_default(ui, b);
+  for (int c = 4; c < CAT_PL_COMPS; c++) if (opt[c] < 0) opt[c] = pl_def_opt(ui, b, c);
   if (ui->locked) {
     ui_toast(ui, ui->offline ? "Sem conexão com o servidor. Downloads indisponíveis agora." : "Ative seu plano para baixar.", UI_TOAST_ERR);
     return;
@@ -836,7 +837,7 @@ static void pl_ed_open(UI *ui) {
     ui->pl_pick[c] = p;
   }
   for (int c = 4; c < CAT_PL_COMPS; c++) ui->pl_pick[c] = ui->pl_inst[c];   /* v1.43: -1 = nao troca */
-  if (ui->pl_pick[4] < 0) ui->pl_pick[4] = pl_mun_default(ui, b);           /* v1.49: Placar Mundial obrigatorio */
+  for (int c = 4; c < CAT_PL_COMPS; c++) if (ui->pl_pick[c] < 0) ui->pl_pick[c] = pl_def_opt(ui, b, c);   /* v1.50: sem "NAO TROCAR" */
   ui->pl_ed = 1; ui->pl_row = 0; ui->dirty = 1;
 }
 
@@ -845,7 +846,8 @@ static void pl_cycle(UI *ui, int c, int dir) {
   const CatPlBoard *b = pl_board_cur(ui);
   if (!b) return;
   int idx[CAT_MAX_PLO + 1], n = 0, at = 0;
-  if (c >= 5) idx[n++] = -1;                                    /* v1.43: "NAO TROCAR" (Sula, Supercopa, Recopa); v1.49: o Placar Mundial (4) e obrigatorio */
+  /* v1.50: nenhuma competicao opcional tem "NAO TROCAR" */
+  if (0) idx[n++] = -1;                                    /* v1.43: "NAO TROCAR" (Sula, Supercopa, Recopa); v1.49: o Placar Mundial (4) e obrigatorio */
   for (int i = 0; i < b->nopt; i++) if (b->opt[i].comp == c) { if (i == ui->pl_pick[c]) at = n; idx[n++] = i; }
   if (n <= 0) return;
   at = (at + dir + n) % n;
@@ -1074,6 +1076,7 @@ static void pl_draw_editor(UI *ui, const CatPlBoard *b) {
   Image *s = ui->s;
   gfx_fill(s, 0, 0, W, 990, C_BLACK, 170);
   int px = 150, py = 140, pw = 1620, ph = 830;
+  if (pl_ncomp(b) >= 7) { py = 100; ph = 870; }                  /* v1.50: 7/8 linhas: painel mais alto (placares maiores) */
   gfx_rrect(s, px, py, pw, ph, 24, C_PANEL, 252, 0);
   gfx_rrect(s, px, py, pw, ph, 24, C_FOCUS, 160, 2);
   gfx_fill(s, px + 40, py + 1, 160, 3, C_FOCUS, 255);
@@ -1085,7 +1088,7 @@ static void pl_draw_editor(UI *ui, const CatPlBoard *b) {
   int nc = pl_ncomp(b), five = nc >= 5, six = nc >= 6, seven = nc >= 7;   /* v1.43; v1.45: 6 linhas; v1.49: 7 e 8 */
   for (int k = 0; k < nc; k++) {
     int c = pl_row_comp(b, k);
-    int pitch = seven ? (nc == 7 ? 90 : 80) : six ? 102 : five ? 120 : 148;
+    int pitch = seven ? (nc == 7 ? 96 : 84) : six ? 102 : five ? 120 : 148;
     int ry = py + (seven ? 112 : 124) + k * pitch, rx = px + 40, rw = pw - 80, rh = pitch - 8;
     int foc = ui->pl_row == k;
     gfx_rrect(s, rx, ry, rw, rh, 16, foc ? C_PANEL2 : C_DEEP, 255, 0);
@@ -1111,7 +1114,7 @@ static void pl_draw_editor(UI *ui, const CatPlBoard *b) {
     uint32_t ac = foc ? C_FOCUS : C_MUTED;
     text_draw_in(s, ui->fb, 34, rx + 330, 40, ry + rh / 2 + 12, "\xE2\x97\x80", ac, foc ? 255 : 120, 0, 1);
     pli_nobox = seven;
-    pl_draw_opt(ui, o, oi, rx + 380, ry + (seven ? 4 : 12), PL_EIW, pli_eih, pli_elw, 1);
+    pl_draw_opt(ui, o, oi, rx + 380, ry + (seven ? 1 : 12), PL_EIW, pli_eih, pli_elw, 1);
     pli_nobox = 0;
     text_draw_in(s, ui->fb, 34, rx + 380 + PL_EIW + 12, 40, ry + rh / 2 + 12, "\xE2\x96\xB6", ac, foc ? 255 : 120, 0, 1);
   }
