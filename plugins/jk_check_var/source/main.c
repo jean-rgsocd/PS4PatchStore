@@ -178,6 +178,56 @@
  * push rbx; sub rsp,0x668) - sem nenhuma instrucao AVX/VEX dessa vez, mas
  * mantive o mesmo padrao comprovado do jk_craque/v3.07 (sys_sdk_proc_rw,
  * delay de 3s, assembly fixo) por seguranca.
+ *
+ * v4.03: trabalho de pesquisa pra tentar abrir de vez a SALA 3D do VAR (nao
+ * so a troca de cartao, que ja funciona desde a v4.00). Li o FoulScenes.lua
+ * completo do seu mod de PC. Descobri duas coisas importantes:
+ *
+ * 1) O mod de PC so mexe na sala do VAR em situacoes de PENALTI, usando uma
+ *    familia de seletor DIFERENTE da nossa (0x0002000F a 0x00020014, uma
+ *    pra cada variante de cartao NO PENALTI: Y=amarelo, R=vermelho,
+ *    N=sem cartao, W=aviso, R_ALT/N_ALT=variantes). Isso bate com um valor
+ *    que ja vimos SOZINHO num log antigo seu (log do teste de
+ *    desligar/ligar sala): "#4 DIAG: chamada OK, original=0x00020011" -
+ *    0x20011 e EXATAMENTE o "FOUL_PK_CARD_N" (penalti sem cartao) da tabela
+ *    do PC. Ou seja, e bem provavel que o PS4 use OS MESMOS numeros do PC
+ *    pra penalti (diferente dos numeros de falta comum, que descobrimos na
+ *    v4.01 que eram outros). Essa versao passa a reconhecer e logar esses 6
+ *    valores de penalti separadamente (ver FAMILIA_PENALTI abaixo), pra
+ *    confirmar com certeza na proxima partida com penalti.
+ *
+ * 2) ACHEI O MOTIVO PROVAVEL de 0x00050006 (sozinho) ter mostrado a cena de
+ *    troca de jogador em vez da sala do VAR no seu teste: lendo o Lua, o
+ *    PROPRIO mod de PC SO troca o seletor pra 0x00050006 DEPOIS de escrever
+ *    um "perfil" de 26 bytes numa estrutura de memoria separada (endereco =
+ *    [RAX]+[R15] no ponto que ELE hooka, que e diferente do nosso - o PC
+ *    hooka onde o jogo CONSOME o seletor, nao onde ele e GERADO). Se esse
+ *    perfil nao e escrito, o PROPRIO codigo do PC (nao so o jogo) cai de
+ *    volta pra cena de troca de jogador como "plano B" - exatamente o que
+ *    vimos no PS4. Ou seja, muito provavelmente SO TROCAR O NUMERO NAO E
+ *    SUFICIENTE, nem no PC nem no PS4 - falta a outra metade do mecanismo
+ *    (escrever esse perfil em memoria).
+ *
+ *    Tentei achar, so analisando o eboot (sem depurador ao vivo - nao tenho
+ *    acesso a isso neste ambiente), a funcao que faz esse trabalho no PS4.
+ *    Rastreei os dois chamadores conhecidos de FUN_00311ce0 pra frente: os
+ *    dois, logo depois da chamada, chamam uma funcao comum (offset 0x714660)
+ *    passando o resultado - mas essa funcao e so uma rotina generica de
+ *    crescimento de std::vector (reutilizada em centenas de lugares do
+ *    jogo, sem nada especifico de VAR) - um beco sem saida pra analise
+ *    estatica sozinha.
+ *
+ *    Por isso essa versao troca o experimento de "um numero fixo so" (que
+ *    ja provamos que NAO abre a sala sozinho) por uma BUSCA: uma lista de
+ *    varios candidatos da mesma familia (0x00050000 a 0x0005000A), testando
+ *    UM DIFERENTE a cada falta elegivel enquanto o modo de busca estiver
+ *    ligado, com log bem claro de qual candidato foi tentado - pra voce
+ *    testar em jogo e me dizer exatamente o que cada um mostrou (igual a
+ *    gente fez pra descobrir os valores de cartao na v4.01). Sem um
+ *    depurador ao vivo no PS4, isso e o jeito mais rapido e confiavel de
+ *    achar o numero certo (se for so numero) ou confirmar que falta mesmo
+ *    o tal "perfil" de memoria (se NENHUM candidato abrir a sala de
+ *    verdade).
  */
 #include <stdint.h>
 #include <stddef.h>
@@ -193,7 +243,7 @@
 attr_public const char *g_pluginName = "JK_CHECK-VAR";
 attr_public const char *g_pluginDesc = "JK PATCHS - VAR funcional (revisao de cartoes)";
 attr_public const char *g_pluginAuth = "JK PATCHS";
-attr_public uint32_t g_pluginVersion = 0x00000402;
+attr_public uint32_t g_pluginVersion = 0x00000405;
 
 #define PASTA "/data/jk/super"
 
@@ -230,6 +280,23 @@ static const uint32_t FAMILIA_VERMELHO[]   = { 0x20004u };
 #define CHANCE_AGRAVAR        40  /* amarelo -> vermelho */
 #define CHANCE_ANULAR         35  /* vermelho -> amarelo */
 
+/* v4.03: valores de PENALTI vindos do FoulScenes.lua do seu mod de PC
+   (tabela PK_ROUTES) - DIFERENTES da familia de falta comum acima. Ainda
+   nao confirmados 100% no PS4 (so vimos 0x20011 aparecer uma vez, sem eu
+   saber na hora que era penalti), mas como ja bateu exatamente com o nome
+   certo (FOUL_PK_CARD_N = penalti sem cartao), essa versao passa a
+   reconhecer e logar os 6 de forma BEM visivel sempre que aparecerem - isso
+   so serve pra CONFIRMAR em jogo, nao muda nenhuma decisao sozinho ainda. */
+static const uint32_t FAMILIA_PENALTI[] = {
+    0x2000Fu, /* PK_CARD_Y      - penalti, amarelo */
+    0x20010u, /* PK_CARD_R      - penalti, vermelho */
+    0x20011u, /* PK_CARD_N      - penalti, sem cartao (ja visto 1x no log) */
+    0x20012u, /* PK_CARD_W      - penalti, aviso/sem cartao (variante) */
+    0x20013u, /* PK_CARD_R_ALT  - penalti, vermelho (variante) */
+    0x20014u, /* PK_CARD_N_ALT  - penalti, sem cartao (variante) */
+};
+#define N_PENALTI ((int)(sizeof(FAMILIA_PENALTI) / sizeof(FAMILIA_PENALTI[0])))
+
 /* ------------------------------------------------------------------------
  * MODO EXPERIMENTAL "SALA DO VAR" (v3)
  *
@@ -252,16 +319,60 @@ static const uint32_t FAMILIA_VERMELHO[]   = { 0x20004u };
  * arquivo (por FTP, vazio):
  *   /data/jk/super/ligar_sala_var.txt
  *
- * Com ele presente, limitado a LIMITE_TENTATIVAS_SALA vezes por
- * carregamento (pra nao arriscar demais numa unica partida de teste):
- * ao inves de revisar dentro da familia, troca o seletor pra 0x00050006.
- * Se der certo: deve abrir uma cena/camera diferente da cutscene normal
- * de cartao. Se nao acontecer nada visivel: anotamos que falta a outra
- * metade do mecanismo (meu palpite e um "flag" extra que o PC grava numa
- * estrutura separada, ainda nao localizada no PS4). Se travar: apaga o
- * ligar_sala_var.txt e volta pro modo seguro (que e o padrao). */
-#define SELETOR_SALA_VAR          0x00050006u
-#define LIMITE_TENTATIVAS_SALA    10
+ * v4.03: JA CONFIRMAMOS que 0x00050006 sozinho NAO abre a sala (mostrou a
+ * cena de troca de jogador, igual ao "plano B" que o proprio Lua do PC usa
+ * quando falta o perfil de memoria - ver nota grande la em cima). Por isso
+ * trocamos de "um numero fixo" pra uma BUSCA numa lista de candidatos da
+ * mesma familia (CANDIDATOS_SALA_VAR abaixo) - cada vez que essa ocorrencia
+ * acontece com o modo de busca ligado, tenta o PROXIMO candidato da lista
+ * (nunca repete o mesmo 0x50006 que ja sabemos que nao funciona sozinho).
+ * Precisa testar em jogo, UM POR VEZ, e me dizer exatamente o que cada
+ * tentativa mostrou na tela (igual fizemos pra descobrir os valores reais
+ * de cartao). Se NENHUM candidato abrir a sala de verdade, isso confirma
+ * que falta mesmo a escrita do tal "perfil" de memoria, e aí o proximo
+ * passo vira tentar achar esse segundo ponto certo no PS4 (precisa de mais
+ * investigacao, possivelmente com logs de registradores que esse plugin
+ * ainda nao tira). Se travar numa tentativa: apaga o ligar_sala_var.txt e
+ * volta pro modo seguro (que e o padrao).
+ *
+ * v4.04: TESTADO - 0x00050000 (1o candidato da lista) trava a ANIMACAO do
+ * jogo (juiz/jogadores congelados no lugar, bola parada no ar) enquanto o
+ * relogio da partida continua passando normal - ou seja, nao derruba o
+ * jogo/console, mas fica preso num carregamento de cena que nunca termina,
+ * e so da pra sair fechando o jogo na mao. Removido da lista (NAO tenta
+ * mais esse valor). Os candidatos seguintes ja pulam direto pra 0x50002.
+ *
+ * v4.05: achei uma pista BEM mais forte que numero chutado, usando o Ghidra
+ * de verdade (voce mesmo decompilou pra mim, com a base certa 0x400000).
+ * Rastreei a cadeia completa: FUN_00711ce0 (nosso alvo) -> FUN_007117a0
+ * (monta um array de registros de 28 bytes, EXATAMENTE do tamanho do
+ * "perfil" que o mod de PC escreve na memoria) -> FUN_0070e300 (a funcao
+ * que de fato manda a cena pro sistema de demo). Dentro de FUN_0070e300 tem
+ * isso:
+ *     param_1[1] = (uint)(*param_1 == 0x80001);
+ *     ...
+ *     else if ((param_1[1] == 1) && (*param_1 == 0x80001)) {
+ *         uVar2 = FUN_02dbee10(0x80001,(undefined4)param_7);
+ *     }
+ * Ou seja: o valor 0x00080001 tem um caminho ESPECIAL e SEPARADO nessa
+ * funcao - pula todo aquele mecanismo normal de fila de registros de falta/
+ * cartao e chama direto uma funcao diferente so pra esse numero. Fui ver
+ * essa funcao (FUN_02dbee10): ela cria um objeto C++ generico (aloca 0x2e8
+ * bytes, vtable proprio) passando 0x80001 como "ID de sequencia especial" -
+ * um mecanismo de disparo de sequencia TOTALMENTE diferente do usado pra
+ * cartao comum. Isso bate muito mais com o perfil de algo como a sala do
+ * VAR (uma tela cheia especial, fora do fluxo normal de falta) do que
+ * qualquer um dos 0x5xxxx que a gente chutou antes - e nao e um valor
+ * "fora da faixa"/invalido, e um caminho de codigo EXPLICITO e tratado.
+ * Por isso 0x80001 vira candidato PRIORITARIO, testado antes dos 0x5xxxx
+ * que sobraram. */
+static const uint32_t CANDIDATOS_SALA_VAR[] = {
+    0x80001u,
+    0x50002u, 0x50003u, 0x50004u, 0x50005u,
+    0x50007u, 0x50008u, 0x50009u, 0x5000Au, 0x5000Bu,
+};
+#define N_CANDIDATOS_SALA_VAR ((int)(sizeof(CANDIDATOS_SALA_VAR) / sizeof(CANDIDATOS_SALA_VAR[0])))
+#define LIMITE_TENTATIVAS_SALA    N_CANDIDATOS_SALA_VAR
 #define CHANCE_SALA_VAR           65   /* mesma chance que o mod de PC usa (var_event_probability) */
 
 static uint64_t g_base;
@@ -387,6 +498,22 @@ static uint32_t hook_alvo(uint64_t a, uint64_t b)
         logf_("#%u DIAG: chamada OK, original=0x%08x", n, original);
     }
 
+    /* v4.03: loga BEM visivel sempre que um valor de penalti (familia do mod
+       de PC) aparecer - sem limite de quantidade, sem mexer em nada ainda,
+       so pra confirmar com certeza se o PS4 usa os mesmos numeros do PC pra
+       penalti (ver nota grande no topo do arquivo). */
+    {
+        int idx_pk = indice_em(FAMILIA_PENALTI, N_PENALTI, original);
+        if (idx_pk >= 0) {
+            static const char *NOMES_PENALTI[] = {
+                "PK_CARD_Y (penalti amarelo)", "PK_CARD_R (penalti vermelho)",
+                "PK_CARD_N (penalti sem cartao)", "PK_CARD_W (penalti aviso)",
+                "PK_CARD_R_ALT (penalti vermelho var.)", "PK_CARD_N_ALT (penalti sem cartao var.)",
+            };
+            logf_("#%u >>> PENALTI DETECTADO: 0x%08x = %s <<<", n, original, NOMES_PENALTI[idx_pk]);
+        }
+    }
+
     /* v4.01: confere em toda chamada agora (ver nota em INTERVALO_RECHECAGEM
        mais acima - essa funcao e rara, nao custa nada). */
     if ((n % INTERVALO_RECHECAGEM) == 0) {
@@ -405,10 +532,11 @@ static uint32_t hook_alvo(uint64_t a, uint64_t b)
             (indice_em(FAMILIA_VERMELHO, N_VERMELHO, original) >= 0);
 
         if (pertence_a_alguma_familia && sorteio_percent(CHANCE_SALA_VAR)) {
+            uint32_t candidato = CANDIDATOS_SALA_VAR[g_tentativas_sala];
             g_tentativas_sala++;
-            logf_("#%u EXPERIMENTO sala do VAR: 0x%08x -> 0x%08x (tentativa %u/%u)",
-                  n, original, SELETOR_SALA_VAR, g_tentativas_sala, (unsigned)LIMITE_TENTATIVAS_SALA);
-            return SELETOR_SALA_VAR; /* nao aplica tambem a revisao normal nessa mesma ocorrencia */
+            logf_("#%u BUSCA sala do VAR: 0x%08x -> 0x%08x (candidato %u/%u - anote o que aparece na tela!)",
+                  n, original, candidato, g_tentativas_sala, (unsigned)LIMITE_TENTATIVAS_SALA);
+            return candidato; /* nao aplica tambem a revisao normal nessa mesma ocorrencia */
         }
     }
 
