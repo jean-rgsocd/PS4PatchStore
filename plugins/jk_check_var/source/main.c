@@ -35,6 +35,14 @@
  * como os plugins anteriores). Se nao pegar (travar/fechar o jogo), tira o
  * jk_check_var.prx da pasta de plugins do GoldHEN e reinicia - nao mexe em
  * save nem em nenhum outro arquivo.
+ *
+ * v2.01: corrigido o crash (CE-34878-0) da v2.00. A causa era I/O de disco
+ * (log) em TODA chamada do hook, inclusive quando nada mudava - isso pode
+ * ser centenas de vezes por partida e travava o jogo. Agora: (1) so loga
+ * quando realmente troca alguma coisa, e so nas primeiras ~80 vezes; (2) a
+ * checagem do desligar_var.txt roda de vez em quando, nao toda chamada; (3)
+ * checagem de seguranca no ponteiro de retorno antes de escrever qualquer
+ * memoria, pra nunca escrever em endereco implausivel.
  */
 #include <stdint.h>
 #include <stddef.h>
@@ -51,7 +59,7 @@
 attr_public const char *g_pluginName = "JK_CHECK-VAR";
 attr_public const char *g_pluginDesc = "JK PATCHS - VAR funcional (revisao de cartoes)";
 attr_public const char *g_pluginAuth = "JK PATCHS";
-attr_public uint32_t g_pluginVersion = 0x00000200;
+attr_public uint32_t g_pluginVersion = 0x00000201;
 
 #define PASTA "/data/jk/super"
 
@@ -83,6 +91,18 @@ static int g_log = -1;
 static volatile uint32_t g_contador = 0;
 static volatile uint32_t g_revisoes = 0;
 static uint32_t g_semente = 0x9E3779B9u;
+static volatile int g_var_ligado = 1;
+
+/* a cada quantas chamadas a gente confere de novo o arquivo desligar_var.txt
+   (em vez de checar em TODA chamada - sceKernelStat em toda chamada de uma
+   funcao que pode rodar centenas de vezes por partida e caro e pode
+   atrapalhar o jogo). */
+#define INTERVALO_RECHECAGEM 2000u
+
+/* limite de quantas revisoes a gente loga em arquivo (I/O de disco em toda
+   chamada do hook e a causa mais provavel de travamento/CE-34878 - aqui so
+   logamos quando REALMENTE muda algo, e so nas primeiras N vezes). */
+#define LIMITE_LOG_REVISOES 80u
 
 static void logf_(const char *fmt, ...)
 {
@@ -164,24 +184,48 @@ static int revisar(uint32_t *valor)
 static uint64_t hook_alvo(uint64_t fila_obj, uint64_t a, uint64_t b)
 {
     uint64_t ret = Detour_Stub(&g_detour, fn_hook_alvo_t, fila_obj, a, b);
+    uint32_t n = ++g_contador;
 
-    g_contador++;
+    /* checagem de seguranca: isso aqui e um hook em codigo nativo do jogo.
+       se o retorno nao parecer um ponteiro plausivel dentro do modulo do
+       jogo (por qualquer motivo - versao diferente, chamada inesperada,
+       etc.), a gente simplesmente NAO MEXE em nada e devolve o retorno
+       original sem tocar memoria nenhuma. Isso faz o hook virar "invisivel"
+       em vez de arriscar escrever em endereco invalido e derrubar o jogo. */
+    if (ret < g_base || (ret - g_base) > 0x20000000ULL) {
+        return ret;
+    }
 
-    if (ret) {
-        uint64_t cursor = *(volatile uint64_t *)(ret + 0x10);
-        uint32_t *slot = (uint32_t *)(cursor - 4);
-        uint32_t original = *slot;
-        uint32_t novo = original;
+    /* confere o arquivo de desligar so de vez em quando, nao em toda
+       chamada (sceKernelStat tem custo e essa funcao pode ser chamada
+       muitas vezes numa partida) */
+    if ((n % INTERVALO_RECHECAGEM) == 1) {
+        g_var_ligado = !existe(PASTA "/desligar_var.txt");
+    }
 
-        if (!existe(PASTA "/desligar_var.txt") && revisar(&novo)) {
-            *slot = novo;
-            g_revisoes++;
-            logf_("#%u VAR: 0x%08x -> 0x%08x (revisao #%u)", g_contador, original, novo, g_revisoes);
-        } else {
-            logf_("#%u selector=0x%08x (sem revisao)", g_contador, original);
+    if (!g_var_ligado) {
+        return ret;
+    }
+
+    uint64_t cursor = *(volatile uint64_t *)(ret + 0x10);
+    if (cursor < 4) {
+        return ret; /* cursor implausivel - nao mexe */
+    }
+
+    uint32_t *slot = (uint32_t *)(cursor - 4);
+    uint32_t original = *slot;
+    uint32_t novo = original;
+
+    if (revisar(&novo)) {
+        *slot = novo;
+        uint32_t r = ++g_revisoes;
+        /* loga em disco so quando REALMENTE muda algo, e so as primeiras
+           vezes - escrever arquivo em toda chamada do hook e a causa mais
+           provavel de travar/derrubar o jogo (I/O sincrono num ponto
+           chamado com muita frequencia). */
+        if (r <= LIMITE_LOG_REVISOES) {
+            logf_("#%u VAR: 0x%08x -> 0x%08x (revisao #%u)", n, original, novo, r);
         }
-    } else {
-        logf_("#%u retorno nulo (fila_obj=0x%llx)", g_contador, (unsigned long long)fila_obj);
     }
 
     return ret;
