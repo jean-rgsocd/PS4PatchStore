@@ -254,6 +254,23 @@
  * "GANCHO ARQUIVO recusado: bytes diferentes") sem travar nada, so nao vai
  * capturar nada; nesse caso tira o jk_craque.prx da pasta de plugins so
  * durante esse teste.
+ *
+ * v4.10: primeiro resultado de VERDADE na tela - pedido do usuario pra parar
+ * de so investigar e testar algo concreto HOJE. Achamos no log real
+ * (12f45f97-check_var.log) nomes de arquivo de falta/cartao confirmados -
+ * entre eles "foul_referee_oncoming03.fdc", "...05_b.fdc", "...06_b.fdc",
+ * "...07_b.fdc" (o juiz andando ate o lance pra decidir, TODOS dentro de
+ * common/demo/fixdemo/foul/cut_data/). Essa versao redireciona, em TODA
+ * falta (sem filtro de "foi revisada ou nao" - o usuario pediu assim de
+ * proposito, pra testar o efeito visual antes de decidir a regra final),
+ * qualquer "foul_referee_oncomingXX.fdc" pra "foul_referee_oncoming09.fdc"
+ * (so os 2 digitos finais, mesmo tamanho, mesma pasta - EXATAMENTE a tecnica
+ * ja provada do jk_craque com POTM1/POTM2). PRECISA que o arquivo
+ * common/demo/fixdemo/foul/cut_data/foul_referee_oncoming09.fdc exista
+ * dentro do JK_VAR.cpk (copia do change_var_01_referee.fdc que ja existe la,
+ * so que salvo nesse caminho/nome novo) - sem isso o redirect so aponta pra
+ * um arquivo que nao existe (o jogo vai logar erro de leitura dele mesmo,
+ * sem travar, so sem trocar a cena de verdade).
  */
 #include <stdint.h>
 #include <stddef.h>
@@ -269,7 +286,7 @@
 attr_public const char *g_pluginName = "JK_CHECK-VAR";
 attr_public const char *g_pluginDesc = "JK PATCHS - VAR funcional (revisao de cartoes)";
 attr_public const char *g_pluginAuth = "JK PATCHS";
-attr_public uint32_t g_pluginVersion = 0x00000409;
+attr_public uint32_t g_pluginVersion = 0x0000040a;
 
 #define PASTA "/data/jk/super"
 
@@ -699,22 +716,60 @@ static int categoria_interessante(const char *p, uint64_t n)
            contem(p, n, "_room");
 }
 
+/* v4.10: redirect de "campo" (referee chama revisao) - PEDIDO EXPLICITO DO
+   USUARIO pra testar HOJE sem depender de achar a sala 3D nem dos CPKs com
+   TOC zoado: redireciona TODA falta (sem checar se foi revisada ou nao -
+   depois a gente afunila pra so quando quiser, uma vez que der pra ver o
+   efeito na tela). Troca, no lugar (mesma tecnica do jk_craque: so os 2
+   digitos finais, mesmo tamanho de string, dentro da MESMA pasta
+   foul/cut_data/ que o jogo ja pede de verdade), "foul_referee_oncomingXX"
+   -> "foul_referee_oncoming09". O arquivo
+   common/demo/fixdemo/foul/cut_data/foul_referee_oncoming09.fdc precisa
+   existir dentro do JK_VAR.cpk (copia do change_var_01_referee.fdc que ja
+   existe la, so que salvo nesse caminho novo) - sem isso o jogo nao acha o
+   arquivo e so vai dar erro de leitura no log do jogo (nao trava nada
+   sozinho, so nao troca a cena). */
+static int redirecionar_var_campo(char *p, uint64_t n)
+{
+    static const char alvo[] = "foul_referee_oncoming";
+    uint64_t m = sizeof(alvo) - 1;
+    for (uint64_t i = 0; i + m + 2 <= n; i++) {
+        if (memcmp(p + i, alvo, m) != 0) continue;
+        uint64_t j = i + m;
+        if (j + 2 > n) continue;
+        if (p[j] < '0' || p[j] > '9' || p[j + 1] < '0' || p[j + 1] > '9') continue;
+        if (p[j] == '0' && p[j + 1] == '9') return 0; /* ja e o nosso, nao mexe de novo */
+        p[j] = '0'; p[j + 1] = '9';
+        return 1;
+    }
+    return 0;
+}
+
 /* mesmo layout de "pedido de arquivo" que o jk_craque ja usa e comprovou:
    capacidade em +0x38, tamanho em +0x30, ponteiro/buffer inline em +0x20. */
 static uint64_t arquivo_hook(uint64_t a, uint64_t b, uint64_t c, uint64_t d, uint64_t e, uint64_t f)
 {
     uint8_t *req = (uint8_t *)a;
-    if (req && g_arquivos_logados < LIMITE_LOG_ARQUIVOS) {
+    if (req) {
         uint64_t cap = *(volatile uint64_t *)(req + 0x38);
         uint64_t len = *(volatile uint64_t *)(req + 0x30);
         char *p = cap >= 0x10 ? *(char **)(req + 0x20) : (char *)(req + 0x20);
-        if (p && len > 6 && len < 4096 && categoria_interessante(p, len)) {
-            char buf[200];
-            uint64_t m = len < 180 ? len : 180;
-            memcpy(buf, p, m);
-            buf[m] = 0;
-            g_arquivos_logados++;
-            logf_("ARQ#%u: %s", g_arquivos_logados, buf);
+        if (p && len > 6 && len < 4096) {
+            if (categoria_interessante(p, len) && g_arquivos_logados < LIMITE_LOG_ARQUIVOS) {
+                char buf[200];
+                uint64_t m = len < 180 ? len : 180;
+                memcpy(buf, p, m);
+                buf[m] = 0;
+                g_arquivos_logados++;
+                logf_("ARQ#%u: %s", g_arquivos_logados, buf);
+            }
+            if (redirecionar_var_campo(p, len)) {
+                char buf[200];
+                uint64_t m = len < 180 ? len : 180;
+                memcpy(buf, p, m);
+                buf[m] = 0;
+                logf_(">>> VAR CAMPO: redirecionado pra %s <<<", buf);
+            }
         }
     }
     return jk_arq_orig(a, b, c, d, e, f);
