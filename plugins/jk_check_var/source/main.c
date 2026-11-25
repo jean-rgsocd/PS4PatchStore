@@ -125,6 +125,22 @@
  * arriscado de hook_manual_14 (mmap, escrita de salto, mprotect, memcpy,
  * e o passo final que de fato sobrescreve a funcao original) - se desligar
  * de novo, da pra saber exatamente em qual desses passos parou.
+ *
+ * v3.07: testou a v3.06 e o console desligou DE NOVO (2a vez seguida numa
+ * versao que escreve codigo). Comparei com o jk_craque - plugin do MESMO
+ * projeto que ja faz hook de codigo (prologo de 17 bytes, MAIOR que o
+ * nosso) e NUNCA foi reportado travando o console - e ele faz 3 coisas
+ * diferentes da nossa v3.05/v3.06:
+ *   1) escreve os bytes via sys_sdk_proc_rw (syscall do SDK pra escrever em
+ *      memoria de processo), nao memcpy/mprotect direto;
+ *   2) espera 3s (sceKernelUsleep) antes de mexer no executavel;
+ *   3) os bytes originais da funcao ficam escritos a mao como assembly fixo
+ *      no proprio plugin (nao copiados dinamicamente pra memoria alocada
+ *      em runtime via sceKernelMmap).
+ * Essa versao reescreve a instalacao do hook inteira seguindo EXATAMENTE
+ * esse padrao ja comprovado (ver instalar()/gravar_eboot()/
+ * jk_hookalvo_orig() mais abaixo). O Detour.h/API do GoldHEN SDK foi
+ * removido por completo - no usa mais Detour_Construct/Destroy/Stub.
  */
 #include <stdint.h>
 #include <stddef.h>
@@ -133,7 +149,6 @@
 #include <string.h>
 #include <orbis/libkernel.h>
 #include "GoldHEN.h"
-#include "Detour.h"
 
 #define attr_public __attribute__((visibility("default")))
 #define attr_module_hidden __attribute__((weak)) __attribute__((visibility("hidden")))
@@ -141,7 +156,7 @@
 attr_public const char *g_pluginName = "JK_CHECK-VAR";
 attr_public const char *g_pluginDesc = "JK PATCHS - VAR funcional (revisao de cartoes)";
 attr_public const char *g_pluginAuth = "JK PATCHS";
-attr_public uint32_t g_pluginVersion = 0x00000306;
+attr_public uint32_t g_pluginVersion = 0x00000307;
 
 #define PASTA "/data/jk/super"
 
@@ -199,15 +214,6 @@ static const uint32_t FAMILIA_VERMELHO[]   = { 0x20010u, 0x20013u, 0x20016u };
 #define LIMITE_TENTATIVAS_SALA    10
 #define CHANCE_SALA_VAR           65   /* mesma chance que o mod de PC usa (var_event_probability) */
 
-typedef uint64_t (*fn_hook_alvo_t)(uint64_t fila_obj, uint64_t a, uint64_t b);
-
-/* funcao interna do SDK do GoldHEN (nao exposta em Detour.h, mas presente
-   na biblioteca estatica libGoldHEN_Hook.a e usada pelo proprio
-   Detour_DetourFunction64 - so escreve os 14 bytes de salto num endereco,
-   sem calcular tamanho nenhum). Declarada aqui pra usar diretamente. */
-extern void Detour_WriteJump64(Detour *This, void *Address, uint64_t Destination);
-
-static Detour g_detour;
 static uint64_t g_base;
 static int g_log = -1;
 static volatile uint32_t g_contador = 0;
@@ -315,9 +321,11 @@ static int revisar(uint32_t *valor)
 #define LIMITE_LOG_DIAG 25u
 static volatile uint32_t g_diag_logados = 0;
 
+static uint64_t jk_hookalvo_orig(uint64_t fila_obj, uint64_t a, uint64_t b);
+
 static uint64_t hook_alvo(uint64_t fila_obj, uint64_t a, uint64_t b)
 {
-    uint64_t ret = Detour_Stub(&g_detour, fn_hook_alvo_t, fila_obj, a, b);
+    uint64_t ret = jk_hookalvo_orig(fila_obj, a, b);
     uint32_t n = ++g_contador;
 
     /* checagem de seguranca: isso aqui e um hook em codigo nativo do jogo.
@@ -397,51 +405,61 @@ static uint64_t hook_alvo(uint64_t fila_obj, uint64_t a, uint64_t b)
     return ret;
 }
 
-/* igual ao Detour_DetourFunction64 do SDK, mas SEM chamar
-   Detour_GetInstructionSize (que usa o hde64, que nao entende instrucoes
-   AVX/VEX como vxorps - ver nota v3.05 no topo do arquivo). InstructionSize
-   e passado pronto, ja confirmado manualmente que cai exatamente no fim de
-   uma instrucao (nao no meio). */
-static void *hook_manual_14(Detour *This, uint64_t FunctionPtr, void *HookPtr)
+/* ------------------------------------------------------------------------
+ * v3.07: instalacao do hook REFEITA seguindo exatamente o padrao do
+ * jk_craque (plugin JA COMPROVADO nesse mesmo projeto, nunca reportado
+ * travando o console - inclusive com um prologo MAIOR que o nosso, 17
+ * bytes). Trocas em relacao a v3.05/v3.06 (que travaram o console 2x):
+ *   1) escreve os bytes com sys_sdk_proc_rw (syscall do SDK feita pra
+ *      escrever em memoria de processo), em vez de memcpy/mprotect direto;
+ *   2) espera 3s (sceKernelUsleep) antes de mexer no executavel, deixando
+ *      o jogo terminar de subir;
+ *   3) em vez de copiar os bytes originais dinamicamente pra um "stub"
+ *      alocado em runtime (sceKernelMmap), os bytes originais (ja
+ *      confirmados byte a byte - ver nota v3.05) ficam escritos a mao,
+ *      fixos, como assembly dentro do proprio plugin, com um jmp de volta
+ *      pro resto da funcao original (FunctionPtr+14). Isso elimina
+ *      qualquer dependencia de alocar/copiar memoria executavel em tempo
+ *      de execucao.
+ *   4) confere os bytes atuais contra o esperado ANTES de escrever - se
+ *      nao bater (outra versao/patch do jogo), desiste e nao mexe em nada
+ *      (igual ao jk_craque). */
+static const uint8_t g_esperado[14] = {
+    0x55, 0x48, 0x89, 0xe5, 0x41, 0x56, 0x53,
+    0xc5, 0xf8, 0x57, 0xc0, 0x48, 0x89, 0xfb
+};
+static int g_gancho = 0;
+__attribute__((visibility("hidden"))) uint64_t g_hookalvo_volta;
+
+static int gravar_eboot(uint64_t dest, const void *src, uint64_t n)
 {
-    const size_t InstructionSize = 14; /* confirmado byte a byte - ver v3.05 */
+    struct proc_rw rw; memset(&rw, 0, sizeof rw);
+    rw.address = dest; rw.data = (void *)src; rw.length = n; rw.write_flags = 1;
+    if (sys_sdk_proc_rw(&rw) != 0) return 0;
+    return memcmp((const void *)dest, src, n) == 0;
+}
 
-    if (!FunctionPtr || !HookPtr) return NULL;
-
-    /* v3.06: checkpoint de log em CADA passo arriscado, pra saber exatamente
-       onde parou se o console desligar de novo (nao sobrou log nenhum no
-       episodio anterior, entao a resolucao que tinhamos era baixa demais -
-       so "antes de tudo" ou "depois de tudo"). Cada logf_ aqui faz um
-       sceKernelWrite imediato, que deve persistir no disco mesmo que o
-       sistema caia logo em seguida (ao contrario de um buffer na memoria). */
-    logf_("hook_manual_14: passo 1/6 - mmap trampolim");
-    int res = sceKernelMmap(0, sizeof(This->JumpInstructions64), VM_PROT_ALL, 0x1000 | 0x2, -1, 0, &This->TrampolinePtr);
-    if (res < 0 || This->TrampolinePtr == 0) { logf_("hook_manual_14: FALHOU no passo 1 (mmap trampolim, res=%d)", res); return NULL; }
-
-    logf_("hook_manual_14: passo 2/6 - escrever salto no trampolim");
-    Detour_WriteJump64(This, This->TrampolinePtr, (uint64_t) HookPtr);
-
-    This->FunctionPtr = (void *) FunctionPtr;
-    This->HookPtr = HookPtr;
-
-    logf_("hook_manual_14: passo 3/6 - mprotect no endereco alvo");
-    sceKernelMprotect((void *) FunctionPtr, InstructionSize, VM_PROT_ALL);
-
-    logf_("hook_manual_14: passo 4/6 - mmap stub");
-    This->StubSize = (InstructionSize + sizeof(This->JumpInstructions64));
-    res = sceKernelMmap(0, This->StubSize, VM_PROT_ALL, 0x1000 | 0x2, -1, 0, &This->StubPtr);
-    if (res < 0 || This->StubPtr == 0) { logf_("hook_manual_14: FALHOU no passo 4 (mmap stub, res=%d)", res); return NULL; }
-
-    logf_("hook_manual_14: passo 5/6 - copiar instrucoes originais pro stub + salto de volta");
-    memcpy(This->StubPtr, (void *) FunctionPtr, InstructionSize);
-    Detour_WriteJump64(This, (void *) ((uint64_t) This->StubPtr + InstructionSize), (uint64_t) (FunctionPtr + InstructionSize));
-
-    logf_("hook_manual_14: passo 6/6 - ESCREVENDO por cima da funcao original (NOP + salto pro trampolim) - ULTIMO PASSO ANTES DE MEXER NO CODIGO DO JOGO DE VERDADE");
-    memset((void *) FunctionPtr, 0x90, InstructionSize);
-    Detour_WriteJump64(This, (void *) FunctionPtr, (uint64_t) This->TrampolinePtr);
-    logf_("hook_manual_14: passo 6/6 CONCLUIDO - funcao do jogo patcheada com sucesso");
-
-    return This->StubPtr;
+static void instalar(void)
+{
+    uint64_t f = g_base + RVA_HOOK_ALVO;
+    const volatile uint8_t *bb = (const volatile uint8_t *)f;
+    for (int i = 0; i < 14; i++) if (bb[i] != g_esperado[i]) {
+        logf_("GANCHO recusado: bytes diferentes em 0x%llx (%02x %02x %02x %02x ...) - outra versao do jogo? VAR NAO esta ativo.",
+              (unsigned long long)RVA_HOOK_ALVO, bb[0], bb[1], bb[2], bb[3]);
+        return;
+    }
+    g_hookalvo_volta = f + 14;
+    uint8_t salto[14];
+    uint64_t alvo = (uint64_t)(void *)hook_alvo;
+    salto[0] = 0xff; salto[1] = 0x25; salto[2] = salto[3] = salto[4] = salto[5] = 0;
+    memcpy(salto + 6, &alvo, 8);
+    if (!gravar_eboot(f, salto, sizeof salto)) {
+        gravar_eboot(f, g_esperado, 14);
+        logf_("GANCHO recusado: falha ao gravar (sys_sdk_proc_rw). VAR NAO esta ativo.");
+        return;
+    }
+    g_gancho = 1;
+    logf_("GANCHO ok eboot+0x%llx. VAR ativo (crie desligar_var.txt pra desativar).", (unsigned long long)RVA_HOOK_ALVO);
 }
 
 static void *trabalho(void *arg)
@@ -460,30 +478,8 @@ static void *trabalho(void *arg)
     logf_("JK_CHECK-VAR (VAR funcional) titulo=%s base=0x%llx hook_em=0x%llx",
           pi.titleid, (unsigned long long)g_base, (unsigned long long)(g_base + RVA_HOOK_ALVO));
 
-    /* DIAG: mostra os bytes crus que estao de verdade no endereco-alvo,
-       ANTES de tentar instalar o hook (so leitura, nao mexe em nada). Serve
-       pra confirmar se 0x311c90 ainda e o comeco de uma funcao de verdade
-       nessa build/patch do jogo, ou se mudou (RVA desatualizada). */
-    {
-        const uint8_t *p = (const uint8_t *)(g_base + RVA_HOOK_ALVO);
-        logf_("DIAG bytes em 0x%llx: %02x %02x %02x %02x %02x %02x %02x %02x %02x %02x %02x %02x %02x %02x %02x %02x",
-              (unsigned long long)(g_base + RVA_HOOK_ALVO),
-              p[0],p[1],p[2],p[3],p[4],p[5],p[6],p[7],
-              p[8],p[9],p[10],p[11],p[12],p[13],p[14],p[15]);
-    }
-
-    Detour_Construct(&g_detour, DetourMode_x64);
-    logf_("trabalho(): chamando hook_manual_14 agora");
-    void *stub = hook_manual_14(&g_detour, g_base + RVA_HOOK_ALVO, (void *)hook_alvo);
-
-    if (!stub) {
-        logf_("FALHOU ao instalar o hook (hook_manual_14 devolveu NULL em 0x%llx, "
-              "provavel falha de sceKernelMmap). VAR NAO esta ativo - o jogo roda normal.",
-              (unsigned long long)(g_base + RVA_HOOK_ALVO));
-        return 0;
-    }
-
-    logf_("Hook instalado (stub=%p). VAR ativo (crie desligar_var.txt pra desativar).", stub);
+    sceKernelUsleep(3000000); /* v3.07: deixa o jogo subir antes de gravar no executavel (igual ao jk_craque) */
+    instalar();
     return 0;
 }
 
@@ -500,10 +496,27 @@ int32_t attr_public plugin_load(int32_t argc, const char *argv[])
 int32_t attr_public plugin_unload(int32_t argc, const char *argv[])
 {
     (void)argc; (void)argv;
-    Detour_Destroy(&g_detour);
+    if (g_gancho) { gravar_eboot(g_base + RVA_HOOK_ALVO, g_esperado, 14); g_gancho = 0; }
     logf_("Hook removido.");
     return 0;
 }
 
 int32_t attr_module_hidden module_start(size_t argc, const void *args) { (void)argc; (void)args; return 0; }
 int32_t attr_module_hidden module_stop(size_t argc, const void *args) { (void)argc; (void)args; return 0; }
+
+/* comeco original da funcao do jogo (14 bytes, ja confirmados byte a byte -
+   ver v3.05) + salto de volta pra eboot+RVA_HOOK_ALVO+14. Igual ao
+   jk_arq_orig do jk_craque: em vez de copiar os bytes originais dinamicamente
+   em tempo de execucao, eles ficam fixos aqui, escritos a mao, compilados
+   junto com o plugin - no overhead de alocar memoria executavel. */
+__attribute__((naked, noinline, used)) static uint64_t jk_hookalvo_orig(uint64_t fila_obj, uint64_t a, uint64_t b)
+{
+    __asm__ volatile(
+        ".byte 0x55\n"                /* push rbp */
+        ".byte 0x48,0x89,0xe5\n"      /* mov rbp,rsp */
+        ".byte 0x41,0x56\n"           /* push r14 */
+        ".byte 0x53\n"                /* push rbx */
+        ".byte 0xc5,0xf8,0x57,0xc0\n" /* vxorps xmm0,xmm0,xmm0 */
+        ".byte 0x48,0x89,0xfb\n"      /* mov rbx,rdi */
+        "jmp *g_hookalvo_volta(%rip)\n");
+}
