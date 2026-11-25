@@ -61,6 +61,17 @@
  * scePthreadCreate() dentro de plugin_load() (que volta na hora) e fazem
  * todo o trabalho de verdade numa thread separada. Essa versao segue
  * exatamente esse mesmo padrao (ver trabalho()/plugin_load() mais abaixo).
+ *
+ * v3.02: o jogo parou de travar (fix da v3.01 confirmado), mas jogando uma
+ * partida de teste (varios amarelos e 2 vermelhos) o check_var.log nao
+ * ganhou NENHUMA linha nova alem do "Hook instalado" - ou seja, nenhuma
+ * revisao aconteceu, mas tambem nao da pra saber de fora POR QUE (o log so
+ * registra quando realmente troca algo, de proposito, pra nao travar como
+ * antes). Essa versao so ACRESCENTA logs de diagnostico incondicionais nas
+ * primeiras chamadas do hook (ver LIMITE_LOG_DIAG/g_diag_logados), pra
+ * descobrir se o hook esta sendo chamado, e se sim, com que valor de
+ * seletor - sem mudar nenhum comportamento de jogo. Depois de confirmado o
+ * que esta acontecendo, essa parte de diagnostico sai.
  */
 #include <stdint.h>
 #include <stddef.h>
@@ -77,7 +88,7 @@
 attr_public const char *g_pluginName = "JK_CHECK-VAR";
 attr_public const char *g_pluginDesc = "JK PATCHS - VAR funcional (revisao de cartoes)";
 attr_public const char *g_pluginAuth = "JK PATCHS";
-attr_public uint32_t g_pluginVersion = 0x00000301;
+attr_public uint32_t g_pluginVersion = 0x00000302;
 
 #define PASTA "/data/jk/super"
 
@@ -236,6 +247,15 @@ static int revisar(uint32_t *valor)
     return 0;
 }
 
+/* DIAG TEMPORARIO (v3.02): loga INCONDICIONALMENTE as primeiras chamadas do
+   hook, pra descobrir se ele esta sendo chamado e que valores esta vendo -
+   mesmo quando nada bate com as familias conhecidas ou quando as checagens
+   de seguranca abaixo decidem nao mexer em nada. Isso NAO afeta o
+   comportamento normal, so adiciona visibilidade. Remover depois de
+   confirmado o fluxo. */
+#define LIMITE_LOG_DIAG 25u
+static volatile uint32_t g_diag_logados = 0;
+
 static uint64_t hook_alvo(uint64_t fila_obj, uint64_t a, uint64_t b)
 {
     uint64_t ret = Detour_Stub(&g_detour, fn_hook_alvo_t, fila_obj, a, b);
@@ -248,6 +268,11 @@ static uint64_t hook_alvo(uint64_t fila_obj, uint64_t a, uint64_t b)
        original sem tocar memoria nenhuma. Isso faz o hook virar "invisivel"
        em vez de arriscar escrever em endereco invalido e derrubar o jogo. */
     if (ret < g_base || (ret - g_base) > 0x20000000ULL) {
+        if (g_diag_logados < LIMITE_LOG_DIAG) {
+            g_diag_logados++;
+            logf_("#%u DIAG: ret implausivel (ret=0x%llx base=0x%llx)",
+                  n, (unsigned long long)ret, (unsigned long long)g_base);
+        }
         return ret;
     }
 
@@ -265,11 +290,21 @@ static uint64_t hook_alvo(uint64_t fila_obj, uint64_t a, uint64_t b)
 
     uint64_t cursor = *(volatile uint64_t *)(ret + 0x10);
     if (cursor < 4) {
+        if (g_diag_logados < LIMITE_LOG_DIAG) {
+            g_diag_logados++;
+            logf_("#%u DIAG: cursor implausivel (cursor=0x%llx)", n, (unsigned long long)cursor);
+        }
         return ret; /* cursor implausivel - nao mexe */
     }
 
     uint32_t *slot = (uint32_t *)(cursor - 4);
     uint32_t original = *slot;
+
+    if (g_diag_logados < LIMITE_LOG_DIAG) {
+        g_diag_logados++;
+        logf_("#%u DIAG: chamada OK, original=0x%08x (cursor=0x%llx)",
+              n, original, (unsigned long long)cursor);
+    }
 
     /* modo experimental (desligado por padrao - ver comentario la em cima) */
     if (g_sala_var_habilitada && g_tentativas_sala < LIMITE_TENTATIVAS_SALA) {
