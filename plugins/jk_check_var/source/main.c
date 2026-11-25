@@ -286,7 +286,7 @@
 attr_public const char *g_pluginName = "JK_CHECK-VAR";
 attr_public const char *g_pluginDesc = "JK PATCHS - VAR funcional (revisao de cartoes)";
 attr_public const char *g_pluginAuth = "JK PATCHS";
-attr_public uint32_t g_pluginVersion = 0x0000040c;
+attr_public uint32_t g_pluginVersion = 0x0000040d;
 
 #define PASTA "/data/jk/super"
 
@@ -745,7 +745,22 @@ static int categoria_interessante(const char *p, uint64_t n)
    animacao do esqueleto vem da 03 - descompasso que trava o jogo.
    v4.12: restringe o redirect para SO mexer em caminhos que (1) terminam em
    ".fdc" e (2) contem "/foul/cut_data/" - exatamente a pasta/arquivo real
-   que queremos trocar. O .gani da animacao passa incolume agora. */
+   que queremos trocar. O .gani da animacao passa incolume agora.
+
+   v4.12 TESTADA: 1a falta (amarelo->vermelho) e redirect pra ..05_b.fdc
+   funcionaram sem travar - a correcao do .gani funcionou. Mas a 2a falta da
+   mesma partida travou o jogo. Log mostrou o motivo: essa falta pediu
+   "foul_referee_oncoming06_a.fdc" - um SUFIXO "_a" que a gente nunca tinha
+   visto (so conhecia sem sufixo e "_b"). Como o codigo so reconhece "_b"
+   como caso especial, "_a" caiu no caminho "sem sufixo" (bare) e virou
+   "foul_referee_oncoming03_a.fdc" - arquivo que NUNCA foi confirmado
+   existir (so vimos "oncoming03.fdc" SEM sufixo nenhum). Travou tentando
+   ler um arquivo que provavelmente nao existe.
+   v4.13: trata "_a" como seu PROPRIO caso (nao cai mais no "bare"). So
+   redireciona pra variantes 100% confirmadas em log de jogo real ate agora:
+   sem sufixo -> "03"; "_b" -> "05_b". "_a" (e qualquer outro sufixo
+   desconhecido) NAO redireciona - mais seguro deixar passar original do que
+   arriscar outro travamento com arquivo nao confirmado. */
 static int redirecionar_var_campo(char *p, uint64_t n)
 {
     static const char pasta[] = "/foul/cut_data/";
@@ -761,8 +776,13 @@ static int redirecionar_var_campo(char *p, uint64_t n)
         uint64_t j = i + m;
         if (j + 2 > n) continue;
         if (p[j] < '0' || p[j] > '9' || p[j + 1] < '0' || p[j + 1] > '9') continue;
-        int tem_b = (j + 4 <= n && p[j + 2] == '_' && p[j + 3] == 'b');
-        char d0 = tem_b ? '0' : '0';
+        /* o que vem logo depois dos 2 digitos decide o sufixo: ".fdc" direto
+           (fim do nome base) = sem sufixo; "_b" = com _b; qualquer outra
+           coisa (inclui "_a") = sufixo desconhecido, nao mexe nesse. */
+        int sem_sufixo = (j + 2 + mext <= n && memcmp(p + j + 2, ext, mext) == 0);
+        int tem_b = (!sem_sufixo && j + 4 <= n && p[j + 2] == '_' && p[j + 3] == 'b');
+        if (!sem_sufixo && !tem_b) continue; /* sufixo desconhecido (ex: "_a") - nao arrisca */
+        char d0 = '0';
         char d1 = tem_b ? '5' : '3';
         if (p[j] == d0 && p[j + 1] == d1) return 0; /* ja e o nosso alvo, nao mexe de novo */
         p[j] = d0; p[j + 1] = d1;
