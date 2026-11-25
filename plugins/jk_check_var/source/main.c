@@ -129,7 +129,7 @@
 attr_public const char *g_pluginName = "JK_CHECK-VAR";
 attr_public const char *g_pluginDesc = "JK PATCHS - VAR funcional (revisao de cartoes)";
 attr_public const char *g_pluginAuth = "JK PATCHS";
-attr_public uint32_t g_pluginVersion = 0x00000304;
+attr_public uint32_t g_pluginVersion = 0x00000306;
 
 #define PASTA "/data/jk/super"
 
@@ -396,25 +396,38 @@ static void *hook_manual_14(Detour *This, uint64_t FunctionPtr, void *HookPtr)
 
     if (!FunctionPtr || !HookPtr) return NULL;
 
+    /* v3.06: checkpoint de log em CADA passo arriscado, pra saber exatamente
+       onde parou se o console desligar de novo (nao sobrou log nenhum no
+       episodio anterior, entao a resolucao que tinhamos era baixa demais -
+       so "antes de tudo" ou "depois de tudo"). Cada logf_ aqui faz um
+       sceKernelWrite imediato, que deve persistir no disco mesmo que o
+       sistema caia logo em seguida (ao contrario de um buffer na memoria). */
+    logf_("hook_manual_14: passo 1/6 - mmap trampolim");
     int res = sceKernelMmap(0, sizeof(This->JumpInstructions64), VM_PROT_ALL, 0x1000 | 0x2, -1, 0, &This->TrampolinePtr);
-    if (res < 0 || This->TrampolinePtr == 0) return NULL;
+    if (res < 0 || This->TrampolinePtr == 0) { logf_("hook_manual_14: FALHOU no passo 1 (mmap trampolim, res=%d)", res); return NULL; }
 
+    logf_("hook_manual_14: passo 2/6 - escrever salto no trampolim");
     Detour_WriteJump64(This, This->TrampolinePtr, (uint64_t) HookPtr);
 
     This->FunctionPtr = (void *) FunctionPtr;
     This->HookPtr = HookPtr;
 
+    logf_("hook_manual_14: passo 3/6 - mprotect no endereco alvo");
     sceKernelMprotect((void *) FunctionPtr, InstructionSize, VM_PROT_ALL);
 
+    logf_("hook_manual_14: passo 4/6 - mmap stub");
     This->StubSize = (InstructionSize + sizeof(This->JumpInstructions64));
     res = sceKernelMmap(0, This->StubSize, VM_PROT_ALL, 0x1000 | 0x2, -1, 0, &This->StubPtr);
-    if (res < 0 || This->StubPtr == 0) return NULL;
+    if (res < 0 || This->StubPtr == 0) { logf_("hook_manual_14: FALHOU no passo 4 (mmap stub, res=%d)", res); return NULL; }
 
+    logf_("hook_manual_14: passo 5/6 - copiar instrucoes originais pro stub + salto de volta");
     memcpy(This->StubPtr, (void *) FunctionPtr, InstructionSize);
     Detour_WriteJump64(This, (void *) ((uint64_t) This->StubPtr + InstructionSize), (uint64_t) (FunctionPtr + InstructionSize));
 
+    logf_("hook_manual_14: passo 6/6 - ESCREVENDO por cima da funcao original (NOP + salto pro trampolim) - ULTIMO PASSO ANTES DE MEXER NO CODIGO DO JOGO DE VERDADE");
     memset((void *) FunctionPtr, 0x90, InstructionSize);
     Detour_WriteJump64(This, (void *) FunctionPtr, (uint64_t) This->TrampolinePtr);
+    logf_("hook_manual_14: passo 6/6 CONCLUIDO - funcao do jogo patcheada com sucesso");
 
     return This->StubPtr;
 }
@@ -425,6 +438,7 @@ static void *trabalho(void *arg)
 
     sceKernelMkdir("/data/jk", 0777);
     sceKernelMkdir(PASTA, 0777);
+    logf_("trabalho(): comecou, pastas OK");
 
     struct proc_info pi; memset(&pi, 0, sizeof pi);
     if (sys_sdk_proc_info(&pi) != 0) { logf_("ERRO proc_info"); return 0; }
@@ -447,6 +461,7 @@ static void *trabalho(void *arg)
     }
 
     Detour_Construct(&g_detour, DetourMode_x64);
+    logf_("trabalho(): chamando hook_manual_14 agora");
     void *stub = hook_manual_14(&g_detour, g_base + RVA_HOOK_ALVO, (void *)hook_alvo);
 
     if (!stub) {
