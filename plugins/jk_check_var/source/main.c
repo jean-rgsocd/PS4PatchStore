@@ -91,6 +91,28 @@
  * endereco agora (antes de tentar o hook, so leitura) - pra comparar com o
  * que o Ghidra mostra pra FUN_00311c90 no eboot ATUAL (o mesmo que esta
  * instalado no PS4 agora) e confirmar se bateu ou se mudou.
+ *
+ * v3.05: ACHEI A CAUSA REAL do "FALHOU ao instalar o hook". Os bytes
+ * mostrados pela v3.04 em 0x711c90 sao:
+ *   55                   push rbp
+ *   48 89 e5             mov rbp, rsp
+ *   41 56                push r14
+ *   53                   push rbx
+ *   c5 f8 57 c0          vxorps xmm0,xmm0,xmm0   <- instrucao AVX (VEX/0xC5)
+ *   48 89 fb             mov rbx, rdi
+ * Isso fecha EXATAMENTE 14 bytes, no limite certo de instrucao - a funcao
+ * e o endereco sempre estiveram certos. O problema e que o desmontador
+ * hde64 (usado pelo SDK do GoldHEN pra calcular quantos bytes pode
+ * sobrescrever) e antigo e NAO reconhece o prefixo VEX (0xC5) das
+ * instrucoes AVX - ele erra ao chegar nesse byte e devolve tamanho 0,
+ * fazendo o Detour_DetourFunction desistir achando que nao cabe o salto de
+ * 14 bytes, quando na verdade cabe certinho.
+ *
+ * A correcao: em vez de usar Detour_DetourFunction (que depende do hde64),
+ * essa versao instala o hook manualmente com o tamanho de 14 bytes que eu
+ * mesmo contei e confirmei acima (ver hook_manual_14() mais abaixo) -
+ * usando as mesmas funcoes internas (Detour_WriteJump64) que o SDK ja usa,
+ * so pulando a parte que calcula o tamanho errado.
  */
 #include <stdint.h>
 #include <stddef.h>
@@ -166,6 +188,12 @@ static const uint32_t FAMILIA_VERMELHO[]   = { 0x20010u, 0x20013u, 0x20016u };
 #define CHANCE_SALA_VAR           65   /* mesma chance que o mod de PC usa (var_event_probability) */
 
 typedef uint64_t (*fn_hook_alvo_t)(uint64_t fila_obj, uint64_t a, uint64_t b);
+
+/* funcao interna do SDK do GoldHEN (nao exposta em Detour.h, mas presente
+   na biblioteca estatica libGoldHEN_Hook.a e usada pelo proprio
+   Detour_DetourFunction64 - so escreve os 14 bytes de salto num endereco,
+   sem calcular tamanho nenhum). Declarada aqui pra usar diretamente. */
+extern void Detour_WriteJump64(Detour *This, void *Address, uint64_t Destination);
 
 static Detour g_detour;
 static uint64_t g_base;
@@ -357,6 +385,40 @@ static uint64_t hook_alvo(uint64_t fila_obj, uint64_t a, uint64_t b)
     return ret;
 }
 
+/* igual ao Detour_DetourFunction64 do SDK, mas SEM chamar
+   Detour_GetInstructionSize (que usa o hde64, que nao entende instrucoes
+   AVX/VEX como vxorps - ver nota v3.05 no topo do arquivo). InstructionSize
+   e passado pronto, ja confirmado manualmente que cai exatamente no fim de
+   uma instrucao (nao no meio). */
+static void *hook_manual_14(Detour *This, uint64_t FunctionPtr, void *HookPtr)
+{
+    const size_t InstructionSize = 14; /* confirmado byte a byte - ver v3.05 */
+
+    if (!FunctionPtr || !HookPtr) return NULL;
+
+    int res = sceKernelMmap(0, sizeof(This->JumpInstructions64), VM_PROT_ALL, 0x1000 | 0x2, -1, 0, &This->TrampolinePtr);
+    if (res < 0 || This->TrampolinePtr == 0) return NULL;
+
+    Detour_WriteJump64(This, This->TrampolinePtr, (uint64_t) HookPtr);
+
+    This->FunctionPtr = (void *) FunctionPtr;
+    This->HookPtr = HookPtr;
+
+    sceKernelMprotect((void *) FunctionPtr, InstructionSize, VM_PROT_ALL);
+
+    This->StubSize = (InstructionSize + sizeof(This->JumpInstructions64));
+    res = sceKernelMmap(0, This->StubSize, VM_PROT_ALL, 0x1000 | 0x2, -1, 0, &This->StubPtr);
+    if (res < 0 || This->StubPtr == 0) return NULL;
+
+    memcpy(This->StubPtr, (void *) FunctionPtr, InstructionSize);
+    Detour_WriteJump64(This, (void *) ((uint64_t) This->StubPtr + InstructionSize), (uint64_t) (FunctionPtr + InstructionSize));
+
+    memset((void *) FunctionPtr, 0x90, InstructionSize);
+    Detour_WriteJump64(This, (void *) FunctionPtr, (uint64_t) This->TrampolinePtr);
+
+    return This->StubPtr;
+}
+
 static void *trabalho(void *arg)
 {
     (void)arg;
@@ -385,11 +447,11 @@ static void *trabalho(void *arg)
     }
 
     Detour_Construct(&g_detour, DetourMode_x64);
-    void *stub = Detour_DetourFunction(&g_detour, g_base + RVA_HOOK_ALVO, (void *)hook_alvo);
+    void *stub = hook_manual_14(&g_detour, g_base + RVA_HOOK_ALVO, (void *)hook_alvo);
 
     if (!stub) {
-        logf_("FALHOU ao instalar o hook (Detour_DetourFunction devolveu NULL em 0x%llx). "
-              "VAR NAO esta ativo - o jogo roda normal, sem nenhuma modificacao.",
+        logf_("FALHOU ao instalar o hook (hook_manual_14 devolveu NULL em 0x%llx, "
+              "provavel falha de sceKernelMmap). VAR NAO esta ativo - o jogo roda normal.",
               (unsigned long long)(g_base + RVA_HOOK_ALVO));
         return 0;
     }
