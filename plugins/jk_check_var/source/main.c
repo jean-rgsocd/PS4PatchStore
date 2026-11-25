@@ -286,7 +286,7 @@
 attr_public const char *g_pluginName = "JK_CHECK-VAR";
 attr_public const char *g_pluginDesc = "JK PATCHS - VAR funcional (revisao de cartoes)";
 attr_public const char *g_pluginAuth = "JK PATCHS";
-attr_public uint32_t g_pluginVersion = 0x0000040a;
+attr_public uint32_t g_pluginVersion = 0x0000040c;
 
 #define PASTA "/data/jk/super"
 
@@ -716,21 +716,44 @@ static int categoria_interessante(const char *p, uint64_t n)
            contem(p, n, "_room");
 }
 
-/* v4.10: redirect de "campo" (referee chama revisao) - PEDIDO EXPLICITO DO
-   USUARIO pra testar HOJE sem depender de achar a sala 3D nem dos CPKs com
-   TOC zoado: redireciona TODA falta (sem checar se foi revisada ou nao -
-   depois a gente afunila pra so quando quiser, uma vez que der pra ver o
-   efeito na tela). Troca, no lugar (mesma tecnica do jk_craque: so os 2
-   digitos finais, mesmo tamanho de string, dentro da MESMA pasta
-   foul/cut_data/ que o jogo ja pede de verdade), "foul_referee_oncomingXX"
-   -> "foul_referee_oncoming09". O arquivo
-   common/demo/fixdemo/foul/cut_data/foul_referee_oncoming09.fdc precisa
-   existir dentro do JK_VAR.cpk (copia do change_var_01_referee.fdc que ja
-   existe la, so que salvo nesse caminho novo) - sem isso o jogo nao acha o
-   arquivo e so vai dar erro de leitura no log do jogo (nao trava nada
-   sozinho, so nao troca a cena). */
+/* v4.11: TENTATIVA v4.10 (redirect pra "foul_referee_oncoming09", copia de
+   change_var_01_referee.fdc) CONFIRMADA RUIM por teste real: o log mostrou o
+   redirect disparando certinho, mas o jogo travou feito estatua (placar e
+   outros jogadores continuam, cronometro roda) e crasha ao apertar Start.
+   Causa: change_var_01_referee.fdc e a animacao do arbitro DENTRO da salinha
+   de revisao do VAR (ambiente var_room01, cenario/camera proprios) - forcar
+   ela a tocar no meio do campo deixa o jogo com cena pela metade (sem o
+   cenario/camera que ela espera).
+   v4.11: PARA DE INVENTAR ARQUIVO NOVO. So redireciona pra um nome que JA
+   EXISTE de verdade na mesma pasta foul/cut_data/ (confirmado em log real de
+   gameplay, sem precisar editar CPK nenhum - zero risco de cenario
+   incompativel): "foul_referee_oncomingXX.fdc" (sem _b) -> "...03.fdc";
+   "foul_referee_oncomingXX_b.fdc" (com _b) -> "...05_b.fdc".
+
+   v4.11 TESTADA e TAMBEM travou (log 8f485691-check_var.log) - mas a causa
+   NAO foi cenario incompativel dessa vez. O log mostra DOIS redirects em
+   sequencia pro MESMO evento: primeiro o .fdc (foul/cut_data/..06_b.fdc ->
+   ..05_b.fdc, certo), mas logo em seguida o jogo pede o arquivo de ANIMACAO
+   companheiro, que mora em outra arvore completamente diferente
+   (cpk_dat/common/demo/anime/FoxAnim/FixDemo/Animations/
+   dml_foul_referee_oncomingXX_sub1.gani) - e esse .gani TAMBEM contem a
+   palavra "foul_referee_oncoming" no nome, entao o nosso contador generico
+   (que so procura a palavra em QUALQUER lugar do caminho, sem checar pasta
+   nem extensao) pegava ele tambem e forcava sempre pro numero "03" (porque
+   "_sub1" nao bate com o teste de "_b"), DIFERENTE do numero mandado no
+   .fdc ("05"). Resultado: a cutscene pede a camera/cena 05_b mas a
+   animacao do esqueleto vem da 03 - descompasso que trava o jogo.
+   v4.12: restringe o redirect para SO mexer em caminhos que (1) terminam em
+   ".fdc" e (2) contem "/foul/cut_data/" - exatamente a pasta/arquivo real
+   que queremos trocar. O .gani da animacao passa incolume agora. */
 static int redirecionar_var_campo(char *p, uint64_t n)
 {
+    static const char pasta[] = "/foul/cut_data/";
+    static const char ext[] = ".fdc";
+    uint64_t mext = sizeof(ext) - 1;
+    if (n < mext || memcmp(p + n - mext, ext, mext) != 0) return 0;
+    if (!contem(p, n, pasta)) return 0;
+
     static const char alvo[] = "foul_referee_oncoming";
     uint64_t m = sizeof(alvo) - 1;
     for (uint64_t i = 0; i + m + 2 <= n; i++) {
@@ -738,8 +761,11 @@ static int redirecionar_var_campo(char *p, uint64_t n)
         uint64_t j = i + m;
         if (j + 2 > n) continue;
         if (p[j] < '0' || p[j] > '9' || p[j + 1] < '0' || p[j + 1] > '9') continue;
-        if (p[j] == '0' && p[j + 1] == '9') return 0; /* ja e o nosso, nao mexe de novo */
-        p[j] = '0'; p[j + 1] = '9';
+        int tem_b = (j + 4 <= n && p[j + 2] == '_' && p[j + 3] == 'b');
+        char d0 = tem_b ? '0' : '0';
+        char d1 = tem_b ? '5' : '3';
+        if (p[j] == d0 && p[j + 1] == d1) return 0; /* ja e o nosso alvo, nao mexe de novo */
+        p[j] = d0; p[j + 1] = d1;
         return 1;
     }
     return 0;
