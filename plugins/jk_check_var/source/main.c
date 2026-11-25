@@ -193,7 +193,7 @@
 attr_public const char *g_pluginName = "JK_CHECK-VAR";
 attr_public const char *g_pluginDesc = "JK PATCHS - VAR funcional (revisao de cartoes)";
 attr_public const char *g_pluginAuth = "JK PATCHS";
-attr_public uint32_t g_pluginVersion = 0x00000401;
+attr_public uint32_t g_pluginVersion = 0x00000402;
 
 #define PASTA "/data/jk/super"
 
@@ -274,11 +274,15 @@ static volatile int g_sala_var_habilitada = 0;   /* rechecado a cada INTERVALO_R
 static volatile uint32_t g_tentativas_sala = 0;
 static OrbisPthread g_thr;
 
-/* a cada quantas chamadas a gente confere de novo o arquivo desligar_var.txt
-   (em vez de checar em TODA chamada - sceKernelStat em toda chamada de uma
-   funcao que pode rodar centenas de vezes por partida e caro e pode
-   atrapalhar o jogo). */
-#define INTERVALO_RECHECAGEM 2000u
+/* v4.01: confirmado jogando que FUN_00311ce0 (nosso alvo desde a v4.00) so
+   e chamada umas poucas vezes por partida (uma por falta/cartao, nao por
+   frame) - bem diferente da estimativa antiga de "centenas de vezes" que
+   valia pro hook errado da v3.x. Por isso agora confere desligar_var.txt e
+   ligar_sala_var.txt em TODA chamada (sceKernelStat e barato nessa
+   frequencia) - antes so reconferia a cada 2000 chamadas, o que na pratica
+   nunca acontecia numa partida so, entao apagar/criar esses arquivos no
+   meio do jogo nao tinha efeito ate reiniciar o jogo. */
+#define INTERVALO_RECHECAGEM 1u
 
 /* limite de quantas revisoes a gente loga em arquivo (I/O de disco em toda
    chamada do hook e a causa mais provavel de travamento/CE-34878 - aqui so
@@ -383,10 +387,9 @@ static uint32_t hook_alvo(uint64_t a, uint64_t b)
         logf_("#%u DIAG: chamada OK, original=0x%08x", n, original);
     }
 
-    /* confere o arquivo de desligar so de vez em quando, nao em toda
-       chamada (sceKernelStat tem custo e essa funcao pode ser chamada
-       muitas vezes numa partida) */
-    if ((n % INTERVALO_RECHECAGEM) == 1) {
+    /* v4.01: confere em toda chamada agora (ver nota em INTERVALO_RECHECAGEM
+       mais acima - essa funcao e rara, nao custa nada). */
+    if ((n % INTERVALO_RECHECAGEM) == 0) {
         g_var_ligado = !existe(PASTA "/desligar_var.txt");
         g_sala_var_habilitada = existe(PASTA "/ligar_sala_var.txt");
     }
