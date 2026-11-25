@@ -15,10 +15,10 @@
  *   Isso usa 100% de cenas/arquivos que ja existem no jogo - e o efeito real
  *   que o VAR tem numa partida de verdade (mudar a decisao do juiz).
  *
- *   A CABINE/TELA 3D de revisao (a novidade visual que o mod de PC tem) NAO
- *   esta neste pacote: ela precisa de modelo/animacao novos que nao existem
- *   no jogo (nem no PC original - o proprio mod cria isso do zero). Isso
- *   fica pra uma etapa separada de criacao de asset, se quiser seguir depois.
+ *   A CABINE/TELA 3D de revisao (a novidade visual que o mod de PC tem) tem
+ *   uma tentativa EXPERIMENTAL e OPCIONAL nesta versao (v3) - ver o bloco de
+ *   comentario grande perto de SELETOR_SALA_VAR mais abaixo. Fica desligada
+ *   por padrao; so liga se voce criar o arquivo ligar_sala_var.txt.
  *
  * Gatilho (crie o arquivo vazio por FTP em /data/jk/super/):
  *   desligar_var.txt -> desativa as trocas (so fica logando, sem mexer em nada)
@@ -43,6 +43,14 @@
  * checagem do desligar_var.txt roda de vez em quando, nao toda chamada; (3)
  * checagem de seguranca no ponteiro de retorno antes de escrever qualquer
  * memoria, pra nunca escrever em endereco implausivel.
+ *
+ * v3.00: adiciona um modo EXPERIMENTAL opcional (desligado por padrao) que
+ * tenta mesmo abrir a sala 3D do VAR, usando o seletor 0x00050006 que
+ * descobri dentro do script Lua do seu mod de PC (FoulScenes.lua). Ver o
+ * bloco de comentario grande perto de SELETOR_SALA_VAR mais abaixo pra
+ * entender exatamente o que isso faz e por que fica desligado por padrao.
+ * O comportamento PADRAO (arquivo ligar_sala_var.txt ausente) continua
+ * identico ao da v2.01 - nada muda se voce nao criar esse arquivo.
  */
 #include <stdint.h>
 #include <stddef.h>
@@ -59,7 +67,7 @@
 attr_public const char *g_pluginName = "JK_CHECK-VAR";
 attr_public const char *g_pluginDesc = "JK PATCHS - VAR funcional (revisao de cartoes)";
 attr_public const char *g_pluginAuth = "JK PATCHS";
-attr_public uint32_t g_pluginVersion = 0x00000201;
+attr_public uint32_t g_pluginVersion = 0x00000300;
 
 #define PASTA "/data/jk/super"
 
@@ -83,6 +91,40 @@ static const uint32_t FAMILIA_VERMELHO[]   = { 0x20010u, 0x20013u, 0x20016u };
 #define CHANCE_AGRAVAR        40  /* amarelo -> vermelho */
 #define CHANCE_ANULAR         35  /* vermelho -> amarelo */
 
+/* ------------------------------------------------------------------------
+ * MODO EXPERIMENTAL "SALA DO VAR" (v3)
+ *
+ * Achei, dentro do proprio mod de PC que voce mandou (FoulScenes.lua), o
+ * valor exato que o motor do jogo usa pra selecionar a cena de "revisao do
+ * VAR" de verdade: 0x00050006 (uma familia de seletor completamente
+ * diferente das 3 de cartao - 0x2000x). No PC, o mod troca pra esse valor
+ * quando decide mostrar a sala, e so DEPOIS usa a decisao original (a
+ * mesma troca que esse plugin ja faz) como o "veredito final" mostrado
+ * dentro da sala.
+ *
+ * Eu NAO tenho 100% de certeza que so trocar esse numero no ponto que a
+ * gente ja hooka no PS4 e suficiente - no PC o mod mexe num ponto um
+ * pouco mais a frente (onde o jogo CONSOME o seletor, nao onde ele e
+ * GERADO, que e o nosso ponto). Pode ser que falte alguma coisa e o jogo
+ * simplesmente ignore o valor (nada acontece) OU, no pior caso, nao saiba
+ * lidar com ele (trava).
+ *
+ * Por isso isso fica DESLIGADO por padrao e so liga se voce criar esse
+ * arquivo (por FTP, vazio):
+ *   /data/jk/super/ligar_sala_var.txt
+ *
+ * Com ele presente, limitado a LIMITE_TENTATIVAS_SALA vezes por
+ * carregamento (pra nao arriscar demais numa unica partida de teste):
+ * ao inves de revisar dentro da familia, troca o seletor pra 0x00050006.
+ * Se der certo: deve abrir uma cena/camera diferente da cutscene normal
+ * de cartao. Se nao acontecer nada visivel: anotamos que falta a outra
+ * metade do mecanismo (meu palpite e um "flag" extra que o PC grava numa
+ * estrutura separada, ainda nao localizada no PS4). Se travar: apaga o
+ * ligar_sala_var.txt e volta pro modo seguro (que e o padrao). */
+#define SELETOR_SALA_VAR          0x00050006u
+#define LIMITE_TENTATIVAS_SALA    10
+#define CHANCE_SALA_VAR           65   /* mesma chance que o mod de PC usa (var_event_probability) */
+
 typedef uint64_t (*fn_hook_alvo_t)(uint64_t fila_obj, uint64_t a, uint64_t b);
 
 static Detour g_detour;
@@ -92,6 +134,8 @@ static volatile uint32_t g_contador = 0;
 static volatile uint32_t g_revisoes = 0;
 static uint32_t g_semente = 0x9E3779B9u;
 static volatile int g_var_ligado = 1;
+static volatile int g_sala_var_habilitada = 0;   /* rechecado a cada INTERVALO_RECHECAGEM */
+static volatile uint32_t g_tentativas_sala = 0;
 
 /* a cada quantas chamadas a gente confere de novo o arquivo desligar_var.txt
    (em vez de checar em TODA chamada - sceKernelStat em toda chamada de uma
@@ -201,6 +245,7 @@ static uint64_t hook_alvo(uint64_t fila_obj, uint64_t a, uint64_t b)
        muitas vezes numa partida) */
     if ((n % INTERVALO_RECHECAGEM) == 1) {
         g_var_ligado = !existe(PASTA "/desligar_var.txt");
+        g_sala_var_habilitada = existe(PASTA "/ligar_sala_var.txt");
     }
 
     if (!g_var_ligado) {
@@ -214,8 +259,24 @@ static uint64_t hook_alvo(uint64_t fila_obj, uint64_t a, uint64_t b)
 
     uint32_t *slot = (uint32_t *)(cursor - 4);
     uint32_t original = *slot;
-    uint32_t novo = original;
 
+    /* modo experimental (desligado por padrao - ver comentario la em cima) */
+    if (g_sala_var_habilitada && g_tentativas_sala < LIMITE_TENTATIVAS_SALA) {
+        int pertence_a_alguma_familia =
+            (indice_em(FAMILIA_SEM_CARTAO, N_SEM_CARTAO, original) >= 0) ||
+            (indice_em(FAMILIA_AMARELO, N_AMARELO, original) >= 0) ||
+            (indice_em(FAMILIA_VERMELHO, N_VERMELHO, original) >= 0);
+
+        if (pertence_a_alguma_familia && sorteio_percent(CHANCE_SALA_VAR)) {
+            *slot = SELETOR_SALA_VAR;
+            g_tentativas_sala++;
+            logf_("#%u EXPERIMENTO sala do VAR: 0x%08x -> 0x%08x (tentativa %u/%u)",
+                  n, original, SELETOR_SALA_VAR, g_tentativas_sala, (unsigned)LIMITE_TENTATIVAS_SALA);
+            return ret; /* nao aplica tambem a revisao normal nessa mesma ocorrencia */
+        }
+    }
+
+    uint32_t novo = original;
     if (revisar(&novo)) {
         *slot = novo;
         uint32_t r = ++g_revisoes;
