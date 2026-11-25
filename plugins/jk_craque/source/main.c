@@ -1,25 +1,233 @@
 /*
- * JK CRAQUE v1.03 - PES 2021 (Mega/Brasfoot CUSA18676 01.08 e Demisan CUSA22062)
+ * JK_CHECK-VAR - VAR funcional para PES 2021 (CUSA18676).
  *
- * "Craque do Jogo": a cerimonia de melhor da partida (JK_CRAQUE.cpk) tem dois visuais no mesmo CPK:
- *   - Craque Betano  (Brasileirao, Copa do Brasil e o resto): pastas OP-04_POTM1_TROPHY, OP-04_BOARD_POTM1, OP-04_BOARD_1
- *   - Best of the Match (Libertadores): pastas OP-04_POTM2_TROPHY, OP-04_BOARD_POTM2, OP-04_BOARD_2
- * As cenas de fim de jogo sempre pedem as pastas "1". Este plugin entra na funcao do jogo que executa os pedidos
- * de arquivo (eboot 0x1a522e0, a mesma que grava "[%s] file read error (criFsLoader_GetStatus...)") e, quando a
- * partida e da Libertadores, troca no caminho pedido POTM1 -> POTM2 e BOARD_1 -> BOARD_2 (mesmo tamanho, no lugar).
- * Competicao atual: int em eboot+0x5bff80c (a mesma que o jk_licencas le).
+ * O QUE ESTE PLUGIN FAZ DE VERDADE (sem precisar de nenhum asset novo):
+ *   Hooka o unico ponto do jogo (FUN_00311c90, RVA 0x311c90) que recebe a
+ *   decisao de seletor de cena de falta/cartao (resultado de FUN_00311ce0,
+ *   a funcao que decide qual cartao/falta vai rolar). Depois que o jogo
+ *   decide sozinho o que ia acontecer, a gente verifica se foi uma das tres
+ *   familias de cartao conhecidas (sem cartao / amarelo / vermelho) e, com
+ *   uma chance configuravel, TROCA a decisao original por outra da MESMA
+ *   familia de variante (pra manter a cena/animacao compativel):
+ *     - sem cartao -> vira cartao amarelo  (VAR flagra falta que passou batida)
+ *     - amarelo    -> vira vermelho        (VAR agrava a falta)
+ *     - vermelho   -> vira amarelo         (VAR anula o vermelho)
+ *   Isso usa 100% de cenas/arquivos que ja existem no jogo - e o efeito real
+ *   que o VAR tem numa partida de verdade (mudar a decisao do juiz).
  *
- * Config (opcional): /data/jk/craque.txt   linha  lib=5   (ids separados por virgula que usam o visual 2)
- * Desligar: /data/jk/craque_off.txt
- * v1.03: a competicao certa vem do mesmo lugar que o jk_licencas usa: *( *( *(eboot+0x5b4e398) +0x60) +0x358d0).
- *        O int em eboot+0x5bff80c (usado ate a v1.02) e a LICENCA do placar (6 = Brazil), nao a competicao;
- *        fica so como reserva quando o ponteiro nao existe (Brazil/Spain -> Betano, Italy -> Libertadores).
- * v1.02: 3 visuais: 1 Craque Betano (betano=21,24 Brasileirao e Copa do Brasil), 2 Libertadores (lib=5),
- *        3 JK PATCHS (todas as outras competicoes e partidas): pastas OP-04_POTM3_TROPHY, OP-04_BOARD_POTM3, OP-04_BOARD_3.
- *        craque.txt aceita as linhas  lib=5  e  betano=21,24
- * v1.01: na hora da cena de fim de jogo a competicao ja volta a 0; o plugin guarda a ultima competicao
- *        diferente de 0 vista durante a partida (amostra a cada 0,2 s) e usa essa.
- * Log: /data/jk/craque.log  (caminhos das pastas OP-04 pedidos, competicao e se trocou)
+ *   A CABINE/TELA 3D de revisao (a novidade visual que o mod de PC tem) tem
+ *   uma tentativa EXPERIMENTAL e OPCIONAL nesta versao (v3) - ver o bloco de
+ *   comentario grande perto de SELETOR_SALA_VAR mais abaixo. Fica desligada
+ *   por padrao; so liga se voce criar o arquivo ligar_sala_var.txt.
+ *
+ * Gatilho (crie o arquivo vazio por FTP em /data/jk/super/):
+ *   desligar_var.txt -> desativa as trocas (so fica logando, sem mexer em nada)
+ *   (apague o arquivo pra ligar de nov o)
+ *
+ * Log em /data/jk/super/check_var.log
+ *
+ * As primeiras 3 ocorrencias elegiveis em cada carregamento do plugin sao
+ * SEMPRE revisadas (forcado), pra garantir que da pra ver o efeito numa
+ * partida curta de teste. Depois disso passa a ser por chance (ver as
+ * constantes CHANCE_* abaixo).
+ *
+ * ATENCAO: isso instala um hook de CODIGO (nao so leitura/escrita de dados
+ * como os plugins anteriores). Se nao pegar (travar/fechar o jogo), tira o
+ * jk_check_var.prx da pasta de plugins do GoldHEN e reinicia - nao mexe em
+ * save nem em nenhum outro arquivo.
+ *
+ * v2.01: corrigido o crash (CE-34878-0) da v2.00. A causa era I/O de disco
+ * (log) em TODA chamada do hook, inclusive quando nada mudava - isso pode
+ * ser centenas de vezes por partida e travava o jogo. Agora: (1) so loga
+ * quando realmente troca alguma coisa, e so nas primeiras ~80 vezes; (2) a
+ * checagem do desligar_var.txt roda de vez em quando, nao toda chamada; (3)
+ * checagem de seguranca no ponteiro de retorno antes de escrever qualquer
+ * memoria, pra nunca escrever em endereco implausivel.
+ *
+ * v3.00: adiciona um modo EXPERIMENTAL opcional (desligado por padrao) que
+ * tenta mesmo abrir a sala 3D do VAR, usando o seletor 0x00050006 que
+ * descobri dentro do script Lua do seu mod de PC (FoulScenes.lua). Ver o
+ * bloco de comentario grande perto de SELETOR_SALA_VAR mais abaixo pra
+ * entender exatamente o que isso faz e por que fica desligado por padrao.
+ * O comportamento PADRAO (arquivo ligar_sala_var.txt ausente) continua
+ * identico ao da v2.01 - nada muda se voce nao criar esse arquivo.
+ *
+ * v3.01: ACHEI A CAUSA REAL do crash (CE-34878-0) que persistia em todas as
+ * versoes anteriores, inclusive num build de diagnostico sem nenhum hook.
+ * O plugin_load() estava fazendo trabalho de verdade (mkdir, abrir/escrever
+ * log, sys_sdk_proc_info, Detour) de forma SINCRONA, direto dentro da
+ * funcao plugin_load(). Os outros plugins do projeto que ja funcionam
+ * (jk_sonda, jk_extrator) NUNCA fazem isso - eles so chamam
+ * scePthreadCreate() dentro de plugin_load() (que volta na hora) e fazem
+ * todo o trabalho de verdade numa thread separada. Essa versao segue
+ * exatamente esse mesmo padrao (ver trabalho()/plugin_load() mais abaixo).
+ *
+ * v3.02: o jogo parou de travar (fix da v3.01 confirmado), mas jogando uma
+ * partida de teste (varios amarelos e 2 vermelhos) o check_var.log nao
+ * ganhou NENHUMA linha nova alem do "Hook instalado" - ou seja, nenhuma
+ * revisao aconteceu, mas tambem nao da pra saber de fora POR QUE (o log so
+ * registra quando realmente troca algo, de proposito, pra nao travar como
+ * antes). Essa versao so ACRESCENTA logs de diagnostico incondicionais nas
+ * primeiras chamadas do hook (ver LIMITE_LOG_DIAG/g_diag_logados), pra
+ * descobrir se o hook esta sendo chamado, e se sim, com que valor de
+ * seletor - sem mudar nenhum comportamento de jogo. Depois de confirmado o
+ * que esta acontecendo, essa parte de diagnostico sai.
+ *
+ * v3.03: testou a v3.02 (2 vermelhos numa partida) e ZERO linhas de DIAG
+ * apareceram - nem "chamada OK" nem "ret/cursor implausivel". Ou seja,
+ * hook_alvo nunca executou nenhuma vez. Isso aponta pra ANTES do hook em
+ * si: o Detour_DetourFunction() pode estar falhando silenciosamente (ele
+ * devolve NULL se a funcao-alvo nao existir ou se nao conseguir caber o
+ * salto de 14 bytes), e o codigo antigo nunca checava esse retorno - so
+ * logava "Hook instalado" sempre, mesmo se tivesse falhado. Essa versao
+ * loga explicitamente se Detour_DetourFunction falhou.
+ *
+ * v3.04: confirmado - Detour_DetourFunction devolveu NULL em 0x711c90, ou
+ * seja, FALHOU ao instalar o hook (log: "FALHOU ao instalar o hook"). Isso
+ * quase certamente significa que a RVA 0x311c90 nao aponta mais pro comeco
+ * de uma funcao de verdade nessa build/patch atual do jogo (pode ter mudado
+ * de versao do eboot desde que isso foi mapeado no Ghidra). Essa versao so
+ * ACRESCENTA um log que mostra os 16 bytes crus que estao de fato nesse
+ * endereco agora (antes de tentar o hook, so leitura) - pra comparar com o
+ * que o Ghidra mostra pra FUN_00311c90 no eboot ATUAL (o mesmo que esta
+ * instalado no PS4 agora) e confirmar se bateu ou se mudou.
+ *
+ * v3.05: ACHEI A CAUSA REAL do "FALHOU ao instalar o hook". Os bytes
+ * mostrados pela v3.04 em 0x711c90 sao:
+ *   55                   push rbp
+ *   48 89 e5             mov rbp, rsp
+ *   41 56                push r14
+ *   53                   push rbx
+ *   c5 f8 57 c0          vxorps xmm0,xmm0,xmm0   <- instrucao AVX (VEX/0xC5)
+ *   48 89 fb             mov rbx, rdi
+ * Isso fecha EXATAMENTE 14 bytes, no limite certo de instrucao - a funcao
+ * e o endereco sempre estiveram certos. O problema e que o desmontador
+ * hde64 (usado pelo SDK do GoldHEN pra calcular quantos bytes pode
+ * sobrescrever) e antigo e NAO reconhece o prefixo VEX (0xC5) das
+ * instrucoes AVX - ele erra ao chegar nesse byte e devolve tamanho 0,
+ * fazendo o Detour_DetourFunction desistir achando que nao cabe o salto de
+ * 14 bytes, quando na verdade cabe certinho.
+ *
+ * A correcao: em vez de usar Detour_DetourFunction (que depende do hde64),
+ * essa versao instala o hook manualmente com o tamanho de 14 bytes que eu
+ * mesmo contei e confirmei acima (ver hook_manual_14() mais abaixo) -
+ * usando as mesmas funcoes internas (Detour_WriteJump64) que o SDK ja usa,
+ * so pulando a parte que calcula o tamanho errado.
+ *
+ * v3.06: testou a v3.05 e o CONSOLE INTEIRO desligou (nao so o jogo) - a
+ * primeira vez que isso aconteceu numa versao que de fato chega a ESCREVER
+ * em codigo do jogo (todas as anteriores so falhavam e voltavam sem mexer
+ * em nada). So que depois de religar, o check_var.log NAO TINHA NENHUMA
+ * linha nova - ou seja, nao da pra saber se foi esse plugin ou coincidencia
+ * (o usuario confirmou que desligamentos assim ja aconteceram nesse PS4
+ * mesmo sem esse ou qualquer outro plugin rodando). Pra nao ficar no escuro
+ * de novo, essa versao so ACRESCENTA um log de checkpoint em CADA passo
+ * arriscado de hook_manual_14 (mmap, escrita de salto, mprotect, memcpy,
+ * e o passo final que de fato sobrescreve a funcao original) - se desligar
+ * de novo, da pra saber exatamente em qual desses passos parou.
+ *
+ * v3.07: testou a v3.06 e o console desligou DE NOVO (2a vez seguida numa
+ * versao que escreve codigo). Comparei com o jk_craque - plugin do MESMO
+ * projeto que ja faz hook de codigo (prologo de 17 bytes, MAIOR que o
+ * nosso) e NUNCA foi reportado travando o console - e ele faz 3 coisas
+ * diferentes da nossa v3.05/v3.06:
+ *   1) escreve os bytes via sys_sdk_proc_rw (syscall do SDK pra escrever em
+ *      memoria de processo), nao memcpy/mprotect direto;
+ *   2) espera 3s (sceKernelUsleep) antes de mexer no executavel;
+ *   3) os bytes originais da funcao ficam escritos a mao como assembly fixo
+ *      no proprio plugin (nao copiados dinamicamente pra memoria alocada
+ *      em runtime via sceKernelMmap).
+ * Essa versao reescreve a instalacao do hook inteira seguindo EXATAMENTE
+ * esse padrao ja comprovado (ver instalar()/gravar_eboot()/
+ * jk_hookalvo_orig() mais abaixo). O Detour.h/API do GoldHEN SDK foi
+ * removido por completo - no usa mais Detour_Construct/Destroy/Stub.
+ *
+ * v3.07 TESTADA: instalou com sucesso ("GANCHO ok") em 2 boots seguidos, SEM
+ * nenhum desligamento de console - o problema da v3.05/v3.06 estava mesmo
+ * na instalacao, nao no alvo. So que, jogando de verdade (ate um cartao
+ * VERMELHO), o check_var.log continuou SEM NENHUMA linha de DIAG - ou seja,
+ * hook_alvo() nunca chegou a executar nenhuma vez, mesmo com o hook
+ * instalado corretamente.
+ *
+ * v4.00: ACHADO O MOTIVO. Baixei o eboot atual (eboot_CUSA18676.bin, dump
+ * de memoria RVA==offset-no-arquivo, base 0x400000) e procurei TODAS as
+ * formas de chamada pra FUN_00311c90 (call direta E8, LEA RIP-relative
+ * calculando o endereco, ponteiro absoluto de 8 bytes em qualquer lugar do
+ * arquivo): ZERO ocorrencias em 74MB de codigo/dados. FUN_00311c90
+ * simplesmente nao e chamada por ninguem nesse eboot - a premissa antiga
+ * ("unico chamador de FUN_00311ce0") estava desatualizada/errada.
+ *
+ * Procurando por quem chama FUN_00311ce0 (a funcao que DE FATO decide o
+ * cartao) achei DOIS chamadores: RVA 0x311cb1 (dentro da propria
+ * FUN_00311c90, o hook antigo - so repassa o resultado adiante) e RVA
+ * 0x3119d2, dentro de uma funcao BEM maior e completamente diferente, que e
+ * quase certamente o caminho usado de verdade numa partida.
+ *
+ * Em vez de escolher qual das duas chamadoras hookar (arriscando errar de
+ * novo se o jogo usar um terceiro caminho futuramente), essa versao hooka
+ * FUN_00311ce0 DIRETAMENTE - a funcao que as duas chamadoras efetivamente
+ * usam. Conferi os dois pontos de chamada no disassembly: ambos, logo
+ * depois do "call FUN_00311ce0", so consultam o valor devolvido em EAX (nao
+ * leem nenhum outro dado da chamada) - ou seja, basta trocar o VALOR DE
+ * RETORNO da funcao pra mudar a decisao, sem precisar achar "cursor"/
+ * ponteiro de objeto nenhum como a v3.x fazia. Isso cobre os dois
+ * chamadores conhecidos automaticamente, e e mais simples e mais robusto.
+ *
+ * O prologo de FUN_00311ce0 e maior (20 bytes ate a proxima instrucao
+ * completa: push rbp; mov rbp,rsp; push r15; push r14; push r13; push r12;
+ * push rbx; sub rsp,0x668) - sem nenhuma instrucao AVX/VEX dessa vez, mas
+ * mantive o mesmo padrao comprovado do jk_craque/v3.07 (sys_sdk_proc_rw,
+ * delay de 3s, assembly fixo) por seguranca.
+ *
+ * v4.03: trabalho de pesquisa pra tentar abrir de vez a SALA 3D do VAR (nao
+ * so a troca de cartao, que ja funciona desde a v4.00). Li o FoulScenes.lua
+ * completo do seu mod de PC. Descobri duas coisas importantes:
+ *
+ * 1) O mod de PC so mexe na sala do VAR em situacoes de PENALTI, usando uma
+ *    familia de seletor DIFERENTE da nossa (0x0002000F a 0x00020014, uma
+ *    pra cada variante de cartao NO PENALTI: Y=amarelo, R=vermelho,
+ *    N=sem cartao, W=aviso, R_ALT/N_ALT=variantes). Isso bate com um valor
+ *    que ja vimos SOZINHO num log antigo seu (log do teste de
+ *    desligar/ligar sala): "#4 DIAG: chamada OK, original=0x00020011" -
+ *    0x20011 e EXATAMENTE o "FOUL_PK_CARD_N" (penalti sem cartao) da tabela
+ *    do PC. Ou seja, e bem provavel que o PS4 use OS MESMOS numeros do PC
+ *    pra penalti (diferente dos numeros de falta comum, que descobrimos na
+ *    v4.01 que eram outros). Essa versao passa a reconhecer e logar esses 6
+ *    valores de penalti separadamente (ver FAMILIA_PENALTI abaixo), pra
+ *    confirmar com certeza na proxima partida com penalti.
+ *
+ * 2) ACHEI O MOTIVO PROVAVEL de 0x00050006 (sozinho) ter mostrado a cena de
+ *    troca de jogador em vez da sala do VAR no seu teste: lendo o Lua, o
+ *    PROPRIO mod de PC SO troca o seletor pra 0x00050006 DEPOIS de escrever
+ *    um "perfil" de 26 bytes numa estrutura de memoria separada (endereco =
+ *    [RAX]+[R15] no ponto que ELE hooka, que e diferente do nosso - o PC
+ *    hooka onde o jogo CONSOME o seletor, nao onde ele e GERADO). Se esse
+ *    perfil nao e escrito, o PROPRIO codigo do PC (nao so o jogo) cai de
+ *    volta pra cena de troca de jogador como "plano B" - exatamente o que
+ *    vimos no PS4. Ou seja, muito provavelmente SO TROCAR O NUMERO NAO E
+ *    SUFICIENTE, nem no PC nem no PS4 - falta a outra metade do mecanismo
+ *    (escrever esse perfil em memoria).
+ *
+ *    Tentei achar, so analisando o eboot (sem depurador ao vivo - nao tenho
+ *    acesso a isso neste ambiente), a funcao que faz esse trabalho no PS4.
+ *    Rastreei os dois chamadores conhecidos de FUN_00311ce0 pra frente: os
+ *    dois, logo depois da chamada, chamam uma funcao comum (offset 0x714660)
+ *    passando o resultado - mas essa funcao e so uma rotina generica de
+ *    crescimento de std::vector (reutilizada em centenas de lugares do
+ *    jogo, sem nada especifico de VAR) - um beco sem saida pra analise
+ *    estatica sozinha.
+ *
+ *    Por isso essa versao troca o experimento de "um numero fixo so" (que
+ *    ja provamos que NAO abre a sala sozinho) por uma BUSCA: uma lista de
+ *    varios candidatos da mesma familia (0x00050000 a 0x0005000A), testando
+ *    UM DIFERENTE a cada falta elegivel enquanto o modo de busca estiver
+ *    ligado, com log bem claro de qual candidato foi tentado - pra voce
+ *    testar em jogo e me dizer exatamente o que cada um mostrou (igual a
+ *    gente fez pra descobrir os valores de cartao na v4.01). Sem um
+ *    depurador ao vivo no PS4, isso e o jeito mais rapido e confiavel de
+ *    achar o numero certo (se for so numero) ou confirmar que falta mesmo
+ *    o tal "perfil" de memoria (se NENHUM candidato abrir a sala de
+ *    verdade).
  */
 #include <stdint.h>
 #include <stddef.h>
@@ -32,125 +240,328 @@
 #define attr_public __attribute__((visibility("default")))
 #define attr_module_hidden __attribute__((weak)) __attribute__((visibility("hidden")))
 
-attr_public const char *g_pluginName = "jk_craque";
-attr_public const char *g_pluginDesc = "JK PATCHS - Craque do Jogo por competicao";
+attr_public const char *g_pluginName = "JK_CHECK-VAR";
+attr_public const char *g_pluginDesc = "JK PATCHS - VAR funcional (revisao de cartoes)";
 attr_public const char *g_pluginAuth = "JK PATCHS";
-attr_public uint32_t g_pluginVersion = 0x00000103;
+attr_public uint32_t g_pluginVersion = 0x00000404;
 
-#define RVA_ARQUIVO   0x1a522e0ULL     /* executa um pedido de arquivo: rdi = pedido, caminho (std::string) em +0x20 */
-#define RVA_LICENCA   0x5bff80cULL     /* int: licenca do placar (0 Pes,1 Ucl,2 England,3 France,4 Italy,5 Spain,6 Brazil,7 Acl,8 Euro) */
-#define RVA_CARREIRA  0x5b4e398ULL     /* ponteiro; +0x60 -> partida; +0x358d0 = competicao (como o jk_licencas) */
-#define PASTA         "/data/jk"
+#define PASTA "/data/jk/super"
+
+/* RVA (offset dentro do eboot, base 0 no Ghidra) de FUN_00311ce0 - a funcao
+   que DE FATO decide o cartao/falta (nao mais FUN_00311c90, que nenhum
+   codigo do eboot chama de verdade - ver nota v4.00 mais acima). Confirmado
+   lendo o eboot_CUSA18676.bin real: os dois chamadores conhecidos (RVA
+   0x311cb1 e 0x3119d2) so consultam o retorno (EAX) dessa funcao. */
+#define RVA_HOOK_ALVO 0x311ce0ULL
+
+/* v4.01: valores REAIS, confirmados jogando com o DIAG da v4.00 ligado (nao
+   mais os antigos 0x2000F-0x20016, que eram de uma analise de Ghidra
+   desatualizada e NUNCA bateram com nada em jogo de verdade):
+     0x20001, 0x20006 -> amarelo (confirmado 4x: 1o cartao deu 0x20006, os
+       outros 3 deram 0x20001 - sao so variantes/cameras diferentes, mesma
+       gravidade)
+     0x20004 -> a cena de "segundo amarelo vira vermelho" (expulsao)
+   Ainda NAO vimos nenhum valor de "falta sem cartao nenhum" passar por essa
+   funcao - pelo visto ela so e chamada quando ja vai sair cartao (uma falta
+   comum talvez nem chegue a chamar FUN_00311ce0). Por isso o grupo
+   FAMILIA_SEM_CARTAO foi removido por enquanto; se aparecer um valor novo
+   fora dessas duas familias, e provavelmente isso - me avisa.
+   Como as familias tem tamanhos diferentes agora (2 amarelos pra 1
+   vermelho), a troca passou a sortear um valor aleatorio DENTRO da familia
+   de destino, em vez de preservar o mesmo indice (que so fazia sentido
+   quando todas tinham o mesmo tamanho). */
+static const uint32_t FAMILIA_AMARELO[]    = { 0x20001u, 0x20006u };
+static const uint32_t FAMILIA_VERMELHO[]   = { 0x20004u };
+
+#define N_AMARELO    ((int)(sizeof(FAMILIA_AMARELO)    / sizeof(FAMILIA_AMARELO[0])))
+#define N_VERMELHO   ((int)(sizeof(FAMILIA_VERMELHO)   / sizeof(FAMILIA_VERMELHO[0])))
+
+#define N_FORCADAS            3   /* primeiras ocorrencias elegiveis sempre revisadas, pra dar pra ver o efeito rapido */
+#define CHANCE_AGRAVAR        40  /* amarelo -> vermelho */
+#define CHANCE_ANULAR         35  /* vermelho -> amarelo */
+
+/* v4.03: valores de PENALTI vindos do FoulScenes.lua do seu mod de PC
+   (tabela PK_ROUTES) - DIFERENTES da familia de falta comum acima. Ainda
+   nao confirmados 100% no PS4 (so vimos 0x20011 aparecer uma vez, sem eu
+   saber na hora que era penalti), mas como ja bateu exatamente com o nome
+   certo (FOUL_PK_CARD_N = penalti sem cartao), essa versao passa a
+   reconhecer e logar os 6 de forma BEM visivel sempre que aparecerem - isso
+   so serve pra CONFIRMAR em jogo, nao muda nenhuma decisao sozinho ainda. */
+static const uint32_t FAMILIA_PENALTI[] = {
+    0x2000Fu, /* PK_CARD_Y      - penalti, amarelo */
+    0x20010u, /* PK_CARD_R      - penalti, vermelho */
+    0x20011u, /* PK_CARD_N      - penalti, sem cartao (ja visto 1x no log) */
+    0x20012u, /* PK_CARD_W      - penalti, aviso/sem cartao (variante) */
+    0x20013u, /* PK_CARD_R_ALT  - penalti, vermelho (variante) */
+    0x20014u, /* PK_CARD_N_ALT  - penalti, sem cartao (variante) */
+};
+#define N_PENALTI ((int)(sizeof(FAMILIA_PENALTI) / sizeof(FAMILIA_PENALTI[0])))
+
+/* ------------------------------------------------------------------------
+ * MODO EXPERIMENTAL "SALA DO VAR" (v3)
+ *
+ * Achei, dentro do proprio mod de PC que voce mandou (FoulScenes.lua), o
+ * valor exato que o motor do jogo usa pra selecionar a cena de "revisao do
+ * VAR" de verdade: 0x00050006 (uma familia de seletor completamente
+ * diferente das 3 de cartao - 0x2000x). No PC, o mod troca pra esse valor
+ * quando decide mostrar a sala, e so DEPOIS usa a decisao original (a
+ * mesma troca que esse plugin ja faz) como o "veredito final" mostrado
+ * dentro da sala.
+ *
+ * Eu NAO tenho 100% de certeza que so trocar esse numero no ponto que a
+ * gente ja hooka no PS4 e suficiente - no PC o mod mexe num ponto um
+ * pouco mais a frente (onde o jogo CONSOME o seletor, nao onde ele e
+ * GERADO, que e o nosso ponto). Pode ser que falte alguma coisa e o jogo
+ * simplesmente ignore o valor (nada acontece) OU, no pior caso, nao saiba
+ * lidar com ele (trava).
+ *
+ * Por isso isso fica DESLIGADO por padrao e so liga se voce criar esse
+ * arquivo (por FTP, vazio):
+ *   /data/jk/super/ligar_sala_var.txt
+ *
+ * v4.03: JA CONFIRMAMOS que 0x00050006 sozinho NAO abre a sala (mostrou a
+ * cena de troca de jogador, igual ao "plano B" que o proprio Lua do PC usa
+ * quando falta o perfil de memoria - ver nota grande la em cima). Por isso
+ * trocamos de "um numero fixo" pra uma BUSCA numa lista de candidatos da
+ * mesma familia (CANDIDATOS_SALA_VAR abaixo) - cada vez que essa ocorrencia
+ * acontece com o modo de busca ligado, tenta o PROXIMO candidato da lista
+ * (nunca repete o mesmo 0x50006 que ja sabemos que nao funciona sozinho).
+ * Precisa testar em jogo, UM POR VEZ, e me dizer exatamente o que cada
+ * tentativa mostrou na tela (igual fizemos pra descobrir os valores reais
+ * de cartao). Se NENHUM candidato abrir a sala de verdade, isso confirma
+ * que falta mesmo a escrita do tal "perfil" de memoria, e aí o proximo
+ * passo vira tentar achar esse segundo ponto certo no PS4 (precisa de mais
+ * investigacao, possivelmente com logs de registradores que esse plugin
+ * ainda nao tira). Se travar numa tentativa: apaga o ligar_sala_var.txt e
+ * volta pro modo seguro (que e o padrao).
+ *
+ * v4.04: TESTADO - 0x00050000 (1o candidato da lista) trava a ANIMACAO do
+ * jogo (juiz/jogadores congelados no lugar, bola parada no ar) enquanto o
+ * relogio da partida continua passando normal - ou seja, nao derruba o
+ * jogo/console, mas fica preso num carregamento de cena que nunca termina,
+ * e so da pra sair fechando o jogo na mao. Removido da lista (NAO tenta
+ * mais esse valor). Os candidatos seguintes ja pulam direto pra 0x50002. */
+static const uint32_t CANDIDATOS_SALA_VAR[] = {
+    0x50002u, 0x50003u, 0x50004u, 0x50005u,
+    0x50007u, 0x50008u, 0x50009u, 0x5000Au, 0x5000Bu,
+};
+#define N_CANDIDATOS_SALA_VAR ((int)(sizeof(CANDIDATOS_SALA_VAR) / sizeof(CANDIDATOS_SALA_VAR[0])))
+#define LIMITE_TENTATIVAS_SALA    N_CANDIDATOS_SALA_VAR
+#define CHANCE_SALA_VAR           65   /* mesma chance que o mod de PC usa (var_event_probability) */
 
 static uint64_t g_base;
-static volatile int g_rodando = 1;
-static OrbisPthread g_thr;
-static int g_libs[16] = {5}; static int g_nlibs = 1;
-static int g_bets[16] = {21, 24}; static int g_nbets = 2;
-int jk_qmp(void *addr, void **start, void **end, int *prot) __asm__("sceKernelQueryMemoryProtection");
-static int legivel(uint64_t a, uint64_t n)
-{
-    if (a < 0x10000) return 0;
-    void *st = 0, *e = 0; int p = 0;
-    if (jk_qmp((void *)a, &st, &e, &p) != 0 || !(p & 1)) return 0;
-    return (uint64_t)e >= a + n;
-}
-static volatile int g_comp_partida = 0x7fffffff;   /* ultima competicao != 0 vista */
-static volatile int g_fonte = 0;                     /* 1 = competicao real, 2 = reserva pela licenca */
-
-/* competicao da partida: ponteiro do jk_licencas; sem ele, -1000-licenca (reserva) */
-static int ler_competicao(void)
-{
-    uint64_t p = g_base + RVA_CARREIRA;
-    if (legivel(p, 8)) {
-        uint64_t o = *(volatile uint64_t *)p;
-        if (o && legivel(o + 0x60, 8)) {
-            uint64_t m = *(volatile uint64_t *)(o + 0x60);
-            if (m && legivel(m + 0x358d0, 4)) { g_fonte = 1; return *(volatile int32_t *)(m + 0x358d0); }
-        }
-    }
-    g_fonte = 2;
-    return -1000 - *(volatile int32_t *)(g_base + RVA_LICENCA);
-}
-
-__attribute__((visibility("hidden"))) uint64_t g_arq_volta;
-static uint64_t jk_arq_orig(uint64_t a, uint64_t b, uint64_t c, uint64_t d, uint64_t e, uint64_t f);
-
-/* ---------- log ---------- */
 static int g_log = -1;
+static volatile uint32_t g_contador = 0;
+static volatile uint32_t g_revisoes = 0;
+static uint32_t g_semente = 0x9E3779B9u;
+static volatile int g_var_ligado = 1;
+static volatile int g_sala_var_habilitada = 0;   /* rechecado a cada INTERVALO_RECHECAGEM */
+static volatile uint32_t g_tentativas_sala = 0;
+static OrbisPthread g_thr;
+
+/* v4.01: confirmado jogando que FUN_00311ce0 (nosso alvo desde a v4.00) so
+   e chamada umas poucas vezes por partida (uma por falta/cartao, nao por
+   frame) - bem diferente da estimativa antiga de "centenas de vezes" que
+   valia pro hook errado da v3.x. Por isso agora confere desligar_var.txt e
+   ligar_sala_var.txt em TODA chamada (sceKernelStat e barato nessa
+   frequencia) - antes so reconferia a cada 2000 chamadas, o que na pratica
+   nunca acontecia numa partida so, entao apagar/criar esses arquivos no
+   meio do jogo nao tinha efeito ate reiniciar o jogo. */
+#define INTERVALO_RECHECAGEM 1u
+
+/* limite de quantas revisoes a gente loga em arquivo (I/O de disco em toda
+   chamada do hook e a causa mais provavel de travamento/CE-34878 - aqui so
+   logamos quando REALMENTE muda algo, e so nas primeiras N vezes). */
+#define LIMITE_LOG_REVISOES 80u
+
 static void logf_(const char *fmt, ...)
 {
-    char b[600]; va_list ap; va_start(ap, fmt);
-    int n = vsnprintf(b, sizeof b - 2, fmt, ap); va_end(ap);
+    char b[512];
+    va_list ap; va_start(ap, fmt);
+    int n = vsnprintf(b, sizeof b - 2, fmt, ap);
+    va_end(ap);
     if (n < 0) return;
     if (n > (int)sizeof b - 2) n = sizeof b - 2;
     b[n++] = '\n';
-    if (g_log < 0) g_log = sceKernelOpen(PASTA "/craque.log", 0x0001 | 0x0200 | 0x0400, 0666);   /* novo a cada jogo */
+    if (g_log < 0) g_log = sceKernelOpen(PASTA "/check_var.log", 0x0001 | 0x0200 | 0x0008, 0666); /* WRONLY|CREAT|APPEND */
     if (g_log >= 0) sceKernelWrite(g_log, b, n);
 }
-static int existe(const char *p) { OrbisKernelStat st; return sceKernelStat(p, &st) == 0; }
 
-/* ---------- anel de caminhos vistos (o gancho nao escreve arquivo; a thread grava) ---------- */
-#define ANEL 32
-static char g_anel[ANEL][160];
-static int  g_anel_comp[ANEL];
-static int  g_anel_troca[ANEL];
-static volatile uint32_t g_anel_pos = 0, g_anel_lido = 0;
-static volatile uint32_t g_trocas = 0, g_vistos = 0;
-
-static int tem_op04(const char *p, uint64_t n)
+static int existe(const char *p)
 {
-    for (uint64_t i = 0; i + 6 <= n; i++) if (p[i] == 'O' && p[i+1] == 'P' && p[i+2] == '-' && p[i+3] == '0' && p[i+4] == '4' && p[i+5] == '_') return 1;
+    OrbisKernelStat st;
+    return sceKernelStat(p, &st) == 0;
+}
+
+/* xorshift32 simples, so pra sortear % sem precisar de rand() da libc */
+static uint32_t prox_aleatorio(void)
+{
+    uint32_t x = g_semente;
+    x ^= x << 13;
+    x ^= x >> 17;
+    x ^= x << 5;
+    g_semente = x;
+    return x;
+}
+
+static int sorteio_percent(int chance)
+{
+    return (int)(prox_aleatorio() % 100u) < chance;
+}
+
+static int indice_em(const uint32_t *lista, int n, uint32_t valor)
+{
+    for (int i = 0; i < n; i++) if (lista[i] == valor) return i;
+    return -1;
+}
+
+/* decide se/como trocar o seletor. devolve 1 se trocou (escreve em *valor).
+   v4.01: como as familias nao tem mais o mesmo tamanho entre si, a troca
+   sorteia um indice aleatorio DENTRO da familia de destino (nao da mais pra
+   preservar "mesma posicao = mesmo ator/cena" como antes). */
+static int revisar(uint32_t *valor)
+{
+    int idx;
+    int forcado = (g_revisoes < N_FORCADAS);
+
+    idx = indice_em(FAMILIA_AMARELO, N_AMARELO, *valor);
+    if (idx >= 0) {
+        if (forcado || sorteio_percent(CHANCE_AGRAVAR)) {
+            *valor = FAMILIA_VERMELHO[prox_aleatorio() % N_VERMELHO];
+            return 1;
+        }
+        return 0;
+    }
+
+    idx = indice_em(FAMILIA_VERMELHO, N_VERMELHO, *valor);
+    if (idx >= 0) {
+        if (forcado || sorteio_percent(CHANCE_ANULAR)) {
+            *valor = FAMILIA_AMARELO[prox_aleatorio() % N_AMARELO];
+            return 1;
+        }
+        return 0;
+    }
+
     return 0;
 }
-static int eh_lib(int c) { for (int i = 0; i < g_nlibs; i++) if (g_libs[i] == c) return 1; return 0; }
-static int eh_bet(int c) { for (int i = 0; i < g_nbets; i++) if (g_bets[i] == c) return 1; return 0; }
-static char visual(int c)
-{
-    if (c <= -1000) { int l = -1000 - c; return l == 4 ? '2' : (l == 6 || l == 5) ? '1' : '3'; }   /* reserva: licenca */
-    return eh_lib(c) ? '2' : eh_bet(c) ? '1' : '3';
-}
-static const char *nome_visual(char v) { return v == '2' ? "LIBERTADORES" : v == '1' ? "BETANO" : "JK PATCHS"; }
 
-/* troca no lugar (mesmo tamanho): POTMx e BOARD_x -> visual (1, 2 ou 3), so dentro de pastas "OP-04_" */
-static int ajustar(char *p, uint64_t n, char para)
+/* DIAG TEMPORARIO (v3.02): loga INCONDICIONALMENTE as primeiras chamadas do
+   hook, pra descobrir se ele esta sendo chamado e que valores esta vendo -
+   mesmo quando nada bate com as familias conhecidas ou quando as checagens
+   de seguranca abaixo decidem nao mexer em nada. Isso NAO afeta o
+   comportamento normal, so adiciona visibilidade. Remover depois de
+   confirmado o fluxo. */
+#define LIMITE_LOG_DIAG 25u
+static volatile uint32_t g_diag_logados = 0;
+
+static uint32_t jk_hookalvo_orig(uint64_t a, uint64_t b);
+
+/* v4.00: hook direto em FUN_00311ce0 - a propria funcao que decide o
+   cartao/falta. O valor original (o "veredito" do jogo) vem pronto no
+   retorno da funcao original (EAX) - so precisamos trocar esse valor antes
+   de devolver pra quem chamou. Nao precisa mais achar cursor/ponteiro de
+   objeto nenhum (isso so fazia sentido quando a gente hookava o
+   CHAMADOR). */
+static uint32_t hook_alvo(uint64_t a, uint64_t b)
 {
-    int mudou = 0;
-    for (uint64_t i = 0; i + 6 <= n; i++) {
-        if (p[i] != 'O' || memcmp(p + i, "OP-04_", 6) != 0) continue;
-        uint64_t j = i + 6;
-        while (j < n && p[j] != '/' && p[j] != 0) {
-            if (j + 5 <= n && memcmp(p + j, "POTM", 4) == 0 && p[j + 4] >= '1' && p[j + 4] <= '3' && p[j + 4] != para) { p[j + 4] = para; mudou = 1; }
-            if (j + 7 <= n && memcmp(p + j, "BOARD_", 6) == 0 && p[j + 6] >= '1' && p[j + 6] <= '3' && (j + 7 == n || p[j + 7] == '/' || p[j + 7] == 0) && p[j + 6] != para) { p[j + 6] = para; mudou = 1; }
-            j++;
-        }
-        i = j;
+    uint32_t original = jk_hookalvo_orig(a, b);
+    uint32_t n = ++g_contador;
+
+    if (g_diag_logados < LIMITE_LOG_DIAG) {
+        g_diag_logados++;
+        logf_("#%u DIAG: chamada OK, original=0x%08x", n, original);
     }
-    return mudou;
-}
 
-static uint64_t arquivo_hook(uint64_t a, uint64_t b, uint64_t c, uint64_t d, uint64_t e, uint64_t f)
-{
-    uint8_t *req = (uint8_t *)a;
-    if (req) {
-        uint64_t cap = *(volatile uint64_t *)(req + 0x38);
-        uint64_t len = *(volatile uint64_t *)(req + 0x30);
-        char *p = cap >= 0x10 ? *(char **)(req + 0x20) : (char *)(req + 0x20);
-        if (p && len > 6 && len < 4096 && tem_op04(p, len)) {
-            int agora = ler_competicao();
-            if (agora != 0) g_comp_partida = agora;
-            int comp = g_comp_partida;
-            int t = ajustar(p, len, visual(comp));
-            if (t) g_trocas++;
-            g_vistos++;
-            uint32_t k = g_anel_pos % ANEL;
-            uint64_t m = len < 159 ? len : 159;
-            memcpy(g_anel[k], p, m); g_anel[k][m] = 0;
-            g_anel_comp[k] = comp; g_anel_troca[k] = t; g_anel_pos++;
+    /* v4.03: loga BEM visivel sempre que um valor de penalti (familia do mod
+       de PC) aparecer - sem limite de quantidade, sem mexer em nada ainda,
+       so pra confirmar com certeza se o PS4 usa os mesmos numeros do PC pra
+       penalti (ver nota grande no topo do arquivo). */
+    {
+        int idx_pk = indice_em(FAMILIA_PENALTI, N_PENALTI, original);
+        if (idx_pk >= 0) {
+            static const char *NOMES_PENALTI[] = {
+                "PK_CARD_Y (penalti amarelo)", "PK_CARD_R (penalti vermelho)",
+                "PK_CARD_N (penalti sem cartao)", "PK_CARD_W (penalti aviso)",
+                "PK_CARD_R_ALT (penalti vermelho var.)", "PK_CARD_N_ALT (penalti sem cartao var.)",
+            };
+            logf_("#%u >>> PENALTI DETECTADO: 0x%08x = %s <<<", n, original, NOMES_PENALTI[idx_pk]);
         }
     }
-    return jk_arq_orig(a, b, c, d, e, f);
+
+    /* v4.01: confere em toda chamada agora (ver nota em INTERVALO_RECHECAGEM
+       mais acima - essa funcao e rara, nao custa nada). */
+    if ((n % INTERVALO_RECHECAGEM) == 0) {
+        g_var_ligado = !existe(PASTA "/desligar_var.txt");
+        g_sala_var_habilitada = existe(PASTA "/ligar_sala_var.txt");
+    }
+
+    if (!g_var_ligado) {
+        return original;
+    }
+
+    /* modo experimental (desligado por padrao - ver comentario la em cima) */
+    if (g_sala_var_habilitada && g_tentativas_sala < LIMITE_TENTATIVAS_SALA) {
+        int pertence_a_alguma_familia =
+            (indice_em(FAMILIA_AMARELO, N_AMARELO, original) >= 0) ||
+            (indice_em(FAMILIA_VERMELHO, N_VERMELHO, original) >= 0);
+
+        if (pertence_a_alguma_familia && sorteio_percent(CHANCE_SALA_VAR)) {
+            uint32_t candidato = CANDIDATOS_SALA_VAR[g_tentativas_sala];
+            g_tentativas_sala++;
+            logf_("#%u BUSCA sala do VAR: 0x%08x -> 0x%08x (candidato %u/%u - anote o que aparece na tela!)",
+                  n, original, candidato, g_tentativas_sala, (unsigned)LIMITE_TENTATIVAS_SALA);
+            return candidato; /* nao aplica tambem a revisao normal nessa mesma ocorrencia */
+        }
+    }
+
+    uint32_t novo = original;
+    if (revisar(&novo)) {
+        uint32_t r = ++g_revisoes;
+        /* loga em disco so quando REALMENTE muda algo, e so as primeiras
+           vezes - escrever arquivo em toda chamada do hook e a causa mais
+           provavel de travar/derrubar o jogo (I/O sincrono num ponto
+           chamado com muita frequencia). */
+        if (r <= LIMITE_LOG_REVISOES) {
+            logf_("#%u VAR: 0x%08x -> 0x%08x (revisao #%u)", n, original, novo, r);
+        }
+        return novo;
+    }
+
+    return original;
 }
+
+/* ------------------------------------------------------------------------
+ * v3.07: instalacao do hook REFEITA seguindo exatamente o padrao do
+ * jk_craque (plugin JA COMPROVADO nesse mesmo projeto, nunca reportado
+ * travando o console - inclusive com um prologo MAIOR que o nosso, 17
+ * bytes). Trocas em relacao a v3.05/v3.06 (que travaram o console 2x):
+ *   1) escreve os bytes com sys_sdk_proc_rw (syscall do SDK feita pra
+ *      escrever em memoria de processo), em vez de memcpy/mprotect direto;
+ *   2) espera 3s (sceKernelUsleep) antes de mexer no executavel, deixando
+ *      o jogo terminar de subir;
+ *   3) em vez de copiar os bytes originais dinamicamente pra um "stub"
+ *      alocado em runtime (sceKernelMmap), os bytes originais (ja
+ *      confirmados byte a byte - ver nota v3.05) ficam escritos a mao,
+ *      fixos, como assembly dentro do proprio plugin, com um jmp de volta
+ *      pro resto da funcao original (FunctionPtr+14). Isso elimina
+ *      qualquer dependencia de alocar/copiar memoria executavel em tempo
+ *      de execucao.
+ *   4) confere os bytes atuais contra o esperado ANTES de escrever - se
+ *      nao bater (outra versao/patch do jogo), desiste e nao mexe em nada
+ *      (igual ao jk_craque). */
+/* prologo de FUN_00311ce0 (20 bytes, confirmado byte a byte lendo o eboot
+   real): push rbp; mov rbp,rsp; push r15; push r14; push r13; push r12;
+   push rbx; sub rsp,0x668. So a gente SO ESCREVE um jmp de 14 bytes no
+   inicio (ff 25 00000000 + 8 bytes de endereco) - sobra espaco de verdade,
+   os ultimos 6 bytes do array abaixo so servem pra conferir que bate certo
+   com o eboot antes de mexer em qualquer coisa. */
+#define TAM_PROLOGO 20
+static const uint8_t g_esperado[TAM_PROLOGO] = {
+    0x55, 0x48, 0x89, 0xe5, 0x41, 0x57, 0x41, 0x56, 0x41, 0x55,
+    0x41, 0x54, 0x53, 0x48, 0x81, 0xec, 0x68, 0x06, 0x00, 0x00
+};
+static int g_gancho = 0;
+__attribute__((visibility("hidden"))) uint64_t g_hookalvo_volta;
 
 static int gravar_eboot(uint64_t dest, const void *src, uint64_t n)
 {
@@ -160,118 +571,87 @@ static int gravar_eboot(uint64_t dest, const void *src, uint64_t n)
     return memcmp((const void *)dest, src, n) == 0;
 }
 
-static const uint8_t g_esperado[17] = {0x55,0x48,0x89,0xe5,0x41,0x57,0x41,0x56,0x41,0x55,0x41,0x54,0x53,0x48,0x83,0xe4,0xe0};
-static int g_gancho = 0;
-
 static void instalar(void)
 {
-    uint64_t f = g_base + RVA_ARQUIVO;
+    uint64_t f = g_base + RVA_HOOK_ALVO;
     const volatile uint8_t *bb = (const volatile uint8_t *)f;
-    for (int i = 0; i < 17; i++) if (bb[i] != g_esperado[i]) {
-        logf_("GANCHO recusado: bytes diferentes em 0x%llx (%02x %02x %02x %02x) - outra versao do jogo?", (unsigned long long)RVA_ARQUIVO, bb[0], bb[1], bb[2], bb[3]);
+    for (int i = 0; i < TAM_PROLOGO; i++) if (bb[i] != g_esperado[i]) {
+        logf_("GANCHO recusado: bytes diferentes em 0x%llx (%02x %02x %02x %02x ...) - outra versao do jogo? VAR NAO esta ativo.",
+              (unsigned long long)RVA_HOOK_ALVO, bb[0], bb[1], bb[2], bb[3]);
         return;
     }
-    g_arq_volta = f + 17;
-    uint8_t salto[17]; uint64_t alvo = (uint64_t)(void *)arquivo_hook;
+    g_hookalvo_volta = f + TAM_PROLOGO;
+    uint8_t salto[14];
+    uint64_t alvo = (uint64_t)(void *)hook_alvo;
     salto[0] = 0xff; salto[1] = 0x25; salto[2] = salto[3] = salto[4] = salto[5] = 0;
-    memcpy(salto + 6, &alvo, 8); salto[14] = salto[15] = salto[16] = 0x90;
-    if (!gravar_eboot(f, salto, sizeof salto)) { gravar_eboot(f, g_esperado, 17); logf_("GANCHO recusado: gravacao"); return; }
+    memcpy(salto + 6, &alvo, 8);
+    if (!gravar_eboot(f, salto, sizeof salto)) {
+        gravar_eboot(f, g_esperado, TAM_PROLOGO);
+        logf_("GANCHO recusado: falha ao gravar (sys_sdk_proc_rw). VAR NAO esta ativo.");
+        return;
+    }
     g_gancho = 1;
-    logf_("GANCHO ok eboot+0x%llx", (unsigned long long)RVA_ARQUIVO);
-}
-
-static int ler_lista(const char *t, const char *chave, int *v, int max)
-{
-    const char *p = strstr(t, chave);
-    if (!p) return -1;
-    p += strlen(chave); int n = 0;
-    while (*p && *p != '\n' && *p != '\r' && n < max) {
-        int neg = 0, x = 0, tem = 0;
-        if (*p == '-') { neg = 1; p++; }
-        while (*p >= '0' && *p <= '9') { x = x * 10 + (*p - '0'); p++; tem = 1; }
-        if (tem) v[n++] = neg ? -x : x;
-        if (*p == ',' || *p == ' ') p++; else if (!tem) break;
-    }
-    return n;
-}
-
-static void ler_config(void)
-{
-    int fd = sceKernelOpen(PASTA "/craque.txt", 0, 0);
-    if (fd >= 0) {
-        char t[512]; int n = sceKernelRead(fd, t, sizeof t - 1); sceKernelClose(fd);
-        if (n < 0) n = 0;
-        t[n] = 0;
-        int a[16], k;
-        if ((k = ler_lista(t, "lib=", a, 16)) > 0) { memcpy(g_libs, a, k * sizeof(int)); g_nlibs = k; }
-        if ((k = ler_lista(t, "betano=", a, 16)) >= 0) { memcpy(g_bets, a, (k > 0 ? k : 0) * sizeof(int)); g_nbets = k; }
-    }
-    char s1[128], s2[128]; int k1 = 0, k2 = 0; s1[0] = s2[0] = 0;
-    for (int i = 0; i < g_nlibs; i++) k1 += snprintf(s1 + k1, sizeof s1 - k1, "%s%d", i ? "," : "", g_libs[i]);
-    for (int i = 0; i < g_nbets; i++) k2 += snprintf(s2 + k2, sizeof s2 - k2, "%s%d", i ? "," : "", g_bets[i]);
-    logf_("CONFIG %s lib=%s betano=%s (resto: JK PATCHS)", fd >= 0 ? "craque.txt" : "padrao", s1, s2);
+    logf_("GANCHO ok eboot+0x%llx. VAR ativo (crie desligar_var.txt pra desativar).", (unsigned long long)RVA_HOOK_ALVO);
 }
 
 static void *trabalho(void *arg)
 {
     (void)arg;
+
+    sceKernelMkdir("/data/jk", 0777);
     sceKernelMkdir(PASTA, 0777);
+    logf_("trabalho(): comecou, pastas OK");
+
     struct proc_info pi; memset(&pi, 0, sizeof pi);
     if (sys_sdk_proc_info(&pi) != 0) { logf_("ERRO proc_info"); return 0; }
     g_base = pi.base_address;
-    logf_("JK_CRAQUE v1.03 titulo=%s versao=%s", pi.titleid, pi.version);
-    if (strncmp(pi.titleid, "CUSA18676", 9) != 0 && strncmp(pi.titleid, "CUSA22062", 9) != 0) { logf_("titulo diferente: parado"); return 0; }
-    if (existe(PASTA "/craque_off.txt")) { logf_("DESLIGADO (craque_off.txt): o jogo pede sempre as pastas 1 (Craque Betano)"); return 0; }
-    ler_config();
-    sceKernelUsleep(3000000);              /* deixa o jogo subir antes de gravar no executavel */
+    g_semente ^= (uint32_t)g_base;
+
+    logf_("JK_CHECK-VAR (VAR funcional) titulo=%s base=0x%llx hook_em=0x%llx",
+          pi.titleid, (unsigned long long)g_base, (unsigned long long)(g_base + RVA_HOOK_ALVO));
+
+    sceKernelUsleep(3000000); /* v3.07: deixa o jogo subir antes de gravar no executavel (igual ao jk_craque) */
     instalar();
-    int comp_ant = 0x7fffffff, part_ant = 0x7fffffff, tic = 0;
-    while (g_rodando) {
-        sceKernelUsleep(200000);
-        int comp = ler_competicao();
-        if (comp != 0) g_comp_partida = comp;
-        if (comp != comp_ant) { logf_("t=%ds COMPETICAO agora=%d (%s) licenca=%d", tic / 5, comp, g_fonte == 1 ? "partida" : "reserva pela licenca", *(volatile int32_t *)(g_base + RVA_LICENCA)); comp_ant = comp; }
-        if (g_comp_partida != part_ant) { part_ant = g_comp_partida; logf_("t=%ds PARTIDA competicao=%d -> visual %s", tic / 5, part_ant, nome_visual(visual(part_ant))); }
-        tic++;
-        while (g_anel_lido != g_anel_pos) {
-            if (g_anel_pos - g_anel_lido > ANEL) g_anel_lido = g_anel_pos - ANEL;
-            uint32_t k = g_anel_lido % ANEL;
-            logf_("ARQ comp=%d %s %s", g_anel_comp[k], g_anel_troca[k] ? "TROCADO" : "igual", g_anel[k]);
-            g_anel_lido++;
-        }
-    }
     return 0;
 }
 
 int32_t attr_public plugin_load(int32_t argc, const char *argv[])
 {
     (void)argc; (void)argv;
-    scePthreadCreate(&g_thr, 0, trabalho, 0, "jk_craque");
+    /* v3.01: todo trabalho de verdade (mkdir, proc_info, Detour) agora roda
+       numa thread separada, igual ao jk_sonda/jk_extrator - plugin_load()
+       so dispara a thread e volta na hora. Ver nota no topo do arquivo. */
+    scePthreadCreate(&g_thr, 0, trabalho, 0, "jk_check_var");
     return 0;
 }
 
 int32_t attr_public plugin_unload(int32_t argc, const char *argv[])
 {
     (void)argc; (void)argv;
-    g_rodando = 0;
-    if (g_gancho) { gravar_eboot(g_base + RVA_ARQUIVO, g_esperado, 17); g_gancho = 0; }
+    if (g_gancho) { gravar_eboot(g_base + RVA_HOOK_ALVO, g_esperado, TAM_PROLOGO); g_gancho = 0; }
+    logf_("Hook removido.");
     return 0;
 }
 
 int32_t attr_module_hidden module_start(size_t argc, const void *args) { (void)argc; (void)args; return 0; }
 int32_t attr_module_hidden module_stop(size_t argc, const void *args) { (void)argc; (void)args; return 0; }
 
-/* comeco original da funcao do jogo (17 bytes) + salto de volta para eboot+0x1a522f1 */
-__attribute__((naked, noinline, used)) static uint64_t jk_arq_orig(uint64_t a, uint64_t b, uint64_t c, uint64_t d, uint64_t e, uint64_t f)
+/* comeco original de FUN_00311ce0 (20 bytes, confirmados byte a byte lendo
+   o eboot_CUSA18676.bin real - ver nota v4.00) + salto de volta pra
+   eboot+RVA_HOOK_ALVO+20. Igual ao jk_arq_orig do jk_craque: em vez de
+   copiar os bytes originais dinamicamente em tempo de execucao, eles ficam
+   fixos aqui, escritos a mao, compilados junto com o plugin - sem overhead
+   de alocar memoria executavel. */
+__attribute__((naked, noinline, used)) static uint32_t jk_hookalvo_orig(uint64_t a, uint64_t b)
 {
     __asm__ volatile(
-        "push %rbp\n"
-        "mov %rsp,%rbp\n"
-        "push %r15\n"
-        "push %r14\n"
-        "push %r13\n"
-        "push %r12\n"
-        "push %rbx\n"
-        "and $0xffffffffffffffe0,%rsp\n"
-        "jmp *g_arq_volta(%rip)\n");
+        ".byte 0x55\n"                               /* push rbp */
+        ".byte 0x48,0x89,0xe5\n"                     /* mov rbp,rsp */
+        ".byte 0x41,0x57\n"                          /* push r15 */
+        ".byte 0x41,0x56\n"                          /* push r14 */
+        ".byte 0x41,0x55\n"                          /* push r13 */
+        ".byte 0x41,0x54\n"                          /* push r12 */
+        ".byte 0x53\n"                                /* push rbx */
+        ".byte 0x48,0x81,0xec,0x68,0x06,0x00,0x00\n" /* sub rsp,0x668 */
+        "jmp *g_hookalvo_volta(%rip)\n");
 }
