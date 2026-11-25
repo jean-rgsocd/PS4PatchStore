@@ -141,6 +141,43 @@
  * esse padrao ja comprovado (ver instalar()/gravar_eboot()/
  * jk_hookalvo_orig() mais abaixo). O Detour.h/API do GoldHEN SDK foi
  * removido por completo - no usa mais Detour_Construct/Destroy/Stub.
+ *
+ * v3.07 TESTADA: instalou com sucesso ("GANCHO ok") em 2 boots seguidos, SEM
+ * nenhum desligamento de console - o problema da v3.05/v3.06 estava mesmo
+ * na instalacao, nao no alvo. So que, jogando de verdade (ate um cartao
+ * VERMELHO), o check_var.log continuou SEM NENHUMA linha de DIAG - ou seja,
+ * hook_alvo() nunca chegou a executar nenhuma vez, mesmo com o hook
+ * instalado corretamente.
+ *
+ * v4.00: ACHADO O MOTIVO. Baixei o eboot atual (eboot_CUSA18676.bin, dump
+ * de memoria RVA==offset-no-arquivo, base 0x400000) e procurei TODAS as
+ * formas de chamada pra FUN_00311c90 (call direta E8, LEA RIP-relative
+ * calculando o endereco, ponteiro absoluto de 8 bytes em qualquer lugar do
+ * arquivo): ZERO ocorrencias em 74MB de codigo/dados. FUN_00311c90
+ * simplesmente nao e chamada por ninguem nesse eboot - a premissa antiga
+ * ("unico chamador de FUN_00311ce0") estava desatualizada/errada.
+ *
+ * Procurando por quem chama FUN_00311ce0 (a funcao que DE FATO decide o
+ * cartao) achei DOIS chamadores: RVA 0x311cb1 (dentro da propria
+ * FUN_00311c90, o hook antigo - so repassa o resultado adiante) e RVA
+ * 0x3119d2, dentro de uma funcao BEM maior e completamente diferente, que e
+ * quase certamente o caminho usado de verdade numa partida.
+ *
+ * Em vez de escolher qual das duas chamadoras hookar (arriscando errar de
+ * novo se o jogo usar um terceiro caminho futuramente), essa versao hooka
+ * FUN_00311ce0 DIRETAMENTE - a funcao que as duas chamadoras efetivamente
+ * usam. Conferi os dois pontos de chamada no disassembly: ambos, logo
+ * depois do "call FUN_00311ce0", so consultam o valor devolvido em EAX (nao
+ * leem nenhum outro dado da chamada) - ou seja, basta trocar o VALOR DE
+ * RETORNO da funcao pra mudar a decisao, sem precisar achar "cursor"/
+ * ponteiro de objeto nenhum como a v3.x fazia. Isso cobre os dois
+ * chamadores conhecidos automaticamente, e e mais simples e mais robusto.
+ *
+ * O prologo de FUN_00311ce0 e maior (20 bytes ate a proxima instrucao
+ * completa: push rbp; mov rbp,rsp; push r15; push r14; push r13; push r12;
+ * push rbx; sub rsp,0x668) - sem nenhuma instrucao AVX/VEX dessa vez, mas
+ * mantive o mesmo padrao comprovado do jk_craque/v3.07 (sys_sdk_proc_rw,
+ * delay de 3s, assembly fixo) por seguranca.
  */
 #include <stdint.h>
 #include <stddef.h>
@@ -156,27 +193,40 @@
 attr_public const char *g_pluginName = "JK_CHECK-VAR";
 attr_public const char *g_pluginDesc = "JK PATCHS - VAR funcional (revisao de cartoes)";
 attr_public const char *g_pluginAuth = "JK PATCHS";
-attr_public uint32_t g_pluginVersion = 0x00000307;
+attr_public uint32_t g_pluginVersion = 0x00000401;
 
 #define PASTA "/data/jk/super"
 
-/* RVA (offset dentro do eboot, base 0 no Ghidra) da funcao-gancho.
-   E a UNICA chamadora de FUN_00311ce0 (confirmado via XREF no Ghidra). */
-#define RVA_HOOK_ALVO 0x311c90ULL
+/* RVA (offset dentro do eboot, base 0 no Ghidra) de FUN_00311ce0 - a funcao
+   que DE FATO decide o cartao/falta (nao mais FUN_00311c90, que nenhum
+   codigo do eboot chama de verdade - ver nota v4.00 mais acima). Confirmado
+   lendo o eboot_CUSA18676.bin real: os dois chamadores conhecidos (RVA
+   0x311cb1 e 0x3119d2) so consultam o retorno (EAX) dessa funcao. */
+#define RVA_HOOK_ALVO 0x311ce0ULL
 
-/* familias de variante (indice 0,1,2) confirmadas no Ghidra dentro de
-   FUN_00311ce0. Cada familia tem o mesmo indice de variante entre si,
-   entao trocar dentro da mesma posicao mantem a animacao/ator compativeis. */
-static const uint32_t FAMILIA_SEM_CARTAO[] = { 0x20011u, 0x20014u };
-static const uint32_t FAMILIA_AMARELO[]    = { 0x2000Fu, 0x20012u, 0x20015u };
-static const uint32_t FAMILIA_VERMELHO[]   = { 0x20010u, 0x20013u, 0x20016u };
+/* v4.01: valores REAIS, confirmados jogando com o DIAG da v4.00 ligado (nao
+   mais os antigos 0x2000F-0x20016, que eram de uma analise de Ghidra
+   desatualizada e NUNCA bateram com nada em jogo de verdade):
+     0x20001, 0x20006 -> amarelo (confirmado 4x: 1o cartao deu 0x20006, os
+       outros 3 deram 0x20001 - sao so variantes/cameras diferentes, mesma
+       gravidade)
+     0x20004 -> a cena de "segundo amarelo vira vermelho" (expulsao)
+   Ainda NAO vimos nenhum valor de "falta sem cartao nenhum" passar por essa
+   funcao - pelo visto ela so e chamada quando ja vai sair cartao (uma falta
+   comum talvez nem chegue a chamar FUN_00311ce0). Por isso o grupo
+   FAMILIA_SEM_CARTAO foi removido por enquanto; se aparecer um valor novo
+   fora dessas duas familias, e provavelmente isso - me avisa.
+   Como as familias tem tamanhos diferentes agora (2 amarelos pra 1
+   vermelho), a troca passou a sortear um valor aleatorio DENTRO da familia
+   de destino, em vez de preservar o mesmo indice (que so fazia sentido
+   quando todas tinham o mesmo tamanho). */
+static const uint32_t FAMILIA_AMARELO[]    = { 0x20001u, 0x20006u };
+static const uint32_t FAMILIA_VERMELHO[]   = { 0x20004u };
 
-#define N_SEM_CARTAO ((int)(sizeof(FAMILIA_SEM_CARTAO) / sizeof(FAMILIA_SEM_CARTAO[0])))
 #define N_AMARELO    ((int)(sizeof(FAMILIA_AMARELO)    / sizeof(FAMILIA_AMARELO[0])))
 #define N_VERMELHO   ((int)(sizeof(FAMILIA_VERMELHO)   / sizeof(FAMILIA_VERMELHO[0])))
 
-#define N_FORCADAS            3   /* primeiras ocorrencias sempre revisadas, pra dar pra ver o efeito rapido */
-#define CHANCE_CATAR_CARTAO   70  /* sem cartao -> amarelo */
+#define N_FORCADAS            3   /* primeiras ocorrencias elegiveis sempre revisadas, pra dar pra ver o efeito rapido */
 #define CHANCE_AGRAVAR        40  /* amarelo -> vermelho */
 #define CHANCE_ANULAR         35  /* vermelho -> amarelo */
 
@@ -276,25 +326,19 @@ static int indice_em(const uint32_t *lista, int n, uint32_t valor)
     return -1;
 }
 
-/* decide se/como trocar o seletor. devolve 1 se trocou (escreve em *valor) */
+/* decide se/como trocar o seletor. devolve 1 se trocou (escreve em *valor).
+   v4.01: como as familias nao tem mais o mesmo tamanho entre si, a troca
+   sorteia um indice aleatorio DENTRO da familia de destino (nao da mais pra
+   preservar "mesma posicao = mesmo ator/cena" como antes). */
 static int revisar(uint32_t *valor)
 {
     int idx;
     int forcado = (g_revisoes < N_FORCADAS);
 
-    idx = indice_em(FAMILIA_SEM_CARTAO, N_SEM_CARTAO, *valor);
-    if (idx >= 0) {
-        if (forcado || sorteio_percent(CHANCE_CATAR_CARTAO)) {
-            *valor = FAMILIA_AMARELO[idx];
-            return 1;
-        }
-        return 0;
-    }
-
     idx = indice_em(FAMILIA_AMARELO, N_AMARELO, *valor);
     if (idx >= 0) {
         if (forcado || sorteio_percent(CHANCE_AGRAVAR)) {
-            *valor = FAMILIA_VERMELHO[idx];
+            *valor = FAMILIA_VERMELHO[prox_aleatorio() % N_VERMELHO];
             return 1;
         }
         return 0;
@@ -303,7 +347,7 @@ static int revisar(uint32_t *valor)
     idx = indice_em(FAMILIA_VERMELHO, N_VERMELHO, *valor);
     if (idx >= 0) {
         if (forcado || sorteio_percent(CHANCE_ANULAR)) {
-            *valor = FAMILIA_AMARELO[idx];
+            *valor = FAMILIA_AMARELO[prox_aleatorio() % N_AMARELO];
             return 1;
         }
         return 0;
@@ -321,26 +365,22 @@ static int revisar(uint32_t *valor)
 #define LIMITE_LOG_DIAG 25u
 static volatile uint32_t g_diag_logados = 0;
 
-static uint64_t jk_hookalvo_orig(uint64_t fila_obj, uint64_t a, uint64_t b);
+static uint32_t jk_hookalvo_orig(uint64_t a, uint64_t b);
 
-static uint64_t hook_alvo(uint64_t fila_obj, uint64_t a, uint64_t b)
+/* v4.00: hook direto em FUN_00311ce0 - a propria funcao que decide o
+   cartao/falta. O valor original (o "veredito" do jogo) vem pronto no
+   retorno da funcao original (EAX) - so precisamos trocar esse valor antes
+   de devolver pra quem chamou. Nao precisa mais achar cursor/ponteiro de
+   objeto nenhum (isso so fazia sentido quando a gente hookava o
+   CHAMADOR). */
+static uint32_t hook_alvo(uint64_t a, uint64_t b)
 {
-    uint64_t ret = jk_hookalvo_orig(fila_obj, a, b);
+    uint32_t original = jk_hookalvo_orig(a, b);
     uint32_t n = ++g_contador;
 
-    /* checagem de seguranca: isso aqui e um hook em codigo nativo do jogo.
-       se o retorno nao parecer um ponteiro plausivel dentro do modulo do
-       jogo (por qualquer motivo - versao diferente, chamada inesperada,
-       etc.), a gente simplesmente NAO MEXE em nada e devolve o retorno
-       original sem tocar memoria nenhuma. Isso faz o hook virar "invisivel"
-       em vez de arriscar escrever em endereco invalido e derrubar o jogo. */
-    if (ret < g_base || (ret - g_base) > 0x20000000ULL) {
-        if (g_diag_logados < LIMITE_LOG_DIAG) {
-            g_diag_logados++;
-            logf_("#%u DIAG: ret implausivel (ret=0x%llx base=0x%llx)",
-                  n, (unsigned long long)ret, (unsigned long long)g_base);
-        }
-        return ret;
+    if (g_diag_logados < LIMITE_LOG_DIAG) {
+        g_diag_logados++;
+        logf_("#%u DIAG: chamada OK, original=0x%08x", n, original);
     }
 
     /* confere o arquivo de desligar so de vez em quando, nao em toda
@@ -352,46 +392,25 @@ static uint64_t hook_alvo(uint64_t fila_obj, uint64_t a, uint64_t b)
     }
 
     if (!g_var_ligado) {
-        return ret;
-    }
-
-    uint64_t cursor = *(volatile uint64_t *)(ret + 0x10);
-    if (cursor < 4) {
-        if (g_diag_logados < LIMITE_LOG_DIAG) {
-            g_diag_logados++;
-            logf_("#%u DIAG: cursor implausivel (cursor=0x%llx)", n, (unsigned long long)cursor);
-        }
-        return ret; /* cursor implausivel - nao mexe */
-    }
-
-    uint32_t *slot = (uint32_t *)(cursor - 4);
-    uint32_t original = *slot;
-
-    if (g_diag_logados < LIMITE_LOG_DIAG) {
-        g_diag_logados++;
-        logf_("#%u DIAG: chamada OK, original=0x%08x (cursor=0x%llx)",
-              n, original, (unsigned long long)cursor);
+        return original;
     }
 
     /* modo experimental (desligado por padrao - ver comentario la em cima) */
     if (g_sala_var_habilitada && g_tentativas_sala < LIMITE_TENTATIVAS_SALA) {
         int pertence_a_alguma_familia =
-            (indice_em(FAMILIA_SEM_CARTAO, N_SEM_CARTAO, original) >= 0) ||
             (indice_em(FAMILIA_AMARELO, N_AMARELO, original) >= 0) ||
             (indice_em(FAMILIA_VERMELHO, N_VERMELHO, original) >= 0);
 
         if (pertence_a_alguma_familia && sorteio_percent(CHANCE_SALA_VAR)) {
-            *slot = SELETOR_SALA_VAR;
             g_tentativas_sala++;
             logf_("#%u EXPERIMENTO sala do VAR: 0x%08x -> 0x%08x (tentativa %u/%u)",
                   n, original, SELETOR_SALA_VAR, g_tentativas_sala, (unsigned)LIMITE_TENTATIVAS_SALA);
-            return ret; /* nao aplica tambem a revisao normal nessa mesma ocorrencia */
+            return SELETOR_SALA_VAR; /* nao aplica tambem a revisao normal nessa mesma ocorrencia */
         }
     }
 
     uint32_t novo = original;
     if (revisar(&novo)) {
-        *slot = novo;
         uint32_t r = ++g_revisoes;
         /* loga em disco so quando REALMENTE muda algo, e so as primeiras
            vezes - escrever arquivo em toda chamada do hook e a causa mais
@@ -400,9 +419,10 @@ static uint64_t hook_alvo(uint64_t fila_obj, uint64_t a, uint64_t b)
         if (r <= LIMITE_LOG_REVISOES) {
             logf_("#%u VAR: 0x%08x -> 0x%08x (revisao #%u)", n, original, novo, r);
         }
+        return novo;
     }
 
-    return ret;
+    return original;
 }
 
 /* ------------------------------------------------------------------------
@@ -424,9 +444,16 @@ static uint64_t hook_alvo(uint64_t fila_obj, uint64_t a, uint64_t b)
  *   4) confere os bytes atuais contra o esperado ANTES de escrever - se
  *      nao bater (outra versao/patch do jogo), desiste e nao mexe em nada
  *      (igual ao jk_craque). */
-static const uint8_t g_esperado[14] = {
-    0x55, 0x48, 0x89, 0xe5, 0x41, 0x56, 0x53,
-    0xc5, 0xf8, 0x57, 0xc0, 0x48, 0x89, 0xfb
+/* prologo de FUN_00311ce0 (20 bytes, confirmado byte a byte lendo o eboot
+   real): push rbp; mov rbp,rsp; push r15; push r14; push r13; push r12;
+   push rbx; sub rsp,0x668. So a gente SO ESCREVE um jmp de 14 bytes no
+   inicio (ff 25 00000000 + 8 bytes de endereco) - sobra espaco de verdade,
+   os ultimos 6 bytes do array abaixo so servem pra conferir que bate certo
+   com o eboot antes de mexer em qualquer coisa. */
+#define TAM_PROLOGO 20
+static const uint8_t g_esperado[TAM_PROLOGO] = {
+    0x55, 0x48, 0x89, 0xe5, 0x41, 0x57, 0x41, 0x56, 0x41, 0x55,
+    0x41, 0x54, 0x53, 0x48, 0x81, 0xec, 0x68, 0x06, 0x00, 0x00
 };
 static int g_gancho = 0;
 __attribute__((visibility("hidden"))) uint64_t g_hookalvo_volta;
@@ -443,18 +470,18 @@ static void instalar(void)
 {
     uint64_t f = g_base + RVA_HOOK_ALVO;
     const volatile uint8_t *bb = (const volatile uint8_t *)f;
-    for (int i = 0; i < 14; i++) if (bb[i] != g_esperado[i]) {
+    for (int i = 0; i < TAM_PROLOGO; i++) if (bb[i] != g_esperado[i]) {
         logf_("GANCHO recusado: bytes diferentes em 0x%llx (%02x %02x %02x %02x ...) - outra versao do jogo? VAR NAO esta ativo.",
               (unsigned long long)RVA_HOOK_ALVO, bb[0], bb[1], bb[2], bb[3]);
         return;
     }
-    g_hookalvo_volta = f + 14;
+    g_hookalvo_volta = f + TAM_PROLOGO;
     uint8_t salto[14];
     uint64_t alvo = (uint64_t)(void *)hook_alvo;
     salto[0] = 0xff; salto[1] = 0x25; salto[2] = salto[3] = salto[4] = salto[5] = 0;
     memcpy(salto + 6, &alvo, 8);
     if (!gravar_eboot(f, salto, sizeof salto)) {
-        gravar_eboot(f, g_esperado, 14);
+        gravar_eboot(f, g_esperado, TAM_PROLOGO);
         logf_("GANCHO recusado: falha ao gravar (sys_sdk_proc_rw). VAR NAO esta ativo.");
         return;
     }
@@ -496,7 +523,7 @@ int32_t attr_public plugin_load(int32_t argc, const char *argv[])
 int32_t attr_public plugin_unload(int32_t argc, const char *argv[])
 {
     (void)argc; (void)argv;
-    if (g_gancho) { gravar_eboot(g_base + RVA_HOOK_ALVO, g_esperado, 14); g_gancho = 0; }
+    if (g_gancho) { gravar_eboot(g_base + RVA_HOOK_ALVO, g_esperado, TAM_PROLOGO); g_gancho = 0; }
     logf_("Hook removido.");
     return 0;
 }
@@ -504,19 +531,22 @@ int32_t attr_public plugin_unload(int32_t argc, const char *argv[])
 int32_t attr_module_hidden module_start(size_t argc, const void *args) { (void)argc; (void)args; return 0; }
 int32_t attr_module_hidden module_stop(size_t argc, const void *args) { (void)argc; (void)args; return 0; }
 
-/* comeco original da funcao do jogo (14 bytes, ja confirmados byte a byte -
-   ver v3.05) + salto de volta pra eboot+RVA_HOOK_ALVO+14. Igual ao
-   jk_arq_orig do jk_craque: em vez de copiar os bytes originais dinamicamente
-   em tempo de execucao, eles ficam fixos aqui, escritos a mao, compilados
-   junto com o plugin - no overhead de alocar memoria executavel. */
-__attribute__((naked, noinline, used)) static uint64_t jk_hookalvo_orig(uint64_t fila_obj, uint64_t a, uint64_t b)
+/* comeco original de FUN_00311ce0 (20 bytes, confirmados byte a byte lendo
+   o eboot_CUSA18676.bin real - ver nota v4.00) + salto de volta pra
+   eboot+RVA_HOOK_ALVO+20. Igual ao jk_arq_orig do jk_craque: em vez de
+   copiar os bytes originais dinamicamente em tempo de execucao, eles ficam
+   fixos aqui, escritos a mao, compilados junto com o plugin - sem overhead
+   de alocar memoria executavel. */
+__attribute__((naked, noinline, used)) static uint32_t jk_hookalvo_orig(uint64_t a, uint64_t b)
 {
     __asm__ volatile(
-        ".byte 0x55\n"                /* push rbp */
-        ".byte 0x48,0x89,0xe5\n"      /* mov rbp,rsp */
-        ".byte 0x41,0x56\n"           /* push r14 */
-        ".byte 0x53\n"                /* push rbx */
-        ".byte 0xc5,0xf8,0x57,0xc0\n" /* vxorps xmm0,xmm0,xmm0 */
-        ".byte 0x48,0x89,0xfb\n"      /* mov rbx,rdi */
+        ".byte 0x55\n"                               /* push rbp */
+        ".byte 0x48,0x89,0xe5\n"                     /* mov rbp,rsp */
+        ".byte 0x41,0x57\n"                          /* push r15 */
+        ".byte 0x41,0x56\n"                          /* push r14 */
+        ".byte 0x41,0x55\n"                          /* push r13 */
+        ".byte 0x41,0x54\n"                          /* push r12 */
+        ".byte 0x53\n"                                /* push rbx */
+        ".byte 0x48,0x81,0xec,0x68,0x06,0x00,0x00\n" /* sub rsp,0x668 */
         "jmp *g_hookalvo_volta(%rip)\n");
 }
