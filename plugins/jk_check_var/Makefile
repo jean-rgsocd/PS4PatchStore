@@ -1,10 +1,12 @@
-# JK CHECK-VAR - plugin GoldHEN (hook de verificacao, base do VAR). Precisa de OO_PS4_TOOLCHAIN e do SDK compilado em ../goldhen_sdk
+# JK_CHECK_VAR_DIAG - build minimo de diagnostico (sem hook/sem Detour).
+# Gera o MESMO nome de arquivo (jk_check_var.prx) pra nao precisar mexer no plugins.ini -
+# so troca o .prx dentro da pasta de plugins do GoldHEN por esse aqui temporariamente.
 TOOLCHAIN := $(OO_PS4_TOOLCHAIN)
 SDK       := ../goldhen_sdk
 TARGET    := jk_check_var.prx
 CFLAGS    := --target=x86_64-pc-freebsd12-elf -fPIC -funwind-tables -O1 -c -isysroot $(TOOLCHAIN) -isystem $(TOOLCHAIN)/include -I$(SDK)/include
 LDFLAGS   := -m elf_x86_64 -pie --export-dynamic --script $(TOOLCHAIN)/link.x -e _init --eh-frame-hdr -L$(TOOLCHAIN)/lib -L$(SDK)
-LIBS      := -lGoldHEN_Hook -lkernel -lSceLibcInternal -lSceSysmodule
+LIBS      := -lkernel -lSceLibcInternal -lSceSysmodule
 
 all: $(TARGET)
 
