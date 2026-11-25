@@ -88,7 +88,7 @@
 attr_public const char *g_pluginName = "JK_CHECK-VAR";
 attr_public const char *g_pluginDesc = "JK PATCHS - VAR funcional (revisao de cartoes)";
 attr_public const char *g_pluginAuth = "JK PATCHS";
-attr_public uint32_t g_pluginVersion = 0x00000302;
+attr_public uint32_t g_pluginVersion = 0x00000303;
 
 #define PASTA "/data/jk/super"
 
@@ -354,9 +354,16 @@ static void *trabalho(void *arg)
           pi.titleid, (unsigned long long)g_base, (unsigned long long)(g_base + RVA_HOOK_ALVO));
 
     Detour_Construct(&g_detour, DetourMode_x64);
-    Detour_DetourFunction(&g_detour, g_base + RVA_HOOK_ALVO, (void *)hook_alvo);
+    void *stub = Detour_DetourFunction(&g_detour, g_base + RVA_HOOK_ALVO, (void *)hook_alvo);
 
-    logf_("Hook instalado. VAR ativo (crie desligar_var.txt pra desativar).");
+    if (!stub) {
+        logf_("FALHOU ao instalar o hook (Detour_DetourFunction devolveu NULL em 0x%llx). "
+              "VAR NAO esta ativo - o jogo roda normal, sem nenhuma modificacao.",
+              (unsigned long long)(g_base + RVA_HOOK_ALVO));
+        return 0;
+    }
+
+    logf_("Hook instalado (stub=%p). VAR ativo (crie desligar_var.txt pra desativar).", stub);
     return 0;
 }
 
