@@ -113,6 +113,18 @@
  * mesmo contei e confirmei acima (ver hook_manual_14() mais abaixo) -
  * usando as mesmas funcoes internas (Detour_WriteJump64) que o SDK ja usa,
  * so pulando a parte que calcula o tamanho errado.
+ *
+ * v3.06: testou a v3.05 e o CONSOLE INTEIRO desligou (nao so o jogo) - a
+ * primeira vez que isso aconteceu numa versao que de fato chega a ESCREVER
+ * em codigo do jogo (todas as anteriores so falhavam e voltavam sem mexer
+ * em nada). So que depois de religar, o check_var.log NAO TINHA NENHUMA
+ * linha nova - ou seja, nao da pra saber se foi esse plugin ou coincidencia
+ * (o usuario confirmou que desligamentos assim ja aconteceram nesse PS4
+ * mesmo sem esse ou qualquer outro plugin rodando). Pra nao ficar no escuro
+ * de novo, essa versao so ACRESCENTA um log de checkpoint em CADA passo
+ * arriscado de hook_manual_14 (mmap, escrita de salto, mprotect, memcpy,
+ * e o passo final que de fato sobrescreve a funcao original) - se desligar
+ * de novo, da pra saber exatamente em qual desses passos parou.
  */
 #include <stdint.h>
 #include <stddef.h>
