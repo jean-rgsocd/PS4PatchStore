@@ -72,6 +72,25 @@
  * descobrir se o hook esta sendo chamado, e se sim, com que valor de
  * seletor - sem mudar nenhum comportamento de jogo. Depois de confirmado o
  * que esta acontecendo, essa parte de diagnostico sai.
+ *
+ * v3.03: testou a v3.02 (2 vermelhos numa partida) e ZERO linhas de DIAG
+ * apareceram - nem "chamada OK" nem "ret/cursor implausivel". Ou seja,
+ * hook_alvo nunca executou nenhuma vez. Isso aponta pra ANTES do hook em
+ * si: o Detour_DetourFunction() pode estar falhando silenciosamente (ele
+ * devolve NULL se a funcao-alvo nao existir ou se nao conseguir caber o
+ * salto de 14 bytes), e o codigo antigo nunca checava esse retorno - so
+ * logava "Hook instalado" sempre, mesmo se tivesse falhado. Essa versao
+ * loga explicitamente se Detour_DetourFunction falhou.
+ *
+ * v3.04: confirmado - Detour_DetourFunction devolveu NULL em 0x711c90, ou
+ * seja, FALHOU ao instalar o hook (log: "FALHOU ao instalar o hook"). Isso
+ * quase certamente significa que a RVA 0x311c90 nao aponta mais pro comeco
+ * de uma funcao de verdade nessa build/patch atual do jogo (pode ter mudado
+ * de versao do eboot desde que isso foi mapeado no Ghidra). Essa versao so
+ * ACRESCENTA um log que mostra os 16 bytes crus que estao de fato nesse
+ * endereco agora (antes de tentar o hook, so leitura) - pra comparar com o
+ * que o Ghidra mostra pra FUN_00311c90 no eboot ATUAL (o mesmo que esta
+ * instalado no PS4 agora) e confirmar se bateu ou se mudou.
  */
 #include <stdint.h>
 #include <stddef.h>
@@ -88,7 +107,7 @@
 attr_public const char *g_pluginName = "JK_CHECK-VAR";
 attr_public const char *g_pluginDesc = "JK PATCHS - VAR funcional (revisao de cartoes)";
 attr_public const char *g_pluginAuth = "JK PATCHS";
-attr_public uint32_t g_pluginVersion = 0x00000303;
+attr_public uint32_t g_pluginVersion = 0x00000304;
 
 #define PASTA "/data/jk/super"
 
@@ -352,6 +371,18 @@ static void *trabalho(void *arg)
 
     logf_("JK_CHECK-VAR (VAR funcional) titulo=%s base=0x%llx hook_em=0x%llx",
           pi.titleid, (unsigned long long)g_base, (unsigned long long)(g_base + RVA_HOOK_ALVO));
+
+    /* DIAG: mostra os bytes crus que estao de verdade no endereco-alvo,
+       ANTES de tentar instalar o hook (so leitura, nao mexe em nada). Serve
+       pra confirmar se 0x311c90 ainda e o comeco de uma funcao de verdade
+       nessa build/patch do jogo, ou se mudou (RVA desatualizada). */
+    {
+        const uint8_t *p = (const uint8_t *)(g_base + RVA_HOOK_ALVO);
+        logf_("DIAG bytes em 0x%llx: %02x %02x %02x %02x %02x %02x %02x %02x %02x %02x %02x %02x %02x %02x %02x %02x",
+              (unsigned long long)(g_base + RVA_HOOK_ALVO),
+              p[0],p[1],p[2],p[3],p[4],p[5],p[6],p[7],
+              p[8],p[9],p[10],p[11],p[12],p[13],p[14],p[15]);
+    }
 
     Detour_Construct(&g_detour, DetourMode_x64);
     void *stub = Detour_DetourFunction(&g_detour, g_base + RVA_HOOK_ALVO, (void *)hook_alvo);
