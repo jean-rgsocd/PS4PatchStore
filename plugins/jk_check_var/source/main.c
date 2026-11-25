@@ -228,6 +228,32 @@
  *    achar o numero certo (se for so numero) ou confirmar que falta mesmo
  *    o tal "perfil" de memoria (se NENHUM candidato abrir a sala de
  *    verdade).
+ *
+ * v4.07: MUDANCA DE ESTRATEGIA (o usuario me corrigiu, e com razao). A sala
+ * do VAR NAO EXISTE de fabrica no PES2021 do PS4 - ela nunca vai aparecer so
+ * trocando um numero/seletor, porque nao tem CENA nenhuma cadastrada pra
+ * ela (confirmado olhando as strings do eboot: so existem 10 categorias de
+ * cutscene em cpk_dat/common/demo/fixdemo/: ent, foul, goal, pk, change,
+ * timeup, end, result, mode, menu - nenhuma "var"). Igual o jk_craque: a
+ * cena de "Craque do Jogo" tambem nao existe pronta - ela e MONTADA
+ * trazendo assets do PC pra dentro do jogo. O jk_craque nao inventa gatilho
+ * nenhum: ele hooka a funcao UNIVERSAL que o jogo usa pra pedir QUALQUER
+ * arquivo (eboot+0x1a522e0, a mesma que grava "[%s] file read error
+ * (criFsLoader_GetStatus...)") e troca o NOME DO CAMINHO pedido, no lugar,
+ * pra apontar pra uma pasta diferente dentro do MESMO cpk (JK_CRAQUE.cpk).
+ *
+ * Essa versao faz a MESMA coisa, mas so pra DESCOBRIR os nomes reais: hooka
+ * o mesmo ponto (0x1a522e0) e, toda vez que o caminho pedido contem
+ * "fixdemo" (ou seja, e uma cutscene do sistema fixdemo - cartao, falta,
+ * substituicao, etc.), grava o caminho completo no log. Isso vai mostrar
+ * EXATAMENTE que arquivo(s) o jogo pede quando a cena de cartao/substituicao
+ * toca - informacao que falta pra montar o JK_VAR.cpk do jeito certo (mesmo
+ * esquema de pastas/nomes) e trocar o caminho igual o craque faz. IMPORTANTE:
+ * se o jk_craque estiver rodando AO MESMO TEMPO, ele ja hookou esse mesmo
+ * endereco primeiro - nesse caso esse hook aqui vai se recusar sozinho (log
+ * "GANCHO ARQUIVO recusado: bytes diferentes") sem travar nada, so nao vai
+ * capturar nada; nesse caso tira o jk_craque.prx da pasta de plugins so
+ * durante esse teste.
  */
 #include <stdint.h>
 #include <stddef.h>
@@ -243,7 +269,7 @@
 attr_public const char *g_pluginName = "JK_CHECK-VAR";
 attr_public const char *g_pluginDesc = "JK PATCHS - VAR funcional (revisao de cartoes)";
 attr_public const char *g_pluginAuth = "JK PATCHS";
-attr_public uint32_t g_pluginVersion = 0x00000405;
+attr_public uint32_t g_pluginVersion = 0x00000407;
 
 #define PASTA "/data/jk/super"
 
@@ -364,11 +390,27 @@ static const uint32_t FAMILIA_PENALTI[] = {
  * VAR (uma tela cheia especial, fora do fluxo normal de falta) do que
  * qualquer um dos 0x5xxxx que a gente chutou antes - e nao e um valor
  * "fora da faixa"/invalido, e um caminho de codigo EXPLICITO e tratado.
- * Por isso 0x80001 vira candidato PRIORITARIO, testado antes dos 0x5xxxx
- * que sobraram. */
+ * Por isso 0x80001 virou candidato PRIORITARIO, testado antes dos 0x5xxxx
+ * que sobraram.
+ *
+ * v4.06: TESTADO - 0x00080001 TRAVA o jogo (mesma categoria de perigo do
+ * 0x00050000 na v4.04): prende numa cutscene de camera aerea externa do
+ * estadio (a mesma do inicio da partida) enquanto o relogio continua
+ * passando normal - precisa fechar o jogo na mao, nao gerou log (condizente
+ * com um travamento duro logo depois do hook devolver o valor). Olhando o
+ * decompile de FUN_02daa440 (a funcao que "inicializa" o objeto criado pelo
+ * 0x80001 dentro de FUN_02dbee10) ficou claro o motivo: ela chama 4 metodos
+ * virtuais do objeto (vtable+0xd0, +0x20, +0x78, +0x68) e SEMPRE retorna
+ * sucesso (`return 1;`) não importa o que aconteca - entao o jogo nunca
+ * detecta falha e nunca cancela/desfaz a cena. O objeto criado tem uma classe
+ * (vtable 0x4dbef18) diferente e mais "pesada" que a dos cartoes normais
+ * (vtable 0x4dbeb50, usada no caminho padrao de FUN_02db6e60/02db6d70) - tudo
+ * indica que 0x80001 e o ID de sequencia de uma cutscene GENERICA do motor
+ * (bem provavelmente a propria cena de abertura/flyover do estadio, que foi
+ * exatamente o que travou na tela), nao um "gatilho da sala do VAR" como a
+ * gente esperava. Removido definitivamente da lista - nao tenta mais. */
 static const uint32_t CANDIDATOS_SALA_VAR[] = {
-    0x80001u,
-    0x50002u, 0x50003u, 0x50004u, 0x50005u,
+    0x50005u,
     0x50007u, 0x50008u, 0x50009u, 0x5000Au, 0x5000Bu,
 };
 #define N_CANDIDATOS_SALA_VAR ((int)(sizeof(CANDIDATOS_SALA_VAR) / sizeof(CANDIDATOS_SALA_VAR[0])))
@@ -597,6 +639,86 @@ static int gravar_eboot(uint64_t dest, const void *src, uint64_t n)
     return memcmp((const void *)dest, src, n) == 0;
 }
 
+/* ------------------------------------------------------------------------
+ * v4.07: segundo hook, SEPARADO do hook_alvo acima - no ponto que o
+ * jk_craque ja usa (confirmado funcionando em producao nesse mesmo jogo/
+ * versao), so pra DESCOBRIR nomes reais de arquivo de cutscene. Ver nota
+ * grande v4.07 no topo do arquivo pra entender o motivo da mudanca de
+ * estrategia. */
+#define RVA_ARQUIVO 0x1a522e0ULL
+#define TAM_PROLOGO_ARQ 17
+static const uint8_t g_esperado_arq[TAM_PROLOGO_ARQ] = {
+    0x55, 0x48, 0x89, 0xe5, 0x41, 0x57, 0x41, 0x56, 0x41, 0x55,
+    0x41, 0x54, 0x53, 0x48, 0x83, 0xe4, 0xe0
+};
+static int g_gancho_arq = 0;
+__attribute__((visibility("hidden"))) uint64_t g_arq_volta;
+static uint64_t jk_arq_orig(uint64_t a, uint64_t b, uint64_t c, uint64_t d, uint64_t e, uint64_t f);
+
+#define LIMITE_LOG_ARQUIVOS 120u
+static volatile uint32_t g_arquivos_logados = 0;
+
+/* busca de substring simples (igual a logica do tem_op04 do jk_craque, so
+   generica pra qualquer palavra-alvo) */
+static int contem(const char *p, uint64_t n, const char *alvo)
+{
+    uint64_t m = 0;
+    while (alvo[m]) m++;
+    if (m == 0 || n < m) return 0;
+    for (uint64_t i = 0; i + m <= n; i++) {
+        uint64_t j = 0;
+        while (j < m && p[i + j] == alvo[j]) j++;
+        if (j == m) return 1;
+    }
+    return 0;
+}
+
+/* mesmo layout de "pedido de arquivo" que o jk_craque ja usa e comprovou:
+   capacidade em +0x38, tamanho em +0x30, ponteiro/buffer inline em +0x20. */
+static uint64_t arquivo_hook(uint64_t a, uint64_t b, uint64_t c, uint64_t d, uint64_t e, uint64_t f)
+{
+    uint8_t *req = (uint8_t *)a;
+    if (req && g_arquivos_logados < LIMITE_LOG_ARQUIVOS) {
+        uint64_t cap = *(volatile uint64_t *)(req + 0x38);
+        uint64_t len = *(volatile uint64_t *)(req + 0x30);
+        char *p = cap >= 0x10 ? *(char **)(req + 0x20) : (char *)(req + 0x20);
+        if (p && len > 6 && len < 4096 && contem(p, len, "fixdemo")) {
+            char buf[200];
+            uint64_t m = len < 180 ? len : 180;
+            memcpy(buf, p, m);
+            buf[m] = 0;
+            g_arquivos_logados++;
+            logf_("ARQ#%u fixdemo: %s", g_arquivos_logados, buf);
+        }
+    }
+    return jk_arq_orig(a, b, c, d, e, f);
+}
+
+static void instalar_arquivo(void)
+{
+    uint64_t f = g_base + RVA_ARQUIVO;
+    const volatile uint8_t *bb = (const volatile uint8_t *)f;
+    for (int i = 0; i < TAM_PROLOGO_ARQ; i++) if (bb[i] != g_esperado_arq[i]) {
+        logf_("GANCHO ARQUIVO recusado: bytes diferentes em 0x%llx (outro plugin - tipo jk_craque - ja hookou aqui, ou outra versao do jogo). Captura de nomes de arquivo NAO esta ativa, mas o resto do plugin continua normal.",
+              (unsigned long long)RVA_ARQUIVO);
+        return;
+    }
+    g_arq_volta = f + TAM_PROLOGO_ARQ;
+    uint8_t salto[17];
+    uint64_t alvo = (uint64_t)(void *)arquivo_hook;
+    salto[0] = 0xff; salto[1] = 0x25; salto[2] = salto[3] = salto[4] = salto[5] = 0;
+    memcpy(salto + 6, &alvo, 8);
+    salto[14] = salto[15] = salto[16] = 0x90;
+    if (!gravar_eboot(f, salto, sizeof salto)) {
+        gravar_eboot(f, g_esperado_arq, TAM_PROLOGO_ARQ);
+        logf_("GANCHO ARQUIVO recusado: falha ao gravar (sys_sdk_proc_rw).");
+        return;
+    }
+    g_gancho_arq = 1;
+    logf_("GANCHO ARQUIVO ok eboot+0x%llx. Capturando nomes de arquivo 'fixdemo' (ate %u).",
+          (unsigned long long)RVA_ARQUIVO, LIMITE_LOG_ARQUIVOS);
+}
+
 static void instalar(void)
 {
     uint64_t f = g_base + RVA_HOOK_ALVO;
@@ -638,6 +760,7 @@ static void *trabalho(void *arg)
 
     sceKernelUsleep(3000000); /* v3.07: deixa o jogo subir antes de gravar no executavel (igual ao jk_craque) */
     instalar();
+    instalar_arquivo();
     return 0;
 }
 
@@ -655,6 +778,7 @@ int32_t attr_public plugin_unload(int32_t argc, const char *argv[])
 {
     (void)argc; (void)argv;
     if (g_gancho) { gravar_eboot(g_base + RVA_HOOK_ALVO, g_esperado, TAM_PROLOGO); g_gancho = 0; }
+    if (g_gancho_arq) { gravar_eboot(g_base + RVA_ARQUIVO, g_esperado_arq, TAM_PROLOGO_ARQ); g_gancho_arq = 0; }
     logf_("Hook removido.");
     return 0;
 }
@@ -680,4 +804,20 @@ __attribute__((naked, noinline, used)) static uint32_t jk_hookalvo_orig(uint64_t
         ".byte 0x53\n"                                /* push rbx */
         ".byte 0x48,0x81,0xec,0x68,0x06,0x00,0x00\n" /* sub rsp,0x668 */
         "jmp *g_hookalvo_volta(%rip)\n");
+}
+
+/* comeco original da funcao universal de pedido de arquivo (17 bytes, mesmo
+   prologo que o jk_craque ja usa e confirmou) + salto de volta. */
+__attribute__((naked, noinline, used)) static uint64_t jk_arq_orig(uint64_t a, uint64_t b, uint64_t c, uint64_t d, uint64_t e, uint64_t f)
+{
+    __asm__ volatile(
+        "push %rbp\n"
+        "mov %rsp,%rbp\n"
+        "push %r15\n"
+        "push %r14\n"
+        "push %r13\n"
+        "push %r12\n"
+        "push %rbx\n"
+        "and $0xffffffffffffffe0,%rsp\n"
+        "jmp *g_arq_volta(%rip)\n");
 }
