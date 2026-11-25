@@ -269,7 +269,7 @@
 attr_public const char *g_pluginName = "JK_CHECK-VAR";
 attr_public const char *g_pluginDesc = "JK PATCHS - VAR funcional (revisao de cartoes)";
 attr_public const char *g_pluginAuth = "JK PATCHS";
-attr_public uint32_t g_pluginVersion = 0x00000407;
+attr_public uint32_t g_pluginVersion = 0x00000408;
 
 #define PASTA "/data/jk/super"
 
@@ -655,7 +655,7 @@ static int g_gancho_arq = 0;
 __attribute__((visibility("hidden"))) uint64_t g_arq_volta;
 static uint64_t jk_arq_orig(uint64_t a, uint64_t b, uint64_t c, uint64_t d, uint64_t e, uint64_t f);
 
-#define LIMITE_LOG_ARQUIVOS 120u
+#define LIMITE_LOG_ARQUIVOS 300u
 static volatile uint32_t g_arquivos_logados = 0;
 
 /* busca de substring simples (igual a logica do tem_op04 do jk_craque, so
@@ -673,6 +673,17 @@ static int contem(const char *p, uint64_t n, const char *alvo)
     return 0;
 }
 
+/* v4.08: a cena de GOL sozinha gasta a cota toda (100+ arquivos so dela) -
+   confirmado em log real. Filtra so nas categorias que interessam pro VAR
+   (falta/cartao, substituicao, penalti), ignora goal/ent/timeup/end/result/
+   mode/menu por enquanto. */
+static int categoria_interessante(const char *p, uint64_t n)
+{
+    return contem(p, n, "/foul/cut_data/") ||
+           contem(p, n, "/change/cut_data/") ||
+           contem(p, n, "/pk/cut_data/");
+}
+
 /* mesmo layout de "pedido de arquivo" que o jk_craque ja usa e comprovou:
    capacidade em +0x38, tamanho em +0x30, ponteiro/buffer inline em +0x20. */
 static uint64_t arquivo_hook(uint64_t a, uint64_t b, uint64_t c, uint64_t d, uint64_t e, uint64_t f)
@@ -682,13 +693,13 @@ static uint64_t arquivo_hook(uint64_t a, uint64_t b, uint64_t c, uint64_t d, uin
         uint64_t cap = *(volatile uint64_t *)(req + 0x38);
         uint64_t len = *(volatile uint64_t *)(req + 0x30);
         char *p = cap >= 0x10 ? *(char **)(req + 0x20) : (char *)(req + 0x20);
-        if (p && len > 6 && len < 4096 && contem(p, len, "fixdemo")) {
+        if (p && len > 6 && len < 4096 && categoria_interessante(p, len)) {
             char buf[200];
             uint64_t m = len < 180 ? len : 180;
             memcpy(buf, p, m);
             buf[m] = 0;
             g_arquivos_logados++;
-            logf_("ARQ#%u fixdemo: %s", g_arquivos_logados, buf);
+            logf_("ARQ#%u: %s", g_arquivos_logados, buf);
         }
     }
     return jk_arq_orig(a, b, c, d, e, f);
