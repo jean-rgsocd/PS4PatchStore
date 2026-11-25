@@ -42,8 +42,9 @@ int jk_qmp(void *addr, void **start, void **end, int *prot) __asm__("sceKernelQu
 #define FASE_ALVO  0
 #define KEY_ALVO   ((uint16_t)(TIPO_ALVO | (FASE_ALVO << 10)))
 
-/* times de teste (IDs ja usados em outras competicoes, so pra ver o encaixe visual) */
-static const uint32_t TIMES_TESTE[] = { 101, 107, 172, 108 };
+/* times de teste: seu clube (20447356) + 3 times emprestados de outra competicao,
+   pra ver se aparece jogo do SEU time no calendario */
+static const uint32_t TIMES_TESTE[] = { 20447356, 107, 172, 108 };
 #define N_TIMES_TESTE ((uint32_t)(sizeof(TIMES_TESTE) / sizeof(TIMES_TESTE[0])))
 
 static uint64_t g_base;
