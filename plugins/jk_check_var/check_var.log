@@ -1,0 +1,8 @@
+trabalho(): comecou, pastas OK
+JK_CHECK-VAR (VAR funcional) titulo=CUSA18676 base=0x400000 hook_em=0x711ce0
+GANCHO ok eboot+0x311ce0. VAR ativo (crie desligar_var.txt pra desativar).
+#1 DIAG: chamada OK, original=0x00020001
+#1 VAR: 0x00020001 -> 0x00020004 (revisao #1)
+#2 DIAG: chamada OK, original=0x00020001
+#2 VAR: 0x00020001 -> 0x00020004 (revisao #2)
+#3 DIAG: chamada OK, original=0x00020005
