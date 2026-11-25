@@ -269,7 +269,7 @@
 attr_public const char *g_pluginName = "JK_CHECK-VAR";
 attr_public const char *g_pluginDesc = "JK PATCHS - VAR funcional (revisao de cartoes)";
 attr_public const char *g_pluginAuth = "JK PATCHS";
-attr_public uint32_t g_pluginVersion = 0x00000408;
+attr_public uint32_t g_pluginVersion = 0x00000409;
 
 #define PASTA "/data/jk/super"
 
@@ -676,12 +676,27 @@ static int contem(const char *p, uint64_t n, const char *alvo)
 /* v4.08: a cena de GOL sozinha gasta a cota toda (100+ arquivos so dela) -
    confirmado em log real. Filtra so nas categorias que interessam pro VAR
    (falta/cartao, substituicao, penalti), ignora goal/ent/timeup/end/result/
-   mode/menu por enquanto. */
+   mode/menu por enquanto.
+ * v4.09: abri o JK_VAR.cpk de voces com a cpklib do projeto - os arquivos do
+   VAR (change_var_01_referee.fdc, _02_cam.fdc, _02_referee.fdc, _02_room.fdc,
+   _03_referee.fdc) estao TODOS dentro de common/demo/fixdemo/change/cut_data/
+   - a MESMA pasta que ja estamos vigiando! O cenario extra (var_room01.fpk/
+   fpkd, light_config.fpk/fpkd) mora em common/demo/fixdemoobj/passage/
+   var_room01/#Win/ - uma arvore "fixdemoobj" separada (objetos/cenario), que
+   ainda nao vigiavamos. O nome "change_var_02_room.fdc" bate com o formato
+   de "change_stand_env_st000.fdc" que ja vimos em log de verdade - forte
+   pista de que existe um arquivo "_env"/"_room" que e o GATILHO pra puxar
+   esse cenario extra. Essa versao tambem vigia fixdemoobj/passage e qualquer
+   nome com "_env" ou "_room", pra confirmar se change_stand_env_st000 puxa
+   mesmo algo de passage junto. */
 static int categoria_interessante(const char *p, uint64_t n)
 {
     return contem(p, n, "/foul/cut_data/") ||
            contem(p, n, "/change/cut_data/") ||
-           contem(p, n, "/pk/cut_data/");
+           contem(p, n, "/pk/cut_data/") ||
+           contem(p, n, "/fixdemoobj/passage/") ||
+           contem(p, n, "_env") ||
+           contem(p, n, "_room");
 }
 
 /* mesmo layout de "pedido de arquivo" que o jk_craque ja usa e comprovou:
