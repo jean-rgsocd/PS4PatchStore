@@ -231,7 +231,37 @@ export async function emitirAutorizacao(env, campos) {
   return payload + "|" + sig;
 }
 export async function lerLicfg(env) {
-  return cache("licfg", async () => Object.assign({ dias: 7, tolerancia: 0, consoles_padrao: 1 }, await kvJson(env, "licfg", {})));
+  return cache("licfg", async () => Object.assign(
+    { dias: 7, tolerancia: 0, consoles_padrao: 1, tofu: false, tofu_ate: "", tofu_produtos: [] },
+    await kvJson(env, "licfg", {})
+  ));
+}
+
+// ---------- TOFU (trust-on-first-use): licenca geral na janela, depois individual ----------
+// So se aplica quando a conta JA esta ativa e o motivo da negativa e puramente de plano
+// (produto nao esta na lista do plano, ou o produto restringe planos). Nunca reabre
+// licenca revogada/suspensa, conta suspensa/vencida ou produto bloqueado/versao incompativel.
+const MOTIVOS_TOFU = ["produto fora do plano", "produto nao liberado para o plano"];
+function tofuJanelaAberta(cfg) {
+  return !!(cfg.tofu && cfg.tofu_ate && Date.parse(cfg.tofu_ate) > Date.now());
+}
+function tofuElegivel(cfg, prod) {
+  const lista = cfg.tofu_produtos || [];
+  return lista.includes("*") || lista.includes(prod.id);
+}
+async function concederTofu(env, { user, prod, cid, con, request, t }) {
+  const doc = await kvJson(env, "lic:" + user, { v: 1, itens: [] });
+  const itens = doc.itens || [];
+  const ip = (request && request.headers.get("CF-Connecting-IP")) || "";
+  const det = "console " + cid.slice(0, 8) + " modelo=" + ((con && con.modelo) || "-") + " fw=" + ((con && con.fw) || "-") + " ip=" + ip;
+  itens.push({
+    id: "tofu" + Date.now().toString(36) + rnd(), produto: prod.id, tipo: "permanente", status: "ativa",
+    inicio: new Date(t * 1000).toISOString(), fim: "", consoles: 1, nota: ("TOFU 1o acesso: " + det).slice(0, 200)
+  });
+  await env.DB.put("lic:" + user, JSON.stringify({ v: 1, itens }));
+  limpaCache("lic:" + user);
+  await auditarAdmin(env, "sistema", "licenca TOFU concedida", user, prod.id + " - " + det);
+  return { ok: true, ate: 0, via: "tofu" };
 }
 
 // ---------- consoles ----------
@@ -299,10 +329,15 @@ export async function licSync(request, env, user, rec, estado, deps) {
   const linhas = ["OK"];
   const indice = [];                                       // modulos do Core liberados -> /data/jk/lic/indice.txt
   const pedidos = Object.keys(mods).length ? Object.keys(mods) : Object.keys(porModulo);
+  const tofuAberto = tofuJanelaAberta(cfg);
   for (const m of pedidos) {
     const prod = porModulo[m];
     if (!prod) { linhas.push("NEG\t" + m + "\tmodulo sem licenciamento"); continue; }
-    const a = autorizar({ rec, user, estado, prod, planos, licencas, versao: mods[m] });
+    let a = autorizar({ rec, user, estado, prod, planos, licencas, versao: mods[m] });
+    if (!a.ok && tofuAberto && MOTIVOS_TOFU.includes(a.motivo) && tofuElegivel(cfg, prod)) {
+      a = await concederTofu(env, { user, prod, cid, con, request, t });
+      if (a.ok) licencas.push({ produto: prod.id, tipo: "permanente", status: "ativa" }); // demais modulos deste sync ja enxergam
+    }
     if (!a.ok) { linhas.push("NEG\t" + m + "\t" + a.motivo); await eventoSeguranca(env, "licenca-negada", user, request, m + ": " + a.motivo); continue; }
     let exp = t + cfg.dias * DIA;
     if (a.ate) exp = Math.min(exp, a.ate + cfg.tolerancia * DIA);
@@ -603,8 +638,16 @@ export async function centralApi(request, env, url, p, m, quem, deps) {
   if (p === "c/config" && m === "PUT") {
     if (quem.papel !== "super") return nega();
     const f = (await lerJson(request)) || {};
+    let tofuAte = "";
+    if (f.tofu_ate) {
+      const d = new Date(f.tofu_ate);
+      if (isNaN(d.getTime())) return json(400, { erro: "data do TOFU invalida" });
+      tofuAte = d.toISOString();
+    }
     const c = { dias: Math.max(1, Math.min(60, Math.floor(Number(f.dias) || 7))), tolerancia: Math.max(0, Math.min(30, Math.floor(Number(f.tolerancia) || 0))),
-                consoles_padrao: Math.max(1, Math.min(10, Math.floor(Number(f.consoles_padrao) || 1))) };
+                consoles_padrao: Math.max(1, Math.min(10, Math.floor(Number(f.consoles_padrao) || 1))),
+                tofu: !!f.tofu, tofu_ate: tofuAte,
+                tofu_produtos: Array.isArray(f.tofu_produtos) ? f.tofu_produtos.map(String).slice(0, 200) : [] };
     await env.DB.put("licfg", JSON.stringify(c));
     limpaCache("licfg");
     await aud("política de licenças", "", JSON.stringify(c));

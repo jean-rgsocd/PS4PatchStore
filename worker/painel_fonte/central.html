@@ -244,7 +244,7 @@ var PE=null;
 function editProd(id,manter){var p=manter?manter:(id&&PR[id]?JSON.parse(JSON.stringify(PR[id])):{id:"",tipo:"PRX",nome:"",arquivo:"",versao:"",versao_min:"",sha256:"",tamanho:0,status:"rascunho",deps:[],planos:["*"],licenciado:false,modulo:"",desc:""});PE=p;var ed=pode("produtos"),dis=ed?"":" disabled";
   var usam=Object.values(PR).filter(function(q){return (q.deps||[]).some(function(d){return d.id===p.id})});
   abrir(id?"Produto "+p.nome:"Novo produto","<div class='grid2'><div><label class='f'>Id (minúsculas, números, - _ .)</label><input id='pi' value='"+esc(p.id)+"'"+(id?" disabled":dis)+">"+
-   "<label class='f'>Nome comercial</label><input id='pn' value='"+esc(p.nome)+"'"+dis+"><label class='f'>Tipo</label><select id='pt' onchange='PE.tipo=this.value;editProd(PE.id||null,PE)'"+dis+">"+["PRX","CORE","CPK","PKG"].map(function(t){return "<option"+(p.tipo===t?" selected":"")+">"+t+(t==="CORE"?" (PRX sem fonte, cifrada)":"")+"</option>"}).join("")+"</select>"+
+   "<label class='f'>Nome comercial</label><input id='pn' value='"+esc(p.nome)+"'"+dis+"><label class='f'>Tipo</label><select id='pt' onchange='PE.tipo=this.value;editProd(PE.id||null,PE)'"+dis+">"+["PRX","CORE","CPK","PKG"].map(function(t){return "<option value='"+t+"'"+(p.tipo===t?" selected":"")+">"+t+(t==="CORE"?" (PRX sem fonte, cifrada)":"")+"</option>"}).join("")+"</select>"+
    "<label class='f'>Arquivo no R2 (chave)</label><input id='pa' value='"+esc(p.arquivo)+"'"+dis+"><label class='f'>Descrição</label><textarea id='pd' rows='2'"+dis+">"+esc(p.desc)+"</textarea></div>"+
    "<div><div class='grid2'><div><label class='f'>Versão</label><input id='pv' value='"+esc(p.versao)+"'"+dis+"></div><div><label class='f'>Versão mínima aceita</label><input id='pvm' value='"+esc(p.versao_min)+"'"+dis+"></div></div>"+
    "<label class='f'>Status</label><select id='ps'"+dis+">"+["ativo","rascunho","bloqueado","revogado"].map(function(t){return "<option"+(p.status===t?" selected":"")+">"+t+"</option>"}).join("")+"</select>"+
@@ -311,8 +311,22 @@ async function vCfg(){var c=await api("c/config"),s=EU.papel==="super";
   "<label>Tolerância depois do vencimento do plano (dias) <input id='cd2' type='number' value='"+c.licfg.tolerancia+"' style='width:80px'"+(s?"":" disabled")+"></label>"+
   "<label>Consoles por conta (padrão) <input id='cd3' type='number' value='"+c.licfg.consoles_padrao+"' style='width:80px'"+(s?"":" disabled")+"></label></div>"+
   "<p class='mut'>A autorização é renovada toda vez que o app abre. Sem internet, a PRX continua funcionando até a validade acabar; depois disso, só volta quando o app renovar. Revogações valem na próxima renovação (ou quando a validade acaba).</p>"+
-  (s?"<p><button class='p' onclick='salvarCfg()'>Salvar</button> <span id='cm2'></span></p>":"<p class='mut'>Só o superadministrador altera a política.</p>")+"</div>"}
-async function salvarCfg(){try{await api("c/config","PUT",{dias:+$("cd1").value,tolerancia:+$("cd2").value,consoles_padrao:+$("cd3").value});$("cm2").innerHTML="<span class='ok'>Salvo.</span>"}catch(e){$("cm2").innerHTML="<span class='bad'>"+esc(e.message)+"</span>"}}
+  (s?"<p><button class='p' onclick='salvarCfg()'>Salvar</button> <span id='cm2'></span></p>":"<p class='mut'>Só o superadministrador altera a política.</p>")+"</div>"+
+  "<div class='card'><h3>TOFU (licença geral no 1º acesso)</h3>"+
+  "<p class='mut'>Enquanto ligado e dentro da janela, um cliente com conta ativa cujo plano ainda não lista um produto novo recebe, no 1º acesso, uma licença permanente amarrada à conta + console dele — sem precisar cadastrar licença individual. Nunca reabre licença revogada/suspensa nem conta suspensa/vencida. Depois que a janela fecha, clientes novos voltam a precisar de licença individual (quem já foi amarrado continua funcionando).</p>"+
+  "<div class='row'><label><input id='cTofu' type='checkbox'"+(c.licfg.tofu?" checked":"")+(s?"":" disabled")+"> Ligado</label>"+
+  "<label>Janela até <input id='cTofuAte' type='datetime-local' value='"+(c.licfg.tofu_ate?c.licfg.tofu_ate.slice(0,16):"")+"'"+(s?"":" disabled")+"></label></div>"+
+  "<div class='row'><label style='flex:1'>Produtos cobertos (ids separados por vírgula, ou <span class='mono'>*</span> para todos os licenciados) <input id='cTofuProd' style='width:100%' value='"+esc((c.licfg.tofu_produtos||[]).join(", "))+"'"+(s?"":" disabled")+"></label></div>"+
+  (s?"<p><button class='p' onclick='salvarCfg()'>Salvar TOFU</button> <span id='cm2b'></span></p>":"")+"</div>"}
+// um unico PUT em c/config: ele substitui o objeto inteiro, entao sempre manda os 6 campos juntos
+// (politica + TOFU), nao importa qual dos dois botoes foi clicado - assim um nunca apaga o outro.
+async function salvarCfg(){try{
+  var ate=$("cTofuAte").value;
+  await api("c/config","PUT",{dias:+$("cd1").value,tolerancia:+$("cd2").value,consoles_padrao:+$("cd3").value,
+    tofu:$("cTofu").checked,tofu_ate:ate?new Date(ate).toISOString():"",
+    tofu_produtos:$("cTofuProd").value.split(",").map(function(s){return s.trim()}).filter(Boolean)});
+  $("cm2").innerHTML="<span class='ok'>Salvo.</span>";$("cm2b").innerHTML="<span class='ok'>Salvo.</span>"}
+  catch(e){$("cm2").innerHTML="<span class='bad'>"+esc(e.message)+"</span>";$("cm2b").innerHTML="<span class='bad'>"+esc(e.message)+"</span>"}}
 
 (function(){if(TK)iniciar().catch(function(){mostrarLogin("")});else mostrarLogin("")})();
 </script></body></html>
