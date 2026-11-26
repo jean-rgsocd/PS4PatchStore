@@ -58,12 +58,18 @@ static void logf_(const char *fmt, ...)
 static unsigned char *ler_tudo(const char *p, size_t max, size_t *n_out)
 {
     int fd = sceKernelOpen(p, 0, 0);
-    if (fd < 0) return NULL;
+    if (fd < 0) { logf_("diag ler_tudo: open falhou p=%s fd=%d", p, fd); return NULL; }
     OrbisKernelStat st;
-    if (sceKernelFstat(fd, &st) != 0 || st.st_size <= 0 || (size_t)st.st_size > max) { sceKernelClose(fd); return NULL; }
+    memset(&st, 0, sizeof st);
+    int fr = sceKernelFstat(fd, &st);
+    if (fr != 0 || st.st_size <= 0 || (size_t)st.st_size > max) {
+        logf_("diag ler_tudo: fstat p=%s fr=%d size=%lld max=%zu", p, fr, (long long)st.st_size, max);
+        sceKernelClose(fd);
+        return NULL;
+    }
     size_t n = (size_t)st.st_size;
     unsigned char *b = (unsigned char *)malloc(n + 1);
-    if (!b) { sceKernelClose(fd); return NULL; }
+    if (!b) { logf_("diag ler_tudo: malloc falhou p=%s n=%zu", p, n); sceKernelClose(fd); return NULL; }
     size_t lido = 0;
     while (lido < n) {
         int r = (int)sceKernelRead(fd, b + lido, n - lido);
@@ -71,7 +77,7 @@ static unsigned char *ler_tudo(const char *p, size_t max, size_t *n_out)
         lido += (size_t)r;
     }
     sceKernelClose(fd);
-    if (lido != n) { free(b); return NULL; }
+    if (lido != n) { logf_("diag ler_tudo: read incompleto p=%s lido=%zu n=%zu", p, lido, n); free(b); return NULL; }
     b[n] = 0;
     *n_out = n;
     return b;
