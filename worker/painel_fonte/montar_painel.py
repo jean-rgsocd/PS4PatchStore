@@ -1,7 +1,8 @@
 #!/usr/bin/env python3
 """Regenera a tela do painel dentro do worker.js a partir de painel_fonte/painel.html.
 Uso (dentro da pasta worker/):  python3 painel_fonte/montar_painel.py
-Edite SEMPRE o painel.html e rode este script: nao edite o texto gigante PANEL_HTML no worker.js."""
+Edite SEMPRE o painel.html e rode este script: nao edite o texto gigante PANEL_HTML no worker.js.
+Tambem embute a central (painel_fonte/central.html) em CENTRAL_HTML (rota /jkpainel17/central)."""
 import json, re, pathlib
 aqui = pathlib.Path(__file__).resolve().parent
 w = aqui.parent / "worker.js"
@@ -13,5 +14,10 @@ src = w.read_text(encoding="utf-8")
 novo, n = re.subn(r'const PANEL_HTML = ".*";\n', lambda m: "const PANEL_HTML = " + json.dumps(html) + ";\n", src, count=1)
 if n != 1:
     raise SystemExit("ERRO: nao achei a linha const PANEL_HTML no worker.js")
+# central de licencas/clientes (painel_fonte/central.html -> const CENTRAL_HTML)
+central = (aqui / "central.html").read_text(encoding="utf-8").replace("%%LOGO%%", "/jkpainel17/logo.png")
+novo, n = re.subn(r'const CENTRAL_HTML = ".*";\n', lambda m: "const CENTRAL_HTML = " + json.dumps(central) + ";\n", novo, count=1)
+if n != 1:
+    raise SystemExit("ERRO: nao achei a linha const CENTRAL_HTML no worker.js")
 w.write_text(novo, encoding="utf-8")
 print("worker.js atualizado (%d bytes)" % len(novo.encode("utf-8")))
