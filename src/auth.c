@@ -114,7 +114,7 @@ static const char *dev_id(void) {
     x ^= x << 13; x ^= x >> 7; x ^= x << 17;
     snprintf(dev + i * 2, 3, "%02x", (unsigned)((x >> 24) & 0xFF));
   }
-  fd = open(DEV_FILE, O_WRONLY | O_CREAT | O_TRUNC, 0600);
+  fd = open(DEV_FILE, O_WRONLY | O_CREAT | O_TRUNC, 0666);
   if (fd >= 0) { write(fd, dev, 32); close(fd); }
   install_log(mac_ok ? "ID do console: gerado a partir do MAC da rede." : "ID do console: gerado um ID novo (aleatorio).");
   return dev;
