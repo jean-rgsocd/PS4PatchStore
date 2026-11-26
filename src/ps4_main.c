@@ -663,6 +663,13 @@ static void *install_thread(void *arg) {
         install_log(lmb);
         continue;
       }
+      if (strncmp(j->btn.name, "JK Placares", 11) &&   /* v1.56: o PLACAR e a base. Narrador/ML/Estadio nunca trocam o DpFileList.bin / plugins.ini que ja esta no console */
+          !strncmp(path, "/data/GoldHEN/", 14) && (!strcmp(filename, "DpFileList.bin") || !strcmp(filename, "plugins.ini")) &&
+          file_size_of(path) > 0) {
+        char lmk[700]; snprintf(lmk, sizeof(lmk), "Item %d/%d ja registrado pelo placar, mantido (so acrescenta o que falta): %s", u + 1, nit, path);
+        install_log(lmk);
+        continue;
+      }
       {                                                /* "?once" na URL = so baixa se o arquivo ainda nao existir (nao troca o que o usuario ja escolheu) */
         char *q = strstr(it_url[u], "?once");
         if (q) {
@@ -712,6 +719,20 @@ static void *install_thread(void *arg) {
       else if (nit == 2) snprintf(err, sizeof(err), "Download concluído: %s + 1 arquivo", lastname);
       else snprintf(err, sizeof(err), "Download concluído: %s", lastname);
       rc = 1; /* sucesso de download (diferente de pedido de instalacao) */
+      for (int u = 0; u < nit; u++) {                  /* v1.56: prx desta instalacao no console sem linha no plugins.ini -> acrescenta (so no jogo do botao) */
+        const char *c = strstr(it_dir[u], "/AFR/CUSA");
+        if (!c) continue;
+        char cusa[16]; snprintf(cusa, sizeof(cusa), "%.9s", c + 5);
+        for (int v = 0; v < nit; v++) {
+          if (strcmp(it_dir[v], "/data/GoldHEN/plugins")) continue;
+          const char *fn = strrchr(it_url[v], '/'); fn = fn ? fn + 1 : it_url[v];
+          char nm[120]; size_t k = 0;
+          for (; fn[k] && fn[k] != '?' && k + 1 < sizeof(nm); k++) nm[k] = fn[k];
+          nm[k] = 0;
+          if (k > 4 && !strcmp(nm + k - 4, ".prx")) jkx_ini_garantir(nm, cusa, install_log);
+        }
+        break;
+      }
       jk_placares_fixup();                             /* v1.37: placares JK (Demisan) continuam ligados depois de qualquer download */
     }
   } else if (!strcmp(action, "video") || !strcmp(action, "image")) {

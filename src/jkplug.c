@@ -283,6 +283,15 @@ static int ini_set(const char *sec, const char *prx, int v, JkxLog log) {
   return ok;
 }
 
+/* v1.56: garante a linha "prx=true" na secao do jogo quando o prx esta no console e a linha nao existe
+ * (so acrescenta; nunca religa o que o usuario deixou =false) */
+void jkx_ini_garantir(const char *prx, const char *cusa, JkxLog log) {
+  if (!prx || !prx[0] || !cusa || !cusa[0]) return;
+  pthread_mutex_lock(&jx_mu);
+  if (ini_get(cusa, prx) == -1) ini_set(cusa, prx, 1, log);
+  pthread_mutex_unlock(&jx_mu);
+}
+
 /* ------------------------------------------------------------------ DpFileList */
 static int ends_cpk(const char *s) {
   size_t L = strlen(s);
