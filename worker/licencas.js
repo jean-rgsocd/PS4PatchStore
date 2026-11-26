@@ -551,7 +551,7 @@ export async function centralApi(request, env, url, p, m, quem, deps) {
     if (!rec) return json(404, { erro: "cliente não existe" });
     const itens = await lerProdutos(env), planos = await lerPlanos(env, deps.PLANOS), lic = await lerLicencas(env, u);
     const estado = deps.accountState(rec);
-    const out = Object.values(itens).filter((x) => x.tipo === "PRX" && x.licenciado).map((prod) =>
+    const out = Object.values(itens).filter((x) => (x.tipo === "PRX" || x.tipo === "CORE") && x.licenciado).map((prod) =>
       Object.assign({ produto: prod.id, nome: prod.nome, modulo: prod.modulo }, autorizar({ rec, user: u, estado, prod, planos, licencas: lic })));
     return json(200, { user: u, estado, itens: out });
   }
