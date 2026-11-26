@@ -95,14 +95,18 @@ static unsigned char *ler_tudo(const char *p, size_t max, size_t *n_out)
     *n_out = n;
     return b;
 }
-static int gravar(const char *p, const void *d, size_t n)
+static int gravar_modo(const char *p, const void *d, size_t n, int modo)
 {
-    int fd = sceKernelOpen(p, 0x0001 | 0x0200 | 0x0400, 0600);
+    int fd = sceKernelOpen(p, 0x0001 | 0x0200 | 0x0400, modo);
     if (fd < 0) return -1;
     size_t w = 0;
     while (w < n) { int r = (int)sceKernelWrite(fd, (const char *)d + w, n - w); if (r <= 0) break; w += (size_t)r; }
     sceKernelClose(fd);
     return w == n ? 0 : -1;
+}
+static int gravar(const char *p, const void *d, size_t n)
+{
+    return gravar_modo(p, d, n, 0600);
 }
 static int nome_ok(const char *s)
 {
@@ -151,7 +155,9 @@ static int carregar_modulo(const char *mod, const char *titulo, const char *dev,
     /* 4) temporario -> carrega -> apaga */
     uint64_t sal = (uint64_t)sceKernelGetProcessTime() ^ (uint64_t)(uintptr_t)prx;
     snprintf(p, sizeof p, PASTA_CORE "/.t%llx.prx", (unsigned long long)sal);
-    if (gravar(p, prx, inf.tamanho)) { logf_("%s: falha ao preparar", mod); memset(prx, 0, inf.tamanho); free(prx); return -1; }
+    /* precisa do bit de execucao (0700): sceKernelLoadStartModule recusa (rc=0x8002000d,
+     * equivalente a "permissao negada") um arquivo gravado so com leitura/escrita (0600). */
+    if (gravar_modo(p, prx, inf.tamanho, 0700)) { logf_("%s: falha ao preparar", mod); memset(prx, 0, inf.tamanho); free(prx); return -1; }
     memset(prx, 0, inf.tamanho);
     free(prx);
     int32_t h = (int32_t)sceKernelLoadStartModule(p, 0, 0, 0, 0, 0);
