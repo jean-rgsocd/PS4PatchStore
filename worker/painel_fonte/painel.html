@@ -121,6 +121,7 @@ textarea.raw{width:100%;height:calc(100vh - 220px);font:12px/1.4 Consolas,monosp
  <div id="v_r2" class="page" hidden></div>
  <div id="v_prev" class="page" hidden></div>
   <div id="v_users" class="page" hidden></div>
+  <div id="v_dl" class="page" hidden></div>
 </div>
 
 <div id="modal" class="modal" hidden><div class="m"><div class="mh"><b id="mt"></b><button class="s" onclick="fechar()">Fechar</button></div><div class="mb" id="mb"></div></div></div>
@@ -191,19 +192,57 @@ function sair(){if(DIRTY&&!confirm("Há alterações não salvas no catálogo. S
 window.addEventListener("beforeunload",function(e){if(DIRTY){e.preventDefault();e.returnValue=""}});
 
 /* ---------- abas ---------- */
-var TABS=[["users","Usuários"],["cat","Catálogo"],["r2","Arquivos (R2)"],["prev","Prévia do app"]];
+var TABS=[["users","Usuários"],["cat","Catálogo"],["r2","Arquivos (R2)"],["prev","Prévia do app"],["dl","Downloads"]];
 var TABV="users";
 function abas(){
   $("tabs").innerHTML=TABS.map(function(t){return "<div class='tab"+(t[0]===TABV?" on":"")+"' onclick='irAba(\""+t[0]+"\")'>"+t[1]+"</div>"}).join("");
   TABS.forEach(function(t){$("v_"+t[0]).hidden=t[0]!==TABV});
 }
-function irAba(a){TABV=a;abas();if(a==="cat")desenharCat();if(a==="r2")r2Abrir(R2P);if(a==="prev")desenharPrev();if(a==="users"){var v=$("v_users");if(!v.firstChild)v.innerHTML="<iframe src='/jkpainel17/usuarios'></iframe>"}}
+function irAba(a){TABV=a;abas();if(a==="cat")desenharCat();if(a==="r2")r2Abrir(R2P);if(a==="prev")desenharPrev();if(a==="dl")desenharDl();if(a==="users"){var v=$("v_users");if(!v.firstChild)v.innerHTML="<iframe src='/jkpainel17/usuarios'></iframe>"}}
 async function iniciar(){
   $("login").hidden=true;$("app").hidden=false;abas();
   try{await carregarCat();await carregarAll()}catch(e){}
   irAba(TABV);
 }
 function marcar(d){DIRTY=d;$("dirtyTag").hidden=!d}
+
+/* ---------- D1: downloads protegidos ---------- */
+var DLC=null,DLITENS=[],DLCUR="";
+async function desenharDl(){
+  var v=$("v_dl");v.innerHTML="<p class='mut'>Carregando...</p>";
+  try{DLC=await api("links");var j=await api("downloads");DLITENS=j.items;DLCUR=j.cursor}catch(e){v.innerHTML="<p class='bad'>"+esc(e.message)+"</p>";return}
+  var m=DLC.modo;
+  function op(val,tit,txt){return "<label style='display:block;margin:6px 0'><input type='radio' name='dlm' value='"+val+"'"+(m===val?" checked":"")+"> <b>"+tit+"</b> <span class='mut'>"+txt+"</span></label>"}
+  v.innerHTML="<div class='box' style='max-width:900px'><h3 style='margin-top:0'>Downloads protegidos</h3>"+
+   "<p class='mut'>Com a proteção ligada, o app recebe links do servidor (temporários, presos à conta) no lugar dos links públicos do R2. "+
+   "Imagens, vídeos e o próprio app (JKPATCHS.pkg e jkui.prx) continuam como estão.</p>"+
+   op("off","Desligado","(links públicos, igual a antes)")+
+   op("lista","Só para estes usuários","(use para testar na sua conta)")+
+   "<textarea id='dlu' rows='2' style='width:100%' placeholder='um usuário por linha'>"+esc((DLC.usuarios||[]).join("\n"))+"</textarea>"+
+   op("todos","Todos os clientes ativos","")+
+   "<p>Registro de downloads: <select id='dla'><option value='kv'"+(DLC.auditoria!=="log"?" selected":"")+">salvar aqui no painel (KV)</option>"+
+   "<option value='log'"+(DLC.auditoria==="log"?" selected":"")+">só no log do Cloudflare (economiza gravações)</option></select></p>"+
+   "<button class='p' onclick='salvarDl()'>Salvar</button> <span id='dlmsg'></span></div>"+
+   "<div class='box' style='margin-top:14px'><h3 style='margin-top:0'>Últimos downloads <button class='s' onclick='desenharDl()'>Atualizar</button></h3>"+
+   "<input id='dlf' placeholder='filtrar por usuário ou arquivo' oninput='tabelaDl()' style='width:100%;margin-bottom:8px'><div id='dlt'></div>"+
+   "<p><button class='s' id='dlmais' onclick='maisDl()'"+(DLCUR?"":" hidden")+">Carregar mais</button></p></div>";
+  tabelaDl();
+}
+function tabelaDl(){
+  var f=($("dlf").value||"").toLowerCase();
+  var it=DLITENS.filter(function(x){return !f||String(x.user).toLowerCase().indexOf(f)>=0||String(x.arquivo).toLowerCase().indexOf(f)>=0});
+  $("dlt").innerHTML=it.length?"<table><tr><th>Quando</th><th>Usuário</th><th>Arquivo</th><th>Tamanho</th><th>IP</th><th>País</th></tr>"+
+   it.map(function(x){return "<tr><td>"+fd(x.t)+"</td><td>"+esc(x.user)+"</td><td>"+esc(x.arquivo)+"</td><td>"+fs(x.tamanho)+"</td><td>"+esc(x.ip)+"</td><td>"+esc(x.pais)+"</td></tr>"}).join("")+"</table>"
+   :"<p class='mut'>Nenhum download registrado ainda.</p>";
+}
+async function maisDl(){try{var j=await api("downloads?cursor="+encodeURIComponent(DLCUR));DLITENS=DLITENS.concat(j.items);DLCUR=j.cursor;$("dlmais").hidden=!DLCUR;tabelaDl()}catch(e){alert(e.message)}}
+async function salvarDl(){
+  var r=document.querySelector("input[name=dlm]:checked");var modo=r?r.value:"off";
+  var us=$("dlu").value.split(/[\s,;]+/).map(function(s){return s.trim().toLowerCase()}).filter(Boolean);
+  if(modo==="lista"&&!us.length){alert("Coloque pelo menos um usuário na lista.");return}
+  if(modo==="todos"&&!confirm("Ligar para TODOS os clientes ativos? Teste antes no modo lista com a sua conta."))return;
+  try{DLC=await api("links","PUT",{modo:modo,usuarios:us,auditoria:$("dla").value});$("dlmsg").innerHTML="<span class='ok'>Salvo. Vale para o próximo catálogo que o app baixar.</span>"}catch(e){$("dlmsg").innerHTML="<span class='bad'>"+esc(e.message)+"</span>"}
+}
 
 /* ---------- modal ---------- */
 function abrir(t,h){$("mt").textContent=t;$("mb").innerHTML=h;$("modal").hidden=false}
