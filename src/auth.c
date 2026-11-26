@@ -12,6 +12,7 @@
 #include <pthread.h>
 #include <time.h>
 #include <stdbool.h>              /* Http.h usa bool sem incluir */
+#include <sys/stat.h>             /* mkdir (licencas em /data/jk/lic) */
 
 #include <orbis/Http.h>
 #include <orbis/Ssl.h>
@@ -364,6 +365,62 @@ static int cache_use(const char *user) {
   return 1;
 }
 
+/* ------------------------------------------------------------------ licencas das PRX (fase H) */
+/* POST /lic/sync dev=<id do console>. Resposta: "OK" + linhas "LIC\t<modulo>\t<autorizacao>" ou "NEG\t<modulo>\t<motivo>".
+ * LIC: grava /data/jk/lic/<modulo>.lic (a PRX confere a assinatura sozinha, offline).
+ * NEG: apaga o arquivo (a PRX deixa de ativar). Sem rede/servidor sem licencas: nao mexe em nada
+ * (a PRX segue valendo ate a validade da autorizacao que ja tem). */
+static int lic_nome_ok(const char *s, size_t n) {
+  if (!n || n > 40) return 0;
+  for (size_t i = 0; i < n; i++) {
+    char c = s[i];
+    if (!((c >= 'a' && c <= 'z') || (c >= '0' && c <= '9') || c == '_' || c == '-' || c == '.')) return 0;
+  }
+  return s[0] != '.';
+}
+static void lic_sync(const char *token) {
+  char body[96], err[200] = "";
+  char *resp = NULL;
+  int st = 0;
+  snprintf(body, sizeof(body), "dev=%s", dev_id());
+  if (http_do(1, "/lic/sync", body, token, &st, &resp, err, sizeof(err)) != 0) { install_log("Licencas: sem conexao, mantidas as atuais."); return; }
+  if (st != 200 || !resp || strncmp(resp, "OK", 2)) {
+    install_log(st == 503 ? "Licencas: servidor ainda sem licenciamento." : "Licencas: resposta inesperada, mantidas as atuais.");
+    free(resp);
+    return;
+  }
+  mkdir("/data/jk", 0777);
+  mkdir("/data/jk/lic", 0777);
+  int ok = 0, neg = 0;
+  for (char *l = resp; l && *l;) {
+    char *nl = strchr(l, '\n');
+    if (nl) *nl = 0;
+    char *t1 = strchr(l, '\t'), *t2 = t1 ? strchr(t1 + 1, '\t') : NULL;
+    if (t1 && t2 && (!strncmp(l, "LIC\t", 4) || !strncmp(l, "NEG\t", 4)) && lic_nome_ok(t1 + 1, (size_t)(t2 - t1 - 1))) {
+      char path[96];
+      snprintf(path, sizeof(path), "/data/jk/lic/%.*s.lic", (int)(t2 - t1 - 1), t1 + 1);
+      if (l[0] == 'L') {
+        size_t n = strlen(t2 + 1);
+        if (n > 40 && n < 480 && !strchr(t2 + 1, '/')) {
+          int f = open(path, O_WRONLY | O_CREAT | O_TRUNC, 0666);
+          if (f >= 0) { write(f, t2 + 1, n); write(f, "\n", 1); close(f); ok++; }
+        }
+      } else {
+        unlink(path);
+        neg++;
+        char m[160];
+        snprintf(m, sizeof(m), "Licenca %.*s: %.80s", (int)(t2 - t1 - 1), t1 + 1, t2 + 1);
+        install_log(m);
+      }
+    }
+    l = nl ? nl + 1 : NULL;
+  }
+  char m[96];
+  snprintf(m, sizeof(m), "Licencas: %d liberada(s), %d negada(s).", ok, neg);
+  install_log(m);
+  free(resp);
+}
+
 static int fetch_catalog(const char *user, const char *token, int silent_login_needed, int preview) {
   char err[200] = "";
   char *resp = NULL;
@@ -418,6 +475,7 @@ static int fetch_catalog(const char *user, const char *token, int silent_login_n
         free(r3);
       }
     }
+    lic_sync(token);                                   /* autorizacoes assinadas das PRX (/data/jk/lic) */
   }
   post_event2(AUTH_EV_CATALOG, NULL, user, resp, plan, now);
   g_registered = 0;

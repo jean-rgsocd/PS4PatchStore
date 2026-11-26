@@ -213,7 +213,8 @@ async function contaAtiva(env, uh, accountState) {
   if (c && Date.now() - c.em < CACHE_MS) return c;
   const user = await env.DB.get("uh:" + uh);
   const rec = user ? await env.DB.get("user:" + user, "json") : null;
-  const r = { ok: !!rec && accountState(rec) === "ativo", user: user || "", em: Date.now() };
+  const estado = rec ? accountState(rec) : "";
+  const r = { ok: estado === "ativo", user: user || "", rec, estado, em: Date.now() };
   contaMemo.set(uh, r);
   return r;
 }
@@ -226,7 +227,8 @@ async function auditar(env, cfg, ev) {
 }
 
 // GET/HEAD /f/<token>/<nome>
-export async function servirArquivo(request, env, url, accountState, ctx) {
+// checar(chaveR2, user, rec, estado) -> null (pode) ou motivo: regras de produto/dependencia da central de licencas
+export async function servirArquivo(request, env, url, accountState, ctx, checar) {
   const m = request.method;
   if (m !== "GET" && m !== "HEAD") return erro(405, "metodo nao permitido");
   const resto = url.pathname.slice(3);
@@ -251,6 +253,10 @@ export async function servirArquivo(request, env, url, accountState, ctx) {
   if (primeiro) {                                            // conta conferida no inicio de cada download
     const c = await contaAtiva(env, uh, accountState);
     if (!c.ok) return erro(403, "plano inativo: renove para baixar");
+    if (checar) {
+      const motivo = await checar(chaveR2, c.user, c.rec, c.estado);
+      if (motivo) return erro(403, "download negado: " + motivo);
+    }
   }
 
   if (m === "HEAD") {

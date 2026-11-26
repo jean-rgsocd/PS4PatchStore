@@ -17,10 +17,15 @@
 
 static pthread_mutex_t log_mutex = PTHREAD_MUTEX_INITIALIZER;
 
+/* Fase G: tudo que vai para o log do cliente passa pelo mascaramento central (src/log_mask.h):
+   sem links, servidor, bucket, chaves do R2, tokens, IPs ou ids. Testado em tools/teste_log_mask.c. */
+#include "log_mask.h"
 void install_log(const char *m) {
-  pthread_mutex_lock(&log_mutex);                  /* evita linhas misturadas entre threads */
+  static char limpo[2048];
+  pthread_mutex_lock(&log_mutex);                  /* evita linhas misturadas entre threads (e protege "limpo") */
+  log_mask(m ? m : "", limpo, sizeof(limpo));
   int f = open(LOG, O_WRONLY | O_CREAT | O_APPEND, 0666);
-  if (f >= 0) { write(f, m, strlen(m)); write(f, "\n", 1); close(f); }
+  if (f >= 0) { write(f, limpo, strlen(limpo)); write(f, "\n", 1); close(f); }
   pthread_mutex_unlock(&log_mutex);
 }
 
