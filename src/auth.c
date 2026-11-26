@@ -76,8 +76,14 @@ static void logrc(const char *what, int rc) {            /* "o que" falhou + cod
 }
 
 /* ------------------------------------------------------------------ ID do console */
-/* O servidor prende a conta (e o teste gratis de 1 hora) a este ID: um ID aleatorio criado na 1a vez e guardado em /data.
- * (O OpenPSID nao esta nas bibliotecas do toolchain: o build recusa o simbolo.) */
+/* O servidor prende a conta (e o teste gratis de 1 hora) a este ID, guardado em /data na 1a vez.
+ * (O OpenPSID nao esta nas bibliotecas do toolchain: o build recusa o simbolo; confirmado tambem
+ * em teste real no console via plugin GoldHEN - dlsym nao acha o simbolo nesse contexto.)
+ * v1.49: pra quem ja tem o arquivo salvo, nada muda (continua valendo o ID antigo, aleatorio) -
+ * isso preserva todo cliente que ja usa a loja hoje. So pra instalacao NOVA (sem arquivo ainda),
+ * o ID agora sai do MAC real da placa de rede (sceNetGetMacAddress, testado e estavel no console
+ * de teste em duas aberturas do jogo), em vez de um numero aleatorio copiavel pra outro console.
+ * Se por algum motivo o MAC nao puder ser lido, cai no aleatorio de sempre, sem travar nada. */
 #define DEV_FILE "/data/jkpatchs_dev.txt"
 
 static const char *dev_id(void) {
@@ -92,14 +98,25 @@ static const char *dev_id(void) {
     close(fd);
     if (n >= 32) { memcpy(dev, buf, 32); dev[32] = 0; install_log("ID do console: usando o ID salvo."); return dev; }
   }
-  uint64_t x = (uint64_t)(uintptr_t)&x ^ ((uint64_t)time(NULL) << 20) ^ ((uint64_t)clock() << 7) ^ 0x9E3779B97F4A7C15ULL;
+  OrbisNetEtherAddr mac;
+  memset(&mac, 0, sizeof(mac));
+  int mac_ok = (sceNetGetMacAddress(&mac, 0) == 0);
+  if (mac_ok) { int allz = 1; for (int i = 0; i < 6; i++) if (mac.data[i]) allz = 0; if (allz) mac_ok = 0; }
+  uint64_t x;
+  if (mac_ok) {
+    uint64_t m = 0;
+    for (int i = 0; i < 6; i++) m = (m << 8) | mac.data[i];
+    x = m ^ 0x9E3779B97F4A7C15ULL;
+  } else {
+    x = (uint64_t)(uintptr_t)&x ^ ((uint64_t)time(NULL) << 20) ^ ((uint64_t)clock() << 7) ^ 0x9E3779B97F4A7C15ULL;
+  }
   for (int i = 0; i < 16; i++) {
     x ^= x << 13; x ^= x >> 7; x ^= x << 17;
     snprintf(dev + i * 2, 3, "%02x", (unsigned)((x >> 24) & 0xFF));
   }
   fd = open(DEV_FILE, O_WRONLY | O_CREAT | O_TRUNC, 0600);
   if (fd >= 0) { write(fd, dev, 32); close(fd); }
-  install_log("ID do console: gerado um ID novo.");
+  install_log(mac_ok ? "ID do console: gerado a partir do MAC da rede." : "ID do console: gerado um ID novo (aleatorio).");
   return dev;
 }
 
@@ -366,10 +383,15 @@ static int cache_use(const char *user) {
 }
 
 /* ------------------------------------------------------------------ licencas das PRX (fase H) */
-/* POST /lic/sync dev=<id do console>. Resposta: "OK" + linhas "LIC\t<modulo>\t<autorizacao>" ou "NEG\t<modulo>\t<motivo>".
+/* POST /lic/sync dev=<id do console>. Resposta: "OK" + linhas "LIC\t<modulo>\t<autorizacao>" ou "NEG\t<modulo>\t<motivo>",
+ * e (JK Core, v1.48) "KEY\t<modulo>\t<chave hex>" + "IDX\t<lista separada por virgula>".
  * LIC: grava /data/jk/lic/<modulo>.lic (a PRX confere a assinatura sozinha, offline).
  * NEG: apaga o arquivo (a PRX deixa de ativar). Sem rede/servidor sem licencas: nao mexe em nada
- * (a PRX segue valendo ate a validade da autorizacao que ja tem). */
+ * (a PRX segue valendo ate a validade da autorizacao que ja tem).
+ * KEY: grava /data/jk/lic/<modulo>.key (chave de conteudo hex do modulo do Core).
+ * IDX: grava /data/jk/lic/indice.txt (um modulo por linha) - e o que o jk_core.prx le pra saber
+ * quais .jkm carregar. Sem essas linhas (servidor sem produto CORE nenhum), nada muda: o Core so
+ * acusa "nenhum modulo liberado" e nao carrega nada, como ja seria sem esse indice. */
 static int lic_nome_ok(const char *s, size_t n) {
   if (!n || n > 40) return 0;
   for (size_t i = 0; i < n; i++) {
@@ -391,7 +413,8 @@ static void lic_sync(const char *token) {
   }
   mkdir("/data/jk", 0777);
   mkdir("/data/jk/lic", 0777);
-  int ok = 0, neg = 0;
+  int ok = 0, neg = 0, core_ok = 0;
+  int tem_idx = 0;                                          /* v1.48: true se a resposta trouxe pelo menos uma linha IDX */
   for (char *l = resp; l && *l;) {
     char *nl = strchr(l, '\n');
     if (nl) *nl = 0;
@@ -412,11 +435,39 @@ static void lic_sync(const char *token) {
         snprintf(m, sizeof(m), "Licenca %.*s: %.80s", (int)(t2 - t1 - 1), t1 + 1, t2 + 1);
         install_log(m);
       }
+    } else if (t1 && t2 && !strncmp(l, "KEY\t", 4) && lic_nome_ok(t1 + 1, (size_t)(t2 - t1 - 1))) {
+      /* v1.48: "KEY\t<modulo>\t<chave hex 64>" -> /data/jk/lic/<modulo>.key (chave de conteudo do JK Core) */
+      size_t n = strlen(t2 + 1);
+      if (n == 64) {
+        int hex_ok = 1;
+        for (size_t i = 0; i < n; i++) { char c = t2[1 + i]; if (!((c >= '0' && c <= '9') || (c >= 'a' && c <= 'f'))) hex_ok = 0; }
+        if (hex_ok) {
+          char path[96];
+          snprintf(path, sizeof(path), "/data/jk/lic/%.*s.key", (int)(t2 - t1 - 1), t1 + 1);
+          int f = open(path, O_WRONLY | O_CREAT | O_TRUNC, 0666);
+          if (f >= 0) { write(f, t2 + 1, n); close(f); core_ok++; }
+        }
+      }
+    } else if (!strncmp(l, "IDX\t", 4)) {
+      /* v1.48: "IDX\t<modulo1,modulo2,...>" -> /data/jk/lic/indice.txt (um modulo por linha; o jk_core.prx le isso) */
+      tem_idx = 1;
+      char buf[4096]; size_t o = 0;
+      const char *p = l + 4;
+      while (*p && o + 42 < sizeof(buf)) {
+        const char *virg = strchr(p, ',');
+        size_t ln = virg ? (size_t)(virg - p) : strlen(p);
+        if (ln && lic_nome_ok(p, ln)) { memcpy(buf + o, p, ln); o += ln; buf[o++] = '\n'; }
+        if (!virg) break;
+        p = virg + 1;
+      }
+      int f = open("/data/jk/lic/indice.txt", O_WRONLY | O_CREAT | O_TRUNC, 0666);
+      if (f >= 0) { if (o) write(f, buf, o); close(f); }
     }
     l = nl ? nl + 1 : NULL;
   }
-  char m[96];
-  snprintf(m, sizeof(m), "Licencas: %d liberada(s), %d negada(s).", ok, neg);
+  if (!tem_idx) unlink("/data/jk/lic/indice.txt");          /* servidor sem produto CORE nenhum: nao deixa indice velho */
+  char m[128];
+  snprintf(m, sizeof(m), "Licencas: %d liberada(s), %d negada(s), %d chave(s) do Core.", ok, neg, core_ok);
   install_log(m);
   free(resp);
 }
