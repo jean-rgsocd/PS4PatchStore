@@ -869,9 +869,11 @@ typedef struct { const char *key; const char *mega[2]; const char *brasfoot[2]; 
 static const CoreMap CORE_MAP[] = {
   { "craque",          { "craque", NULL },                       { "craque", NULL },                       { "craque", NULL } },
   { "var",             { "var", NULL },                          { "var", NULL },                          { "var", NULL } },
-  { "sula",            { "sula_grupos", NULL },                  { "sula_grupos", NULL },                  { "sula_grupos_demisan", "supercopas_demisan" } },
-  { "comemoracoes",    { "comemorar", "pcc_v305" },               { "comemorar", "pcc_v305" },               { "comemorar", "pcc_v305" } },
-  { "hinos",           { "hinos_gol", NULL },                    { "hinos_gol", NULL },                    { "hinos_gol", NULL } },
+  /* "sula", "hinos" e "pcc_v305" (dentro de "comemoracoes") ficaram de fora do Core: tem gancho de
+   * memoria (proc_rw) e PRX com import de libSceSysmodule/libSceLibcInternal; o sceKernelLoadStartModule
+   * do jk_core recusa modulo assim (rc=0x80020008 = ENOEXEC). Continuam prx avulso na pasta de plugins,
+   * do jeito que sempre funcionaram (jkx_toggle cuida, sem passar por aqui). */
+  { "comemoracoes",    { "comemorar", NULL },                    { "comemorar", NULL },                    { "comemorar", NULL } },
   { "redes",           { "netsveu", NULL },                      { "netsveu", NULL },                      { NULL, NULL } },
   { "mlorcamento",     { "ml_orcamento", "orcamento_tela" },      { "ml_orcamento", "orcamento_tela" },      { "ml_orcamento", "orcamento_tela_demisan" } },
   { "pes2026",         { "pes2026", NULL },                      { "pes2026", NULL },                      { "pes2026", NULL } },

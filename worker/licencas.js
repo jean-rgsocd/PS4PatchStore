@@ -392,6 +392,50 @@ export async function loginEquipe(env, user, senha) {
   return d === 0 ? { u, papel: PAPEIS.includes(r.papel) ? r.papel : "operador" } : null;
 }
 
+// ---------- util PKG (para c/r2/pkginfo) ----------
+async function panelPkgInfo(bucket, key) {
+  const head = await bucket.head(key);
+  if (!head) return { status: 404, erro: "arquivo não encontrado no R2" };
+  const rb = async (off, len) => {
+    const o = await bucket.get(key, { range: { offset: off, length: len } });
+    return o ? new Uint8Array(await o.arrayBuffer()) : null;
+  };
+  const h = await rb(0, 0x1000);
+  if (!h || h.length < 0x440 || h[0] !== 0x7f || h[1] !== 0x43 || h[2] !== 0x4e || h[3] !== 0x54)
+    return { status: 422, erro: "não parece um PKG de PS4 (cabeçalho diferente)" };
+  const dv = new DataView(h.buffer, h.byteOffset, h.byteLength);
+  let contentId = "";
+  for (let i = 0x40; i < 0x64 && h[i]; i++) contentId += String.fromCharCode(h[i]);
+  const ec = dv.getUint32(0x10), eo = dv.getUint32(0x18);
+  let category = "", title = "";
+  if (ec > 0 && ec <= 256) {
+    const tb = await rb(eo, ec * 32);
+    if (tb) {
+      const tv = new DataView(tb.buffer, tb.byteOffset, tb.byteLength);
+      for (let i = 0; i < ec && (i + 1) * 32 <= tb.length; i++) {
+        if (tv.getUint32(i * 32) !== 0x1000) continue;
+        const off = tv.getUint32(i * 32 + 16), sz = tv.getUint32(i * 32 + 20);
+        if (sz < 64 || sz > 16384) break;
+        const sfo = await rb(off, sz);
+        if (!sfo || sfo.length < 20 || sfo[1] !== 0x50 || sfo[2] !== 0x53 || sfo[3] !== 0x46) break;
+        const sv = new DataView(sfo.buffer, sfo.byteOffset, sfo.byteLength);
+        const kt = sv.getUint32(8, true), dt = sv.getUint32(12, true), n = sv.getUint32(16, true);
+        for (let k = 0; k < n && k < 64; k++) {
+          const ko = sv.getUint16(20 + k * 16, true), len = sv.getUint32(20 + k * 16 + 4, true), dof = sv.getUint32(20 + k * 16 + 12, true);
+          let name = "";
+          for (let q = kt + ko; q < sfo.length && sfo[q]; q++) name += String.fromCharCode(sfo[q]);
+          let val = "";
+          for (let q = dt + dof; q < dt + dof + len && q < sfo.length && sfo[q]; q++) val += String.fromCharCode(sfo[q]);
+          if (name === "CATEGORY") category = val;
+          else if (name === "TITLE") title = val;
+        }
+        if (category && title) break;
+      }
+    }
+  }
+  return { status: 200, content_id: contentId || "(desconhecido)", size: head.size, type: category || "?", title: title || "(sem título)" };
+}
+
 // ---------- API da central: /jkpainel17/api/c/... (ja autenticada; quem = {u, papel}) ----------
 export async function centralApi(request, env, url, p, m, quem, deps) {
   const nega = () => json(403, { erro: "seu perfil (" + quem.papel + ") não pode fazer isso" });
@@ -684,12 +728,196 @@ export async function centralApi(request, env, url, p, m, quem, deps) {
     await aud("equipe: " + (velho ? "alterado" : "criado"), u, r.papel + (r.ativo ? "" : " (desativado)"));
     return json(200, { u, papel: r.papel, ativo: r.ativo });
   }
-  if (p === "c/equipe" && m === "DELETE") {
-    if (quem.papel !== "super") return nega();
-    const u = limpaUser(url.searchParams.get("u"));
-    await env.DB.delete("padm:" + u);
-    await aud("equipe: removido", u, "");
+  // Constantes do painel (migradas de worker.js para centralApi)
+const PANEL_MAX_UPLOAD = 99 * 1024 * 1024;
+const PANEL_HIST_MAX = 30;
+const PANEL_PROTECTED = [];          // arquivos protegidos (nao podem ser substituidos)
+const PANEL_REPLACEABLE = ["APP-PS4/JKPATCHS.pkg", "APP-PS4/APP.mp4"]; // podem substituir com confirmacao
+const PANEL_PROTECTED_PREFIX = ["APP-PS4/ICONE/"]; // pastas protegidas
+
+function panelProtected(k) {
+  return PANEL_PROTECTED.indexOf(k) >= 0 || PANEL_PROTECTED_PREFIX.some((p) => k.indexOf(p) === 0);
+}
+function panelCatStats(txt) {
+  let g = 0, b = 0;
+  String(txt).split("\n").forEach((l) => {
+    if (l.indexOf("GAME\t") === 0) g++;
+    else if (l.indexOf("BTN\t") === 0) b++;
+  });
+  return { g, b };
+}
+function panelKeyOk(k) {
+  return typeof k === "string" && k.length > 0 && k.length < 900 && k.charAt(0) !== "/" &&
+    k.indexOf("..") < 0 && k.indexOf("\\") < 0 && !/[\u0000-\u001f]/.test(k);
+}
+
+// ---- catálogo ----
+if (p === "c/catalog" && m === "GET") {
+  return json(200, { catalog: (await env.DB.get("catalog")) || "" });
+}
+if (p === "c/catalog" && m === "PUT") {
+  if (!pode(quem.papel, "catalogo")) return nega();
+  let f = {};
+  try { f = await lerJson(request); } catch (e) { return json(400, { erro: "JSON inválido" }); }
+  const novo = String(f.catalog || "");
+  const st = panelCatStats(novo);
+  if (!st.g || !st.b) return json(400, { erro: "Catálogo sem cards/botões. Não salvei para não apagar o do app." });
+  if (novo.length > 5 * 1024 * 1024) return json(400, { erro: "Catálogo grande demais." });
+  const velho = (await env.DB.get("catalog")) || "";
+  if (velho) {
+    const so = panelCatStats(velho);
+    if (!f.force && (st.b < so.b * 0.9 || st.g < so.g * 0.9)) {
+      return json(400, { erro: "O novo catálogo tem bem menos cards/botões que o atual (" + st.g + "/" + st.b + " contra " + so.g + "/" + so.b + "). O painel não aceita remoções em massa." });
+    }
+  }
+  if (velho && velho !== novo) {
+    const ts = String(Date.now());
+    await env.DB.put("cathist:" + ts, velho);
+    let idx = [];
+    try { idx = JSON.parse((await env.DB.get("cathist:index")) || "[]"); } catch (e) {}
+    const sv = panelCatStats(velho);
+    idx.unshift({ ts, g: sv.g, b: sv.b });
+    const out = idx.slice(PANEL_HIST_MAX);
+    for (const o of out) await env.DB.delete("cathist:" + o.ts);
+    await env.DB.put("cathist:index", JSON.stringify(idx.slice(0, PANEL_HIST_MAX)));
+  }
+  await env.DB.put("catalog", novo);
+  await aud("catálogo salvo (" + st.g + " cards, " + st.b + " botões)", "", "");
+  return json(200, { ok: true });
+}
+if (p === "c/catalog/history" && m === "GET") {
+  let idx = [];
+  try { idx = JSON.parse((await env.DB.get("cathist:index")) || "[]"); } catch (e) {}
+  return json(200, { items: idx });
+}
+if (p === "c/catalog/version" && m === "GET") {
+  const ts = String(url.searchParams.get("ts") || "");
+  if (!/^\d{10,16}$/.test(ts)) return json(400, { erro: "versão inválida" });
+  const v = await env.DB.get("cathist:" + ts);
+  if (v === null) return json(404, { erro: "versão não encontrada" });
+  return json(200, { catalog: v });
+}
+
+// ---- R2 arquivos ----
+if (p === "c/r2/list" && m === "GET") {
+  if (!pode(quem.papel, "r2")) return nega();
+  const prefix = String(url.searchParams.get("prefix") || "");
+  if (prefix && !panelKeyOk(prefix)) return json(400, { erro: "pasta inválida" });
+  const r = await env.APP_BUCKET.list({ prefix, delimiter: "/", limit: 1000 });
+  return json(200, {
+    folders: r.delimitedPrefixes || [],
+    files: r.objects.map((o) => ({ key: o.key, size: o.size, uploaded: o.uploaded })),
+    truncated: !!r.truncated
+  });
+}
+if (p === "c/r2/pkginfo" && m === "GET") {
+  if (!pode(quem.papel, "r2")) return nega();
+  const key = String(url.searchParams.get("key") || "");
+  if (!panelKeyOk(key) || key.slice(-1) === "/") return json(400, { erro: "nome inválido" });
+  try {
+    const r = await panelPkgInfo(env.APP_BUCKET, key);
+    if (r.status !== 200) return json(r.status, { erro: r.erro });
+    return json(200, { content_id: r.content_id, size: r.size, type: r.type, title: r.title });
+  } catch (e) {
+    return json(500, { erro: "falha ao ler o PKG: " + (e && e.message ? e.message : e) });
+  }
+}
+if (p === "c/r2/all" && m === "GET") {
+  if (!pode(quem.papel, "r2")) return nega();
+  const files = [];
+  let cursor, truncated = false;
+  for (let i = 0; i < 30; i++) {
+    const r = await env.APP_BUCKET.list({ limit: 1000, cursor });
+    r.objects.forEach((o) => files.push({ k: o.key, s: o.size, u: o.uploaded }));
+    if (!r.truncated) break;
+    cursor = r.cursor;
+    if (i === 29) truncated = true;
+  }
+  return json(200, { files, truncated });
+}
+
+// ---- multipart upload (arquivos grandes) ----
+if (p.indexOf("c/r2/mpu/") === 0) {
+  if (!pode(quem.papel, "r2")) return nega();
+  const key = String(url.searchParams.get("key") || "");
+  if (!panelKeyOk(key) || key.slice(-1) === "/") return json(400, { erro: "nome/pasta inválidos" });
+  if (panelProtected(key)) return json(403, { erro: "Esse caminho é protegido." });
+  const uid = String(url.searchParams.get("uploadId") || "");
+  if (p === "c/r2/mpu/start" && m === "POST") {
+    if (url.searchParams.get("overwrite") !== "1" && (await env.APP_BUCKET.head(key))) {
+      return json(409, { erro: "Já existe um arquivo com esse nome (confirme a substituição na tela)." });
+    }
+    const ct = url.searchParams.get("ct") || "application/octet-stream";
+    const mp = await env.APP_BUCKET.createMultipartUpload(key, { httpMetadata: { contentType: ct } });
+    return json(200, { ok: true, uploadId: mp.uploadId });
+  }
+  if (!uid) return json(400, { erro: "uploadId ausente" });
+  const mp = env.APP_BUCKET.resumeMultipartUpload(key, uid);
+  if (p === "c/r2/mpu/part" && m === "PUT") {
+    const n = parseInt(url.searchParams.get("n") || "0", 10);
+    if (!(n >= 1 && n <= 10000)) return json(400, { erro: "número da parte inválido" });
+    const len = parseInt(request.headers.get("Content-Length") || "0", 10);
+    if (!len) return json(400, { erro: "parte vazia" });
+    if (len > PANEL_MAX_UPLOAD) return json(413, { erro: "Parte maior que 99 MB." });
+    const part = await mp.uploadPart(n, request.body);
+    return json(200, { ok: true, n: part.partNumber, etag: part.etag });
+  }
+  if (p === "c/r2/mpu/complete" && m === "POST") {
+    let f = {};
+    try { f = await lerJson(request); } catch (e) { return json(400, { erro: "JSON inválido" }); }
+    const parts = (Array.isArray(f.parts) ? f.parts : []).map((x) => ({ partNumber: x.partNumber | 0, etag: String(x.etag || "") }))
+      .sort((a, b) => a.partNumber - b.partNumber);
+    if (!parts.length) return json(400, { erro: "nenhuma parte enviada" });
+    try { await mp.complete(parts); } catch (e) { return json(400, { erro: "Não consegui juntar as partes: " + (e && e.message ? e.message : e) }); }
+    await aud((url.searchParams.get("overwrite") === "1" ? "substituído" : "enviado") + " (em partes, " + parts.length + ")", key, "");
+    return json(200, { ok: true, key });
+  }
+  if (p === "c/r2/mpu/abort" && m === "POST") {
+    try { await mp.abort(); } catch (e) {}
     return json(200, { ok: true });
   }
-  return null;
+  return json(404, { erro: "rota inexistente" });
+}
+
+// ---- upload simples (arquivos <= 99 MB) ----
+if (p === "c/r2/upload" && m === "PUT") {
+  if (!pode(quem.papel, "r2")) return nega();
+  const key = String(url.searchParams.get("key") || "");
+  if (!panelKeyOk(key) || key.slice(-1) === "/") return json(400, { erro: "nome/pasta inválidos" });
+  if (panelProtected(key)) return json(403, { erro: "Esse caminho é protegido." });
+  if (url.searchParams.get("overwrite") !== "1" && (await env.APP_BUCKET.head(key))) {
+    return json(409, { erro: "Já existe um arquivo com esse nome (confirme a substituição na tela)." });
+  }
+  const len = parseInt(request.headers.get("Content-Length") || "0", 10);
+  if (!len) return json(400, { erro: "arquivo vazio" });
+  if (len > PANEL_MAX_UPLOAD) return json(413, { erro: "Arquivo maior que 99 MB." });
+  const ct = request.headers.get("Content-Type") || "application/octet-stream";
+  await env.APP_BUCKET.put(key, request.body, { httpMetadata: { contentType: ct } });
+  await aud("enviado", key, "");
+  return json(200, { ok: true, key });
+}
+
+// ---- proteção de downloads (D1) ----
+if (p === "c/protegidos" && m === "GET") {
+  const a = (await env.DB.get("protegidos")) || "[]";
+  return json(200, JSON.parse(a));
+}
+if (p === "c/protegidos" && m === "PUT") {
+  if (!pode(quem.papel, "catalogo")) return nega();
+  let f = {};
+  try { f = await lerJson(request); } catch (e) { return json(400, { erro: "JSON inválido" }); }
+  const arr = Array.isArray(f.protegidos) ? f.protegidos : [];
+  await env.DB.put("protegidos", JSON.stringify(arr.slice(0, 200)));
+  await aud("protegidos atualizados", "", arr.join(", "));
+  return json(200, { ok: true, protegidos: arr });
+}
+
+if (p === "c/equipe" && m === "DELETE") {
+  if (quem.papel !== "super") return nega();
+  const u = limpaUser(url.searchParams.get("u"));
+  await env.DB.delete("padm:" + u);
+  await aud("equipe: removido", u, "");
+  return json(200, { ok: true });
+}
+return null;
 }
