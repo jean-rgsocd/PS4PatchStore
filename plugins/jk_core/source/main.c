@@ -166,6 +166,7 @@ static void *trabalho(void *arg)
 #else
     size_t n = 0;
     unsigned char *dv = ler_tudo(ARQ_DEV, 80, &n);
+    if (dv && n < 32) logf_("diag dev: leu arquivo mas veio curto, n=%zu", n);
     if (!dv || n < 32) { if (dv) free(dv); logf_("sem id do console: abra o app JK PATCHS uma vez"); return 0; }
     char dev[33]; memcpy(dev, dv, 32); dev[32] = 0; free(dv);
     for (int i = 0; i < 32; i++) if (dev[i] >= 'A' && dev[i] <= 'F') dev[i] = (char)(dev[i] + 32);
