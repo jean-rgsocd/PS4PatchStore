@@ -494,6 +494,7 @@ static int jkx_list_paths(const char *url, const char *dir, char (*paths)[200], 
 }
 
 /* ------------------------------------------------------------------ instalacao (thread) */
+static Catalog cat;                  /* (declaracao antecipada: definido mais abaixo) */
 typedef struct { CatButton btn; } Job;
 
 /* progresso do download de arquivo (a thread escreve, o laco principal mostra na tela) */
@@ -574,7 +575,7 @@ static void *install_thread(void *arg) {
      * Ex.: plugin = .cpk + DpFileList.bin; Comemoracoes = 5 arquivos em 3 pastas. */
     /* v1.42: 1 principal + ate 40 extras + ate 80 itens vindos de listas "?list" (hinos pos-gol).
      * Fora da pilha (static): so existe uma instalacao por vez (ui->busy). */
-    enum { MAXIT = 121, MAXEX = 41 };
+    enum { MAXIT = 161, MAXEX = 81 };
     static char it_url[MAXIT][1024];
     static char it_dir[MAXIT][120];
     static char it_soft[MAXIT];                         /* 1 = falha nao derruba a instalacao (ex.: icone, hino) */
@@ -584,8 +585,18 @@ static void *install_thread(void *arg) {
     it_soft[0] = 0;
     nit = 1;
     {
-      char ex[8192];
+      static char ex[16384];                            /* v1.56: static (fora da pilha) e maior: placar + base do quadro cabem juntos */
       snprintf(ex, sizeof(ex), "%s", j->btn.extra);
+      if (!strncmp(j->btn.name, "JK Placares", 11)) {  /* v1.56: o PLACAR e a base de tudo: junta aqui os extras do quadro (prx, plugins.ini, DpFileList, hinos...).
+                                                        * No botao eles estouravam os 4096 bytes e eram descartados em silencio. */
+        for (int bi = 0; bi < cat.nplb; bi++) {
+          if (strcmp(cat.plb[bi].dest, j->btn.dest) || !cat.plb[bi].extra[0]) continue;
+          size_t L0 = strlen(ex), L1 = strlen(cat.plb[bi].extra);
+          if (L0 + 1 + L1 < sizeof(ex)) snprintf(ex + L0, sizeof(ex) - L0, "%s%s", L0 ? "|" : "", cat.plb[bi].extra);
+          else install_log("AVISO: extras do quadro nao couberam (catalogo muito grande)");
+          break;
+        }
+      }
       char *sv = ex;
       int nex = 1;                                      /* itens normais (a lista nao conta aqui) */
       while (*sv && nex < MAXEX && nit < MAXIT) {
