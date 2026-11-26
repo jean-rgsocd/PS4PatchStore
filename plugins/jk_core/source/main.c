@@ -63,15 +63,30 @@ static unsigned char *ler_tudo(const char *p, size_t max, size_t *n_out)
 {
     int fd = sceKernelOpen(p, 0, 0);
     if (fd < 0) { logf_("diag ler_tudo: open falhou p=%s fd=%d", p, fd); return NULL; }
-    unsigned char *b = (unsigned char *)malloc(max + 1);
-    if (!b) { logf_("diag ler_tudo: malloc falhou p=%s n=%zu", p, max); sceKernelClose(fd); return NULL; }
+    /* Nao aloca "max" de uma vez (alguns arquivos permitem ate 70MB de limite,
+     * e um malloc desse tamanho pode falhar no plugin mesmo quando o arquivo
+     * de verdade e bem menor). Comeca pequeno e vai dobrando so conforme
+     * realmente le dados, ate "max". */
+    size_t cap = 65536;
+    if (cap > max) cap = max;
+    if (cap == 0) cap = max; /* max=0 nao deveria ocorrer, mas evita cap=0 */
+    unsigned char *b = (unsigned char *)malloc(cap + 1);
+    if (!b) { logf_("diag ler_tudo: malloc falhou p=%s n=%zu", p, cap); sceKernelClose(fd); return NULL; }
     size_t lido = 0;
     for (;;) {
-        int r = (int)sceKernelRead(fd, b + lido, max - lido);
+        if (lido >= cap) {
+            if (cap >= max) break;
+            size_t novo_cap = cap * 2;
+            if (novo_cap > max) novo_cap = max;
+            unsigned char *nb = (unsigned char *)realloc(b, novo_cap + 1);
+            if (!nb) { logf_("diag ler_tudo: realloc falhou p=%s n=%zu", p, novo_cap); free(b); sceKernelClose(fd); return NULL; }
+            b = nb;
+            cap = novo_cap;
+        }
+        int r = (int)sceKernelRead(fd, b + lido, cap - lido);
         if (r < 0) { logf_("diag ler_tudo: erro de leitura p=%s r=%d lido=%zu", p, r, lido); free(b); sceKernelClose(fd); return NULL; }
         if (r == 0) break;
         lido += (size_t)r;
-        if (lido >= max) break;
     }
     sceKernelClose(fd);
     if (lido == 0) { logf_("diag ler_tudo: arquivo vazio p=%s", p); free(b); return NULL; }
