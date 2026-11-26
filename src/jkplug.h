@@ -24,6 +24,7 @@ void jkx_apply(JkxLog log);
 /* arruma so o DpFileList de uma pasta (JK_PLACAR, VTA, Varzea e os CPKs dos plugins) */
 void jkx_dp_fix(const char *dir, const char *cusa, JkxLog log);
 void jkx_ini_garantir(const char *prx, const char *cusa, JkxLog log);   /* v1.56 */
+void jkx_ini_merge(const char *novo, const char *cusa, JkxLog log);      /* v1.56: junta a secao do jogo de um plugins.ini baixado */
 /* 1 = arquivo de plugin opcional que nao esta instalado pela aba neste jogo (o download dos botoes pula) */
 int  jkx_blocked(const char *path);
 /* "chave@quadro" do botao: liga o estado 1 (antes do download da aba) */

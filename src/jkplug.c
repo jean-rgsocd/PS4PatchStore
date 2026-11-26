@@ -292,6 +292,51 @@ void jkx_ini_garantir(const char *prx, const char *cusa, JkxLog log) {
   pthread_mutex_unlock(&jx_mu);
 }
 
+/* v1.56: o plugins.ini e UM so para os dois jogos (secoes [CUSA18676] e [CUSA22062]). O botao baixa a copia do quadro
+ * para "novo" e aqui so entra o que falta NA SECAO DO JOGO desse botao: nunca troca o arquivo inteiro (isso apagava
+ * a secao do outro jogo e as escolhas do usuario). Sem secao no arquivo atual: acrescenta a secao inteira. */
+void jkx_ini_merge(const char *novo, const char *cusa, JkxLog log) {
+  if (!novo || !cusa || !cusa[0]) return;
+  pthread_mutex_lock(&jx_mu);
+  long long n = 0; char *t = readf(novo, &n, 256 * 1024);
+  if (t) {
+    char hdr[40]; snprintf(hdr, sizeof(hdr), "[%s]", cusa);
+    char *s = strstr(t, hdr);
+    if (s) {
+      char *end = strstr(s + 1, "\n["); end = end ? end + 1 : t + n;
+      long long cn = 0; char *cur = readf(JKX_INI, &cn, 256 * 1024);
+      if (!cur || !strstr(cur, hdr)) {                                  /* secao nova: copia ela inteira para o fim */
+        size_t add = (size_t)(end - s), L = (size_t)cn;
+        char *o = (char *)malloc(L + add + 4);
+        if (o) {
+          if (cur) memcpy(o, cur, L);
+          if (L && o[L - 1] != '\n') o[L++] = '\n';
+          memcpy(o + L, s, add); L += add;
+          if (o[L - 1] != '\n') o[L++] = '\n';
+          if (writef(JKX_INI, o, (long long)L) == 0 && log) { char m[100]; snprintf(m, sizeof(m), "plugins.ini: secao %s acrescentada", hdr); log(m); }
+          free(o);
+        }
+        free(cur);
+      } else {
+        free(cur);
+        for (char *p = s; p < end; ) {                                  /* linha a linha: so acrescenta o que falta */
+          char *e = p; while (e < end && *e != '\n') e++;
+          char name[128]; size_t k = 0; char *q = p;
+          while (q < e && (*q == ' ' || *q == '\t')) q++;
+          if (*q != ';' && *q != '#' && *q != '[') {
+            while (q + k < e && q[k] != '=' && q[k] != '\r' && k + 1 < sizeof(name)) { name[k] = q[k]; k++; }
+            name[k] = 0;
+            if (q + k < e && q[k] == '=' && k > 0 && ini_get(cusa, name) == -1 && !strncmp(q + k, "=true", 5)) ini_set(cusa, name, 1, log);
+          }
+          p = e < end ? e + 1 : end;
+        }
+      }
+    }
+    free(t);
+  }
+  pthread_mutex_unlock(&jx_mu);
+}
+
 /* ------------------------------------------------------------------ DpFileList */
 static int ends_cpk(const char *s) {
   size_t L = strlen(s);

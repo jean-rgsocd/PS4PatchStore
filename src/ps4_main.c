@@ -627,6 +627,7 @@ static void *install_thread(void *arg) {
       }
     }
     char lastname[180] = "";
+    char job_cusa[16] = "";
     rc = 0;
     for (int u = 0; u < nit && rc == 0; u++) {
       char path[512], filename[180];
@@ -676,7 +677,7 @@ static void *install_thread(void *arg) {
         continue;
       }
       if (strncmp(j->btn.name, "JK Placares", 11) &&   /* v1.56: o PLACAR e a base. Narrador/ML/Estadio nunca trocam o DpFileList.bin / plugins.ini que ja esta no console */
-          !strncmp(path, "/data/GoldHEN/", 14) && (!strcmp(filename, "DpFileList.bin") || !strcmp(filename, "plugins.ini")) &&
+          !strncmp(path, "/data/GoldHEN/", 14) && !strcmp(filename, "DpFileList.bin") &&
           file_size_of(path) > 0) {
         char lmk[700]; snprintf(lmk, sizeof(lmk), "Item %d/%d ja registrado pelo placar, mantido (so acrescenta o que falta): %s", u + 1, nit, path);
         install_log(lmk);
@@ -702,6 +703,13 @@ static void *install_thread(void *arg) {
           }
         }
       }
+      int ini_merge = 0;                               /* v1.56: plugins.ini existente nunca e trocado: baixa para .novo e junta so a secao deste jogo */
+      if (!strcmp(path, "/data/GoldHEN/plugins.ini") && file_size_of(path) > 0) {
+        const char *cu = NULL;
+        for (int w = 0; w < nit && !cu; w++) cu = strstr(it_dir[w], "/AFR/CUSA");
+        if (cu) { snprintf(job_cusa, sizeof(job_cusa), "%.9s", cu + 5); snprintf(path, sizeof(path), "/data/GoldHEN/plugins.ini.novo"); ini_merge = 1; }
+        else { install_log("plugins.ini ja existe e o botao nao diz o jogo: mantido"); continue; }
+      }
       volatile int cancel = 0;
       char lm[1200];
       snprintf(lm, sizeof(lm), "Iniciando download de arquivo pelo app (%d/%d): %s", u + 1, nit, it_url[u]);
@@ -722,6 +730,7 @@ static void *install_thread(void *arg) {
         } else if (!err[0]) snprintf(err, sizeof(err), "Falha ao baixar o arquivo.");
       } else {
         install_log(path);
+        if (ini_merge) { jkx_ini_merge(path, job_cusa, install_log); unlink(path); }
         jkx_note_download(path);                       /* v1.43d: prx de card FIXO (financas vivas): o fixup liga o deste patch */
         snprintf(lastname, sizeof(lastname), "%s", filename);
       }
