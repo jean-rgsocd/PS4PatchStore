@@ -22,8 +22,17 @@
 
 const enc = new TextEncoder();
 export const R2_PUBLICO = "https://pub-c6518eb1477949a58d959f5a769703d1.r2.dev/";
-const EXT_PROTEGIDA = new Set(["prx", "cpk", "pkg", "bin", "ini", "json", "pcc", "txt", "lst", "dat", "aes", "sfo"]);
+const EXT_PROTEGIDA = new Set(["prx", "cpk", "pkg", "bin", "ini", "json", "pcc", "txt", "lst", "dat", "aes", "sfo", "pcm"]);
 const SEM_EXTENSAO = new Set(["keystone", "sce_paramsfo1", "sce_icon0png1"]);
+// Rota publica /p/ (para poder FECHAR o r2.dev): so imagens, videos e o proprio app (instalador e modulo).
+const EXT_PUBLICA = new Set(["png", "jpg", "jpeg", "gif", "webp", "jkv", "mp4"]);
+const CHAVES_PUBLICAS = new Set(["APP-PS4/JKPATCHS.pkg", "APP-PS4/MODULO/jkui.prx"]);
+export function publicoPermitido(chaveR2) {
+  if (!chaveR2 || chaveR2.includes("..") || chaveR2.startsWith("/")) return false;
+  if (CHAVES_PUBLICAS.has(chaveR2)) return true;
+  const n = chaveR2.slice(chaveR2.lastIndexOf("/") + 1), p = n.lastIndexOf(".");
+  return p > 0 && EXT_PUBLICA.has(n.slice(p + 1).toLowerCase());
+}
 const LINK_DIAS = 30;
 const DL_TTL = 60 * 60 * 24 * 90;
 const CACHE_MS = 60 * 1000;
@@ -82,7 +91,8 @@ const assinaLink = (env, uh, exp) => assina(env, "dl:" + uh + exp, 12);
 export const idUsuario = (env, user) => assina(env, "uh:" + user, 6);
 
 // ---------- configuracao ----------
-const CFG_PADRAO = { modo: "off", usuarios: [], auditoria: "log" };   // "log": nao gasta gravacoes do KV (plano gratuito)
+// publico: "direto" = imagens/videos/app pelo r2.dev (como antes) | "worker" = pela rota /p/ (necessario antes de fechar o r2.dev)
+const CFG_PADRAO = { modo: "off", usuarios: [], auditoria: "log", publico: "direto" };   // "log": nao gasta gravacoes do KV (plano gratuito)
 let cfgMemo = null, cfgEm = 0;
 export async function lerCfg(env, fresco) {
   if (!fresco && cfgMemo && Date.now() - cfgEm < CACHE_MS) return cfgMemo;
@@ -104,7 +114,8 @@ function partes(url) {
   try { chaveR2 = decodeURIComponent(caminho); } catch (e) {}
   const p = nome.lastIndexOf(".");
   const ext = p > 0 ? nome.slice(p + 1).toLowerCase() : "";
-  return { chaveR2, nome, query, protege: !!chaveR2 && !!nome && (EXT_PROTEGIDA.has(ext) || SEM_EXTENSAO.has(nome)) };
+  const publico = !!chaveR2 && publicoPermitido(chaveR2);
+  return { chaveR2, nome, query, publico, protege: !publico && !!chaveR2 && !!nome && (EXT_PROTEGIDA.has(ext) || SEM_EXTENSAO.has(nome)) };
 }
 
 let mapaMemo = null, mapaEm = 0;
@@ -140,45 +151,64 @@ async function garantirUsuario(env, uh, user) {
 // Devolve o catalogo com os links protegidos (ou o mesmo texto, se o modo nao se aplica a este usuario).
 // Molde do catalogo: o texto cortado nos links protegidos. Feito 1x por versao do catalogo (fica em memoria);
 // cada pedido so encaixa "origem/f/<id><usuario><validade><assinatura>/" nos cortes (limite de CPU do Worker).
-let moldeDe = null, molde = null;
-async function montarMolde(env, body) {
-  if (moldeDe === body && molde) return molde;
+// origemPub: se informada, links publicos permitidos (imagens, videos, app) viram origemPub + "/p/<chave>" ja no molde.
+// protege: corta os links protegidos (viram /f/ por usuario). Cache por (origemPub, protege), conferindo o texto.
+const moldes = new Map();
+const urlPublica = (origem, u) => origem + "/p/" + u.slice(R2_PUBLICO.length);
+async function montarMolde(env, body, origemPub, protege) {
+  const ck = origemPub + "|" + (protege ? 1 : 0);
+  const c = moldes.get(ck);
+  if (c && c.body === body) return c.molde;
   if (!idMemo.size) {                                      // ids ja salvos no KV: evita recalcular 300+ assinaturas
     const salvo = await lerMapa(env);
     for (const [id, k] of Object.entries(salvo.m)) idMemo.set(k, id);
   }
   const pedacos = [], cortes = [], ids = {};
-  let ultimo = 0;
+  let ultimo = 0, atual = "";
   const linhaApp = /^(APP|MOD)\t/;
   let pos = 0;
-  for (const linha of body.split("\n")) {                  // linhas APP e MOD (o app e o modulo) ficam publicas
-    if (!linhaApp.test(linha)) {
-      RX_R2.lastIndex = 0;
-      let mm;
-      while ((mm = RX_R2.exec(linha))) {
-        const p = partes(mm[0]);
-        if (!p.protege) continue;
+  for (const linha of body.split("\n")) {                  // linhas APP e MOD: nunca protegidas (so podem ir para /p/)
+    const app = linhaApp.test(linha);
+    RX_R2.lastIndex = 0;
+    let mm;
+    while ((mm = RX_R2.exec(linha))) {
+      const p = partes(mm[0]);
+      const ini = pos + mm.index, fim = ini + mm[0].length;
+      if (origemPub && p.publico) {
+        atual += body.slice(ultimo, ini) + urlPublica(origemPub, mm[0]);
+        ultimo = fim;
+      } else if (protege && !app && p.protege) {
         const id = await idArquivo(env, p.chaveR2);
         ids[id] = p.chaveR2;
-        pedacos.push(body.slice(ultimo, pos + mm.index));
+        pedacos.push(atual + body.slice(ultimo, ini));
+        atual = "";
         cortes.push({ id, resto: "/" + p.nome + (p.query ? "?" + p.query : "") });
-        ultimo = pos + mm.index + mm[0].length;
+        ultimo = fim;
       }
     }
     pos += linha.length + 1;
   }
-  pedacos.push(body.slice(ultimo));
-  molde = { pedacos, cortes, ids };
-  moldeDe = body;
+  pedacos.push(atual + body.slice(ultimo));
+  const molde = { pedacos, cortes, ids };
+  moldes.set(ck, { body, molde });
+  if (moldes.size > 6) moldes.delete(moldes.keys().next().value);
   return molde;
+}
+
+// Catalogo para quem NAO recebe links de download (visitante, plano vencido): so troca imagens/videos/app para /p/.
+export async function reescreverPublico(env, request, body) {
+  const cfg = await lerCfg(env);
+  if (cfg.publico !== "worker") return body;
+  return (await montarMolde(env, body, new URL(request.url).origin, false)).pedacos.join("");
 }
 
 export async function reescreverCatalogo(env, request, user, body) {
   const cfg = await lerCfg(env);
-  if (cfg.modo === "off") return body;
-  if (cfg.modo === "lista" && !(cfg.usuarios || []).includes(user)) return body;
-  const md = await montarMolde(env, body);
-  if (!md.cortes.length) return body;
+  const protege = cfg.modo === "todos" || (cfg.modo === "lista" && (cfg.usuarios || []).includes(user));
+  const origemPub = cfg.publico === "worker" ? new URL(request.url).origin : "";
+  if (!protege && !origemPub) return body;
+  const md = await montarMolde(env, body, origemPub, protege);
+  if (!md.cortes.length) return md.pedacos.join("");
   await garantirMapa(env, md.ids);
   const uh = await idUsuario(env, user);
   await garantirUsuario(env, uh, user);
@@ -259,45 +289,102 @@ export async function servirArquivo(request, env, url, accountState, ctx, checar
     }
   }
 
-  if (m === "HEAD") {
-    const h = await env.APP_BUCKET.head(chaveR2);
-    if (!h) return erro(404, "nao encontrado");
-    return new Response(null, { status: 200, headers: {
-      "Content-Type": "application/octet-stream", "Content-Length": String(h.size), "Accept-Ranges": "bytes",
-      "ETag": h.httpEtag, "Cache-Control": "private, no-store" } });
+  // lista ".lst" (hinos): os links do R2 DENTRO dela viram links deste Worker para o mesmo cliente
+  if (m === "GET" && /\.lst$/i.test(nomeReal)) {
+    const o = await env.APP_BUCKET.get(chaveR2);
+    if (!o) return erro(404, "nao encontrado");
+    const txt = await reescreverLista(env, url.origin, await o.text(), uh, exp, sig);
+    const corpo = new TextEncoder().encode(txt);
+    if (primeiro) await registrarDownload(env, request, ctx, uh, accountState, nomeReal, corpo.length);
+    return new Response(corpo, { status: 200, headers: { "Content-Type": "text/plain; charset=utf-8", "Content-Length": String(corpo.length), "Cache-Control": "private, no-store" } });
   }
 
+  const r = await entregar(request, env, chaveR2, range, "private, no-store");
+  if (r.resp.status < 300 && primeiro && m === "GET") await registrarDownload(env, request, ctx, uh, accountState, nomeReal, r.total);
+  return r.resp;
+}
+
+async function registrarDownload(env, request, ctx, uh, accountState, arquivo, tamanho) {
+  const cfg = await lerCfg(env);
+  const c = await contaAtiva(env, uh, accountState);
+  const ev = { uh, user: c.user, arquivo, tamanho, ip: request.headers.get("CF-Connecting-IP") || "",
+               pais: (request.cf && request.cf.country) || "", t: new Date().toISOString() };
+  const p = auditar(env, cfg, ev);
+  if (ctx && ctx.waitUntil) ctx.waitUntil(p); else await p;
+}
+
+// links do R2 dentro de uma lista: protegidos -> /f/ com o MESMO usuario/validade/assinatura do link da lista
+async function reescreverLista(env, origem, txt, uh, exp, sig) {
+  const cfg = await lerCfg(env);
+  const ids = {};
+  const trocas = [];
+  RX_R2.lastIndex = 0;
+  let mm;
+  while ((mm = RX_R2.exec(txt))) {
+    const p = partes(mm[0]);
+    if (p.protege) {
+      const id = await idArquivo(env, p.chaveR2);
+      ids[id] = p.chaveR2;
+      trocas.push([mm[0], origem + "/f/" + id + uh + exp + sig + "/" + p.nome + (p.query ? "?" + p.query : "")]);
+    } else if (p.publico && cfg.publico === "worker") trocas.push([mm[0], urlPublica(origem, mm[0])]);
+  }
+  if (Object.keys(ids).length) await garantirMapa(env, ids);
+  const mapa = new Map(trocas);
+  return txt.replace(RX_R2, (u) => (mapa.has(u) ? mapa.get(u) : u));
+}
+
+// GET/HEAD /p/<chave>: so imagens, videos e o app (publicoPermitido). Sem login. Cache do Cloudflare para arquivos pequenos.
+export async function servirPublico(request, env, url, ctx) {
+  const m = request.method;
+  if (m !== "GET" && m !== "HEAD") return erro(405, "metodo nao permitido");
+  let chaveR2 = "";
+  try { chaveR2 = decodeURIComponent(url.pathname.slice(3)); } catch (e) { return erro(404, "nao encontrado"); }
+  if (!publicoPermitido(chaveR2)) return erro(404, "nao encontrado");
+  const range = lerRange(request.headers.get("Range"));
+  if (range && range.invalido) return erro(416, "range invalido");
+  const cache = typeof caches !== "undefined" && caches.default ? caches.default : null;
+  if (cache && m === "GET" && !range) { const hit = await cache.match(request); if (hit) return hit; }
+  const r = await entregar(request, env, chaveR2, range, "public, max-age=3600");
+  if (cache && m === "GET" && !range && r.resp.status === 200 && r.total <= 20 * 1024 * 1024) {
+    const p = cache.put(request, r.resp.clone());
+    if (ctx && ctx.waitUntil) ctx.waitUntil(p); else await p;
+  }
+  return r.resp;
+}
+
+// entrega um objeto do R2 (inteiro ou em pedaco). Devolve {resp, total}.
+async function entregar(request, env, chaveR2, range, cacheCtl) {
+  if (request.method === "HEAD") {
+    const h = await env.APP_BUCKET.head(chaveR2);
+    if (!h) return { resp: erro(404, "nao encontrado"), total: 0 };
+    return { total: h.size, resp: new Response(null, { status: 200, headers: {
+      "Content-Type": "application/octet-stream", "Content-Length": String(h.size), "Accept-Ranges": "bytes",
+      "ETag": h.httpEtag, "Cache-Control": cacheCtl } }) };
+  }
   let obj, total, ini = 0, fim = 0;
   if (range) {                                               // mede antes: o pedaco pedido pode passar do fim do arquivo
     const h = await env.APP_BUCKET.head(chaveR2);
-    if (!h) return erro(404, "nao encontrado");
+    if (!h) return { resp: erro(404, "nao encontrado"), total: 0 };
     total = h.size;
     ini = range.suffix !== undefined ? Math.max(0, total - range.suffix) : range.offset;
     fim = range.suffix !== undefined || range.length === undefined ? total - 1 : Math.min(total, ini + range.length) - 1;
     if (ini >= total || fim < ini) {
-      return new Response(null, { status: 416, headers: { "Content-Range": "bytes */" + total, "Cache-Control": "no-store" } });
+      return { total, resp: new Response(null, { status: 416, headers: { "Content-Range": "bytes */" + total, "Cache-Control": "no-store" } }) };
     }
     obj = await env.APP_BUCKET.get(chaveR2, { range: { offset: ini, length: fim - ini + 1 } });
   } else obj = await env.APP_BUCKET.get(chaveR2);
-  if (!obj) return erro(404, "nao encontrado");
+  if (!obj) return { resp: erro(404, "nao encontrado"), total: 0 };
   if (!range) total = obj.size;
-  const hd = { "Content-Type": "application/octet-stream", "Accept-Ranges": "bytes", "ETag": obj.httpEtag, "Cache-Control": "private, no-store" };
+  const ext = (chaveR2.match(/\.([a-z0-9]+)$/i) || [])[1] || "";
+  const tipo = { png: "image/png", jpg: "image/jpeg", jpeg: "image/jpeg", gif: "image/gif", webp: "image/webp", mp4: "video/mp4" }[ext.toLowerCase()] || "application/octet-stream";
+  const hd = { "Content-Type": tipo, "Accept-Ranges": "bytes", "ETag": obj.httpEtag, "Cache-Control": cacheCtl };
   let status = 200;
   if (range) {
     hd["Content-Range"] = "bytes " + ini + "-" + fim + "/" + total;
     hd["Content-Length"] = String(fim - ini + 1);
     status = 206;
   } else hd["Content-Length"] = String(total);
-
-  if (primeiro) {
-    const cfg = await lerCfg(env);
-    const c = await contaAtiva(env, uh, accountState);
-    const ev = { uh, user: c.user, arquivo: nomeReal, tamanho: total, ip: request.headers.get("CF-Connecting-IP") || "",
-                 pais: (request.cf && request.cf.country) || "", t: new Date().toISOString() };
-    const p = auditar(env, cfg, ev);
-    if (ctx && ctx.waitUntil) ctx.waitUntil(p); else await p;
-  }
-  return new Response(obj.body, { status, headers: hd });
+  return { total, resp: new Response(obj.body, { status, headers: hd }) };
 }
 
 // ---------- painel (/jkpainel17/api/links e /downloads), ja autenticado ----------
@@ -309,11 +396,31 @@ export async function painelLinks(request, env, url, p, m, registrar) {
     if (!["off", "lista", "todos"].includes(f.modo)) return json(400, { erro: "modo inválido" });
     const usuarios = (Array.isArray(f.usuarios) ? f.usuarios : []).map((u) => String(u).trim().toLowerCase())
       .filter((u) => /^[a-z0-9_.-]{2,32}$/.test(u)).slice(0, 200);
-    const cfg = { modo: f.modo, usuarios, auditoria: f.auditoria === "kv" ? "kv" : "log" };
+    const cfg = { modo: f.modo, usuarios, auditoria: f.auditoria === "kv" ? "kv" : "log", publico: f.publico === "worker" ? "worker" : "direto" };
     await env.DB.put("cfg:links", JSON.stringify(cfg));
     cfgMemo = cfg; cfgEm = Date.now();
-    if (registrar) await registrar(env, "downloads protegidos: modo " + cfg.modo + (cfg.modo === "lista" ? " (" + usuarios.join(", ") + ")" : ""), []);
+    if (registrar) await registrar(env, "downloads protegidos: modo " + cfg.modo + (cfg.modo === "lista" ? " (" + usuarios.join(", ") + ")" : "") + " | imagens/app: " + cfg.publico, []);
     return json(200, cfg);
+  }
+  // o que ainda depende do r2.dev publico (para saber se ja pode fechar)
+  if (p === "links/checagem" && m === "GET") {
+    const cat = (await env.DB.get("catalog")) || "";
+    const urls = [...new Set(cat.match(RX_R2) || [])];
+    const r = { total: urls.length, protegidos: 0, publicos: 0, outros: [], listas: [] };
+    for (const u of urls) {
+      const pt = partes(u);
+      if (pt.protege) r.protegidos++; else if (pt.publico) r.publicos++; else r.outros.push(u.slice(R2_PUBLICO.length));
+      if (pt.protege && /\.lst$/i.test(pt.nome) && r.listas.length < 10) {
+        const o = await env.APP_BUCKET.get(pt.chaveR2);
+        const txt = o ? await o.text() : "";
+        const dentro = (txt.match(RX_R2) || []).map(partes);
+        r.listas.push({ lista: pt.chaveR2, links: dentro.length, sem_rota: dentro.filter((x) => !x.protege && !x.publico).length });
+      }
+    }
+    const cfg = await lerCfg(env, true);
+    r.pronto = cfg.modo === "todos" && cfg.publico === "worker" && !r.outros.length && r.listas.every((l) => !l.sem_rota);
+    r.cfg = cfg;
+    return json(200, r);
   }
   if (p === "downloads" && m === "GET") {
     const cursor = url.searchParams.get("cursor") || undefined;

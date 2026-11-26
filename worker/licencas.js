@@ -292,10 +292,12 @@ export async function licSync(request, env, user, rec, estado, deps) {
     await gravarConsole(env, con);
   }
   const itens = await lerProdutos(env), licencas = await lerLicencas(env, user);
+  // modulo licenciado = PRX propria (VAR) OU "modulo do Core" (PRX sem fonte, cifrada: tem chave_conteudo)
   const porModulo = {};
-  for (const p of Object.values(itens)) if (p.tipo === "PRX" && p.licenciado && p.modulo) porModulo[p.modulo] = p;
+  for (const p of Object.values(itens)) if ((p.tipo === "PRX" || p.tipo === "CORE") && p.licenciado && p.modulo) porModulo[p.modulo] = p;
   const uh = await deps.idUsuario(env, user);
   const linhas = ["OK"];
+  const indice = [];                                       // modulos do Core liberados -> /data/jk/lic/indice.txt
   const pedidos = Object.keys(mods).length ? Object.keys(mods) : Object.keys(porModulo);
   for (const m of pedidos) {
     const prod = porModulo[m];
@@ -306,7 +308,12 @@ export async function licSync(request, env, user, rec, estado, deps) {
     if (a.ate) exp = Math.min(exp, a.ate + cfg.tolerancia * DIA);
     const tok = await emitirAutorizacao(env, { modulo: m, cid, uh, vmin: prod.versao_min, iat: t, exp });
     linhas.push("LIC\t" + m + "\t" + tok);
+    if (prod.chave_conteudo && /^[0-9a-f]{64}$/.test(prod.chave_conteudo)) {   // modulo do Core: manda a chave e entra no indice
+      linhas.push("KEY\t" + m + "\t" + prod.chave_conteudo);
+      indice.push(m);
+    }
   }
+  if (indice.length || Object.values(porModulo).some((p) => p.chave_conteudo)) linhas.push("IDX\t" + indice.join(","));
   return texto(200, linhas.join("\n"));
 }
 
@@ -371,7 +378,7 @@ export async function centralApi(request, env, url, p, m, quem, deps) {
     const cons = await env.DB.list({ prefix: "con:", limit: 1000 });
     const consoles = { total: cons.keys.length, ativo: cons.keys.filter((k) => (k.metadata || {}).status === "ativo").length };
     const itens = Object.values(await lerProdutos(env));
-    const produtos = { PRX: 0, CPK: 0, PKG: 0, licenciados: 0 };
+    const produtos = { PRX: 0, CPK: 0, PKG: 0, CORE: 0, licenciados: 0 };
     for (const x of itens) { produtos[x.tipo] = (produtos[x.tipo] || 0) + 1; if (x.licenciado) produtos.licenciados++; }
     const lics = await env.DB.list({ prefix: "lic:", limit: 1000 });
     const dl = await env.DB.list({ prefix: "dl:", limit: 1000 });
@@ -515,7 +522,11 @@ export async function centralApi(request, env, url, p, m, quem, deps) {
   }
 
   // ---- produtos e dependencias ----
-  if (p === "c/produtos" && m === "GET") return json(200, { itens: await lerProdutos(env) });
+  if (p === "c/produtos" && m === "GET") {               // a chave de conteudo nunca sai do servidor: so "tem ou nao tem"
+    const itens = {};
+    for (const [id, p2] of Object.entries(await lerProdutos(env))) itens[id] = Object.assign({}, p2, { chave_conteudo: undefined, tem_chave: !!p2.chave_conteudo });
+    return json(200, { itens });
+  }
   if (p === "c/produtos/importar" && m === "POST") {
     if (!pode(quem.papel, "produtos")) return nega();
     const cat = (await env.DB.get("catalog")) || "";
@@ -529,7 +540,11 @@ export async function centralApi(request, env, url, p, m, quem, deps) {
     if (!pode(quem.papel, "produtos")) return nega();
     const x = (await lerJson(request)) || {};
     if (!okId(String(x.id || ""))) return json(400, { erro: "id inválido" });
-    if (!["PRX", "CPK", "PKG"].includes(x.tipo)) return json(400, { erro: "tipo inválido" });
+    if (!["PRX", "CPK", "PKG", "CORE"].includes(x.tipo)) return json(400, { erro: "tipo inválido" });
+    // CORE = PRX sem código-fonte, cifrada (.jkm) e carregada pelo JK Core. Sempre licenciada; tem chave de conteúdo.
+    const licenciavel = x.tipo === "PRX" || x.tipo === "CORE";
+    const chaveConteudo = x.tipo === "CORE" && /^[0-9a-f]{64}$/.test(String(x.chave_conteudo || "")) ? x.chave_conteudo : "";
+    if (x.tipo === "CORE" && x.licenciado && !chaveConteudo) return json(400, { erro: "módulo do Core precisa da chave de conteúdo (64 hex, do cifra_modulo)" });
     const itens = Object.assign({}, await lerProdutos(env));
     const depsOk = [];
     for (const d of (x.deps || []).slice(0, 50)) {
@@ -544,7 +559,8 @@ export async function centralApi(request, env, url, p, m, quem, deps) {
       versao: String(x.versao || "").slice(0, 20), versao_min: String(x.versao_min || "").slice(0, 20), sha256: /^[0-9a-f]{64}$/.test(x.sha256 || "") ? x.sha256 : "",
       tamanho: Math.max(0, Number(x.tamanho) || 0), status: ["ativo", "bloqueado", "rascunho", "revogado"].includes(x.status) ? x.status : "ativo",
       deps: depsOk, planos: Array.isArray(x.planos) && x.planos.length ? x.planos.map(String).slice(0, 50) : ["*"],
-      licenciado: x.tipo === "PRX" && !!x.licenciado, modulo: x.tipo === "PRX" && okId(String(x.modulo || "")) ? x.modulo : "",
+      licenciado: licenciavel && (x.tipo === "CORE" ? true : !!x.licenciado), modulo: licenciavel && okId(String(x.modulo || "")) ? x.modulo : "",
+      chave_conteudo: chaveConteudo,
       desc: String(x.desc || "").slice(0, 300), origem: velho.origem || [], criado: velho.criado || new Date().toISOString(), publicado: x.publicado || velho.publicado || "" };
     await gravarProdutos(env, itens);
     await aud(velho.id ? "produto alterado" : "produto criado", x.id, itens[x.id].tipo + " " + itens[x.id].status + (itens[x.id].licenciado ? " licenciado" : ""));

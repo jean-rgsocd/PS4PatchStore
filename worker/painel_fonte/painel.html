@@ -163,6 +163,7 @@ function esc(s){return String(s==null?"":s).replace(/[&<>"]/g,function(c){return
 function fs(n){n=+n||0;if(n>=1073741824)return (n/1073741824).toFixed(2)+" GB";if(n>=1048576)return (n/1048576).toFixed(1)+" MB";if(n>=1024)return (n/1024).toFixed(1)+" KB";return n+" B"}
 function fd(t){return t?new Date(t).toLocaleString("pt-BR",{day:"2-digit",month:"2-digit",year:"numeric",hour:"2-digit",minute:"2-digit"}):"-"}
 function urlOf(k){return R2B+k.split("/").map(encodeURIComponent).join("/")}
+function vis(u){u=String(u||"");return u.indexOf(R2B)===0?"/p/"+u.slice(R2B.length):u}   /* so para MOSTRAR no painel: funciona mesmo com o r2.dev fechado */
 function keyOf(u){u=String(u||"").trim();if(u.indexOf(R2B)!==0)return null;var r=u.slice(R2B.length).split("?")[0];try{return decodeURIComponent(r)}catch(e){return r}}
 
 async function api(p,method,body){
@@ -222,7 +223,9 @@ async function desenharDl(){
    op("todos","Todos os clientes ativos","")+
    "<p>Registro de downloads: <select id='dla'><option value='kv'"+(DLC.auditoria!=="log"?" selected":"")+">salvar aqui no painel (KV)</option>"+
    "<option value='log'"+(DLC.auditoria==="log"?" selected":"")+">só no log do Cloudflare (economiza gravações)</option></select></p>"+
-   "<button class='p' onclick='salvarDl()'>Salvar</button> <span id='dlmsg'></span></div>"+
+   "<p>Imagens, vídeos e o app (JKPATCHS.pkg, jkui.prx): <select id='dlp'><option value='direto'"+(DLC.publico!=="worker"?" selected":"")+">direto do R2 público (como hoje)</option>"+
+   "<option value='worker'"+(DLC.publico==="worker"?" selected":"")+">pelo servidor (necessário para fechar o R2)</option></select></p>"+
+   "<button class='p' onclick='salvarDl()'>Salvar</button> <button onclick='checarR2()'>Checar antes de fechar o R2</button> <span id='dlmsg'></span><div id='dlchk'></div></div>"+
    "<div class='box' style='margin-top:14px'><h3 style='margin-top:0'>Últimos downloads <button class='s' onclick='desenharDl()'>Atualizar</button></h3>"+
    "<input id='dlf' placeholder='filtrar por usuário ou arquivo' oninput='tabelaDl()' style='width:100%;margin-bottom:8px'><div id='dlt'></div>"+
    "<p><button class='s' id='dlmais' onclick='maisDl()'"+(DLCUR?"":" hidden")+">Carregar mais</button></p></div>";
@@ -241,7 +244,18 @@ async function salvarDl(){
   var us=$("dlu").value.split(/[\s,;]+/).map(function(s){return s.trim().toLowerCase()}).filter(Boolean);
   if(modo==="lista"&&!us.length){alert("Coloque pelo menos um usuário na lista.");return}
   if(modo==="todos"&&!confirm("Ligar para TODOS os clientes ativos? Teste antes no modo lista com a sua conta."))return;
-  try{DLC=await api("links","PUT",{modo:modo,usuarios:us,auditoria:$("dla").value});$("dlmsg").innerHTML="<span class='ok'>Salvo. Vale para o próximo catálogo que o app baixar.</span>"}catch(e){$("dlmsg").innerHTML="<span class='bad'>"+esc(e.message)+"</span>"}
+  try{DLC=await api("links","PUT",{modo:modo,usuarios:us,auditoria:$("dla").value,publico:$("dlp").value});$("dlmsg").innerHTML="<span class='ok'>Salvo. Vale para o próximo catálogo que o app baixar.</span>"}catch(e){$("dlmsg").innerHTML="<span class='bad'>"+esc(e.message)+"</span>"}
+}
+async function checarR2(){
+  $("dlchk").innerHTML="<p class='mut'>Checando...</p>";
+  try{var r=await api("links/checagem");
+   var h="<table><tr><td>Links do R2 no catálogo</td><td>"+r.total+"</td></tr><tr><td>Protegidos (vão por /f/)</td><td>"+r.protegidos+"</td></tr><tr><td>Públicos (imagens, vídeos, app: vão por /p/)</td><td>"+r.publicos+"</td></tr>"+
+    "<tr><td>Sem rota (quebram se fechar o R2)</td><td class='"+(r.outros.length?"bad":"ok")+"'>"+r.outros.length+"</td></tr></table>";
+   if(r.outros.length)h+="<p class='bad'>Sem rota:</p><p class='mut' style='font-size:12px'>"+r.outros.slice(0,20).map(esc).join("<br>")+"</p>";
+   r.listas.forEach(function(l){h+="<p>Lista "+esc(l.lista)+": "+l.links+" links dentro"+(l.sem_rota?" <span class='bad'>("+l.sem_rota+" sem rota)</span>":" <span class='ok'>(todos com rota)</span>")+"</p>"});
+   h+=r.pronto?"<p class='ok'><b>Pronto para fechar o R2.</b> Antes, troque os links curtos (bit.ly) que apontam para o R2 (o instalador: /download-app).</p>"
+    :"<p class='warn'>Ainda não feche o R2. Precisa: proteção em <b>Todos os clientes ativos</b> + imagens/app <b>pelo servidor</b>"+(r.outros.length?" + resolver os links sem rota":"")+".</p>";
+   $("dlchk").innerHTML=h}catch(e){$("dlchk").innerHTML="<p class='bad'>"+esc(e.message)+"</p>"}
 }
 
 /* ---------- modal ---------- */
@@ -290,7 +304,7 @@ function cardRow(g,i){
   if(ch){var k=M.games.filter(function(x){return x.f[0]===ch}).length;sub=k+" card(s) dentro";}
   else sub=esc(g.f[2])+" · "+n+(n>72?" ⚠":"")+" botões";
   if(SQ)sub+=" · "+esc(catLabel(g.f[0]));
-  return "<div class='cd"+(i===SEL?" on":"")+"' onclick='"+(ch&&!SQ?"abrirPasta("+i+")":"selCard("+i+")")+"'><img src='"+esc(g.f[1])+"' onerror=\"this.style.visibility='hidden'\"><div class='t'><b>"+esc(g.f[4]||"(sem título)")+"</b><span>"+sub+"</span></div>"+(ch?"<div style='margin-left:auto;font-size:22px;color:#8c93a6'>›</div>":"")+"</div>";
+  return "<div class='cd"+(i===SEL?" on":"")+"' onclick='"+(ch&&!SQ?"abrirPasta("+i+")":"selCard("+i+")")+"'><img src='"+esc(vis(g.f[1]))+"' onerror=\"this.style.visibility='hidden'\"><div class='t'><b>"+esc(g.f[4]||"(sem título)")+"</b><span>"+sub+"</span></div>"+(ch?"<div style='margin-left:auto;font-size:22px;color:#8c93a6'>›</div>":"")+"</div>";
 }
 function desenharLista(){
   var el=$("lcol");if(!el)return;
@@ -487,7 +501,7 @@ async function r2Abrir(pref){
     h+="<div class='box'><div class='crumb' style='margin-bottom:8px'>"+crumb(pref,"r2Abrir")+"</div><table><tr><th>Nome</th><th>Tamanho</th><th>Data</th><th></th><th></th></tr>";
     j.folders.forEach(function(d){h+="<tr><td colspan='4'><a style='cursor:pointer' onclick='r2Abrir(\""+esc(d).replace(/'/g,"&#39;")+"\")'>📁 "+esc(d.slice(pref.length))+"</a></td><td></td></tr>"});
     j.files.forEach(function(f,i){
-      var img=/\.(png|jpe?g|webp|gif)$/i.test(f.key)&&f.size<4e6?"<img class='th' loading='lazy' src='"+esc(urlOf(f.key))+"'> ":"";
+      var img=/\.(png|jpe?g|webp|gif)$/i.test(f.key)&&f.size<4e6?"<img class='th' loading='lazy' src='"+esc(vis(urlOf(f.key)))+"'> ":"";
       var uso=ref[f.key]?"<span class='pill g'>no catálogo</span>":(PROT.indexOf(f.key)>=0||f.key.indexOf("APP-PS4/ICONE/")===0?"<span class='pill y'>protegido</span>":"<span class='pill'>sem uso</span>");
       h+="<tr><td>"+img+esc(f.key.slice(pref.length))+"</td><td>"+fs(f.size)+"</td><td class='mut'>"+fd(f.uploaded)+"</td><td>"+uso+"</td><td style='white-space:nowrap'><button class='s' onclick='r2Copiar("+i+")'>copiar link</button> <a href='"+esc(urlOf(f.key))+"' target='_blank'><button class='s'>abrir</button></a></td></tr>";
     });
@@ -629,13 +643,13 @@ function desenharPrev(){
    M.cats.map(function(c){return "<span class='chip"+(c[0]===PCAT?" on":"")+"' onclick='PCAT=\""+esc(c[0])+"\";desenharPrev()'>"+esc(c[1])+"</span>"}).join("")+"</div><div class='grid'>";
   M.games.forEach(function(g,i){
     if(PCAT!=="all"&&g.f[0]!==PCAT)return;
-    h+="<div class='pc' onclick='prevCard("+i+")'><img src='"+esc(g.f[1])+"' onerror=\"this.style.visibility='hidden'\"><div><small>"+esc(g.f[2])+" · "+esc(g.f[3])+"</small><b>"+esc(g.f[4])+"</b><small>"+g.btns.length+" botões</small></div></div>";
+    h+="<div class='pc' onclick='prevCard("+i+")'><img src='"+esc(vis(g.f[1]))+"' onerror=\"this.style.visibility='hidden'\"><div><small>"+esc(g.f[2])+" · "+esc(g.f[3])+"</small><b>"+esc(g.f[4])+"</b><small>"+g.btns.length+" botões</small></div></div>";
   });
   v.innerHTML=h+"</div>";
 }
 function prevCard(i){
   var g=M.games[i];
-  var h="<div style='display:flex;gap:14px'><img src='"+esc(g.f[1])+"' style='width:200px;height:auto;aspect-ratio:744/1254;object-fit:contain;border-radius:10px'><div><span class='pill'>"+esc(g.f[2])+"</span><h3 style='margin:6px 0'>"+esc(g.f[4])+"</h3><div class='mut'>"+esc(g.f[3])+"</div><p>"+esc(g.f[5])+"</p></div></div><div style='margin-top:12px'>";
+  var h="<div style='display:flex;gap:14px'><img src='"+esc(vis(g.f[1]))+"' style='width:200px;height:auto;aspect-ratio:744/1254;object-fit:contain;border-radius:10px'><div><span class='pill'>"+esc(g.f[2])+"</span><h3 style='margin:6px 0'>"+esc(g.f[4])+"</h3><div class='mut'>"+esc(g.f[3])+"</div><p>"+esc(g.f[5])+"</p></div></div><div style='margin-top:12px'>";
   g.btns.forEach(function(b){var a=b.f[7]||"pkg";h+="<div class='cd' style='cursor:default'><div class='t'><b>"+esc(b.f[0])+"</b><span>"+esc(b.f[1])+" · "+esc(a)+(a==="pkg"&&b.f[4]!=="0"?" · "+fs(b.f[4]):"")+"</span></div></div>"});
   abrir("Card: "+g.f[4],h+"</div>");
 }

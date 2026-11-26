@@ -1,13 +1,10 @@
-/* chave PUBLICA das licencas JK PATCHS (Ed25519).
- *
- * ESTE E O ARQUIVO PROVISORIO: troque pelo lic_pub.h gerado por
- *   node plataforma/central/gerar_chaves.mjs <pasta>
- * (a chave PRIVADA do mesmo par vai no secret LIC_PRIV do Cloudflare).
- *
- * Enquanto JK_LIC_PUB_PENDENTE existir, a PRX NAO ativa o VAR (falha fechada) e grava no log:
- *   "VAR desligado: build sem chave publica". */
+/* chave PUBLICA das licencas JK PATCHS (Ed25519). Gerada por gerar_chaves.mjs. */
 #ifndef JK_LIC_PUB_H
 #define JK_LIC_PUB_H
-#define JK_LIC_PUB_PENDENTE 1
-static const unsigned char JK_LIC_PUB[32] = { 0 };
+static const unsigned char JK_LIC_PUB[32] = {
+  0x78, 0x06, 0xdf, 0xac, 0xef, 0x0e, 0x7a, 0x60,
+  0xb6, 0xaf, 0xf9, 0xd6, 0x3a, 0x6b, 0x99, 0xf6,
+  0xc0, 0x2b, 0xb6, 0xb9, 0x2a, 0xf2, 0x46, 0xa7,
+  0xf2, 0x50, 0x32, 0xd9, 0x7c, 0xae, 0x2c, 0xbd
+};
 #endif
