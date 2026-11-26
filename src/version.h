@@ -3,6 +3,6 @@
 #ifndef VERSION_H
 #define VERSION_H
 #ifndef APP_VERSION                /* o build do modulo de teste pode trocar (-DAPP_VERSION=\"1.22\") */
-#define APP_VERSION "1.53"
+#define APP_VERSION "1.55"
 #endif
 #endif
