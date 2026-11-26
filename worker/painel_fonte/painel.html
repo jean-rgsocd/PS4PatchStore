@@ -200,8 +200,12 @@ function abas(){
   TABS.forEach(function(t){$("v_"+t[0]).hidden=t[0]!==TABV});
 }
 function irAba(a){TABV=a;abas();if(a==="cat")desenharCat();if(a==="r2")r2Abrir(R2P);if(a==="prev")desenharPrev();if(a==="dl")desenharDl();if(a==="users"){var v=$("v_users");if(!v.firstChild)v.innerHTML="<iframe src='/jkpainel17/usuarios'></iframe>"}}
+/* modo embutido na Central: /jkpainel17?embed=1&aba=cat|r2|prev|dl (sem barra superior; mesmo login pn_tk) */
+var EMB=/[?&]embed=1/.test(location.search),ABA0=(location.search.match(/[?&]aba=(cat|r2|prev|dl)/)||[])[1]||"";
 async function iniciar(){
-  $("login").hidden=true;$("app").hidden=false;abas();
+  $("login").hidden=true;$("app").hidden=false;
+  if(EMB){var tp=document.querySelector(".top");if(tp)tp.style.display="none";if(ABA0)TABV=ABA0}
+  abas();
   try{await carregarCat();await carregarAll()}catch(e){}
   irAba(TABV);
 }

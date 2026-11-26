@@ -108,13 +108,13 @@ function pode(a){var P={admin:["clientes","consoles","planos","licencas","produt
 /* ---------- menu ---------- */
 var MENU=[["VISÃO GERAL",[["dash","▦","Dashboard","Métricas e visão executiva"]]],
  ["OPERAÇÃO",[["cli","👥","Clientes","Contas, planos e histórico"],["con","🎮","Consoles","Dispositivos vinculados"],["pla","💳","Planos","Preço, duração, consoles e produtos"],["lic","🔑","Licenças","Licenças explícitas por cliente"]]],
- ["CATÁLOGO E PRODUTOS",[["prod","📦","Produtos","PRX, CPK e PKG"],["dep","🔗","Dependências","Quem depende de quem"],["dl","⬇","Downloads","Downloads protegidos"],["r2","☁","Arquivos R2","Envio e gerência no painel"]]],
+ ["CATÁLOGO E PRODUTOS",[["prod","📦","Produtos","PRX, CPK e PKG"],["dep","🔗","Dependências","Quem depende de quem"],["dl","⬇","Downloads","Downloads protegidos"],["r2","☁","Arquivos R2","Envio e gerência no painel"],["cat","📚","Catálogo","Cards, botões, histórico e restauração"],["prev","👁","Prévia do app","Como o app mostra o catálogo"]]],
  ["SEGURANÇA E SISTEMA",[["aud","📜","Auditoria","Ações administrativas"],["sec","🛡","Segurança","Acessos negados e alertas"],["eq","🧑‍💼","Equipe","Usuários do painel e papéis"],["cfg","⚙","Configurações","Política de licenças e chave"]]]];
 function nav(){var h="";MENU.forEach(function(g){h+="<div class='grp'>"+g[0]+"</div>";g[1].forEach(function(i){h+="<div class='it"+(V===i[0]?" on":"")+"' onclick='ir(\""+i[0]+"\")'><i>"+i[1]+"</i>"+i[2]+"</div>"})});$("nav").innerHTML=h}
-function ir(v){if(v==="r2"){location.href="/jkpainel17";return}V=v;nav();$("side").classList.remove("open");
+function ir(v){V=v;nav();$("side").classList.remove("open");
   var it=null;MENU.forEach(function(g){g[1].forEach(function(i){if(i[0]===v)it=i})});$("ttl").textContent=it[2];$("sub").textContent=it[3];
   $("pg").innerHTML="<p class='mut'>Carregando...</p>";
-  ({dash:vDash,cli:vCli,con:vCon,pla:vPla,lic:vLic,prod:vProd,dep:vDep,dl:vDl,aud:vAud,sec:vSec,eq:vEq,cfg:vCfg})[v]().catch(function(e){$("pg").innerHTML="<p class='bad'>"+esc(e.message)+"</p>"})}
+  ({dash:vDash,cli:vCli,con:vCon,pla:vPla,lic:vLic,prod:vProd,dep:vDep,dl:vDl,r2:vR2,cat:vCat,prev:vPrev,aud:vAud,sec:vSec,eq:vEq,cfg:vCfg})[v]().catch(function(e){$("pg").innerHTML="<p class='bad'>"+esc(e.message)+"</p>"})}
 async function iniciar(){
   try{EU=await api("c/eu")}catch(e){return}
   $("login").hidden=true;$("app").hidden=false;$("wu").textContent=EU.u;$("wp").textContent=({super:"Superadministrador",admin:"Administrador",suporte:"Suporte",operador:"Operador"})[EU.papel]||EU.papel;
@@ -196,6 +196,8 @@ async function salvarLic(){try{await api("c/licencas","PUT",{u:CU.user,itens:LIC
 
 /* ---------- consoles ---------- */
 var CO=[],COB="";
+function emb(a){$("pg").innerHTML="<iframe src='/jkpainel17?embed=1&aba="+a+"' style='width:100%;height:calc(100vh - 150px);min-height:560px;border:1px solid var(--line);border-radius:14px;background:#060a14'></iframe>";return Promise.resolve()}
+function vR2(){return emb("r2")}function vCat(){return emb("cat")}function vPrev(){return emb("prev")}
 async function vCon(){CO=(await api("c/consoles")).itens;desenharCon()}
 function desenharCon(){var f=CO.filter(function(x){return !COB||x.cid.indexOf(COB)>=0||String(x.user).indexOf(COB)>=0});
   $("pg").innerHTML="<div class='row' style='margin-bottom:12px'><span class='mut'>Consoles aparecem quando o app pede as licenças (/lic/sync).</span><input placeholder='buscar console ou cliente' value='"+esc(COB)+"' oninput='COB=this.value.toLowerCase();desenharCon()' style='margin-left:auto'></div>"+
