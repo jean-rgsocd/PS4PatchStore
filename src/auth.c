@@ -382,6 +382,7 @@ static int cache_use(const char *user) {
   return 1;
 }
 
+#ifdef JK_CORE   /* v1.55: Core em standby; so compila com -DJK_CORE */
 /* ------------------------------------------------------------------ licencas das PRX (fase H) */
 /* POST /lic/sync dev=<id do console>. Resposta: "OK" + linhas "LIC\t<modulo>\t<autorizacao>" ou "NEG\t<modulo>\t<motivo>",
  * e (JK Core, v1.48) "KEY\t<modulo>\t<chave hex>" + "IDX\t<lista separada por virgula>".
@@ -472,6 +473,8 @@ static void lic_sync(const char *token) {
   free(resp);
 }
 
+#endif /* JK_CORE */
+
 static int fetch_catalog(const char *user, const char *token, int silent_login_needed, int preview) {
   char err[200] = "";
   char *resp = NULL;
@@ -526,7 +529,9 @@ static int fetch_catalog(const char *user, const char *token, int silent_login_n
         free(r3);
       }
     }
+#ifdef JK_CORE                                         /* Core em standby (branch core-standby): so liga com -DJK_CORE */
     lic_sync(token);                                   /* autorizacoes assinadas das PRX (/data/jk/lic) */
+#endif
   }
   post_event2(AUTH_EV_CATALOG, NULL, user, resp, plan, now);
   g_registered = 0;
