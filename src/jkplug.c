@@ -808,3 +808,86 @@ int jkx_toggle(const CatJkx *x, const CatPlBoard *b, int on, JkxLog log) {
   jkx_apply(log);
   return nv;
 }
+
+/* ------------------------------------------------------------------ v1.48: liga o ATIVADO/DESATIVADO da aba
+ * aos modulos do jk_core, via /data/jk/core/off.txt (um nome de modulo por linha). O jk_core (plugins/jk_core)
+ * deixa de carregar qualquer modulo que aparecer ali, mesmo com licenca valida - e o jeito do cliente ativar
+ * ou desativar funcionalidades que hoje vivem dentro do Core, pelo mesmo botao que ja usa pra "Sula" etc. */
+#define CORE_OFF "/data/jk/core/off.txt"
+static char core_off_buf[4096] = "";
+static int core_off_loaded = 0;
+static void core_off_load(void) {
+  if (core_off_loaded) return;
+  core_off_loaded = 1;
+  long long n = 0;
+  char *b = readf(CORE_OFF, &n, (long long)sizeof(core_off_buf) - 1);
+  if (b) {
+    if (n > (long long)sizeof(core_off_buf) - 1) n = (long long)sizeof(core_off_buf) - 1;
+    memcpy(core_off_buf, b, (size_t)n);
+    core_off_buf[n] = 0;
+    free(b);
+  } else core_off_buf[0] = 0;
+}
+static int core_off_tem(const char *mod) {
+  core_off_load();
+  size_t ml = strlen(mod);
+  for (char *l = core_off_buf; *l;) {
+    char *e = strchr(l, '\n');
+    size_t L = e ? (size_t)(e - l) : strlen(l);
+    if (L == ml && !memcmp(l, mod, ml)) return 1;
+    if (!e) break;
+    l = e + 1;
+  }
+  return 0;
+}
+void jkx_core_off_set(const char *mod, int desligado) {
+  if (!mod || !mod[0]) return;
+  core_off_load();
+  if ((desligado ? 1 : 0) == core_off_tem(mod)) return;      /* ja esta no estado certo: nao reescreve a toa */
+  char out[sizeof(core_off_buf)];
+  size_t o = 0, ml = strlen(mod);
+  for (char *l = core_off_buf; *l;) {
+    char *e = strchr(l, '\n');
+    size_t L = e ? (size_t)(e - l) + 1 : strlen(l);
+    size_t Lc = e ? (size_t)(e - l) : strlen(l);
+    int igual = Lc == ml && !memcmp(l, mod, ml);
+    if (!igual && o + L < sizeof(out) - 48) { memcpy(out + o, l, L); o += L; if (!e) out[o++] = '\n'; }
+    if (!e) break;
+    l = e + 1;
+  }
+  if (desligado) o += (size_t)snprintf(out + o, sizeof(out) - o, "%s\n", mod);
+  memcpy(core_off_buf, out, o);
+  core_off_buf[o] = 0;
+  { char d[300]; P("/data/jk", d, sizeof(d)); mkdir(d, 0777); P("/data/jk/core", d, sizeof(d)); mkdir(d, 0777); }
+  writef(CORE_OFF, core_off_buf, (long long)o);
+}
+
+/* card da aba Plugins (x->key) -> modulo(s) do indice.txt do jk_core, por variante do jogo (b->id:
+ * "mega"/"brasfoot"/"demisan"). Ate 2 modulos por card (ex.: "sula" = sula_grupos + supercopas_demisan).
+ * NULL/card ausente daqui = card ainda nao migrado pro Core (nao mexe em nada, continua so prx/cpk avulso). */
+typedef struct { const char *key; const char *mega[2]; const char *brasfoot[2]; const char *demisan[2]; } CoreMap;
+static const CoreMap CORE_MAP[] = {
+  { "craque",          { "craque", NULL },                       { "craque", NULL },                       { "craque", NULL } },
+  { "var",             { "var", NULL },                          { "var", NULL },                          { "var", NULL } },
+  { "sula",            { "sula_grupos", NULL },                  { "sula_grupos", NULL },                  { "sula_grupos_demisan", "supercopas_demisan" } },
+  { "comemoracoes",    { "comemorar", "pcc_v305" },               { "comemorar", "pcc_v305" },               { "comemorar", "pcc_v305" } },
+  { "hinos",           { "hinos_gol", NULL },                    { "hinos_gol", NULL },                    { "hinos_gol", NULL } },
+  { "redes",           { "netsveu", NULL },                      { "netsveu", NULL },                      { NULL, NULL } },
+  { "mlorcamento",     { "ml_orcamento", "orcamento_tela" },      { "ml_orcamento", "orcamento_tela" },      { "ml_orcamento", "orcamento_tela_demisan" } },
+  { "pes2026",         { "pes2026", NULL },                      { "pes2026", NULL },                      { "pes2026", NULL } },
+  { "brazilianseason", { "brazilian_season_v121", NULL },         { "brazilian_season_v121", NULL },         { "brazilian_season_v121", NULL } },
+  { "season2026",      { "season_2026", NULL },                  { "season_2026", NULL },                  { NULL, NULL } },
+  { "handicap",        { "pure_ai", NULL },                      { "pure_ai", NULL },                      { "pure_ai", NULL } },
+  { "finvivas",        { "fin_vivas_mega", NULL },                { "fin_vivas", NULL },                    { "fin_vivas_demisan", NULL } },
+};
+#define CORE_MAP_N (sizeof(CORE_MAP) / sizeof(CORE_MAP[0]))
+
+void jkx_core_off_aplicar(const CatJkx *x, const CatPlBoard *b, int ativo) {
+  if (!x || !b) return;
+  for (size_t i = 0; i < CORE_MAP_N; i++) {
+    if (strcmp(CORE_MAP[i].key, x->key)) continue;
+    const char *const *l = !strcmp(b->id, "demisan") ? CORE_MAP[i].demisan : !strcmp(b->id, "brasfoot") ? CORE_MAP[i].brasfoot : CORE_MAP[i].mega;
+    for (int k = 0; k < 2 && l[k]; k++) jkx_core_off_set(l[k], !ativo);
+    return;
+  }
+}

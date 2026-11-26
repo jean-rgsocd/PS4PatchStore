@@ -51,4 +51,11 @@ int  jkx_fixed_present(const CatJkx *x, const CatPlBoard *b);   /* card FIXO: ar
 int  jkx_fixed_active(const CatJkx *x, const CatPlBoard *b);    /* card FIXO ligado agora (prx =true no plugins.ini) */
 int  jkx_fixed_files(const CatJkx *x, const CatPlBoard *b);     /* card FIXO tem arquivos no catalogo (pode baixar pela aba) */
 
+/* v1.48: liga o ATIVADO/DESATIVADO da aba Plugins aos modulos do jk_core (/data/jk/core/off.txt).
+ * Chamar logo depois de jkx_toggle(), com o mesmo "on" que foi passado pra ele. Card sem modulo no
+ * Core (ver CORE_MAP em jkplug.c): nao faz nada, comportamento identico ao de hoje. */
+void jkx_core_off_aplicar(const CatJkx *x, const CatPlBoard *b, int ativo);
+/* liga/desliga um modulo do Core direto pelo nome (usado por jkx_core_off_aplicar; exposto pra testes) */
+void jkx_core_off_set(const char *modulo, int desligado);
+
 #endif

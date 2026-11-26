@@ -30,7 +30,7 @@
 attr_public const char *g_pluginName = "jk_core";
 attr_public const char *g_pluginDesc = "JK PATCHS - Core (modulos licenciados)";
 attr_public const char *g_pluginAuth = "JK PATCHS";
-attr_public uint32_t g_pluginVersion = 0x00000100;
+attr_public uint32_t g_pluginVersion = 0x00000101;
 
 #define PASTA_CORE "/data/jk/core"
 #define PASTA_LIC  "/data/jk/lic"
@@ -119,6 +119,27 @@ static int nome_ok(const char *s)
     return 1;
 }
 
+/* v1.01: lista de modulos que o CLIENTE desligou manualmente pelo app (aba Plugins),
+ * um nome por linha, em /data/jk/core/off.txt. Mesmo com licenca valida (indice.txt),
+ * um modulo que aparece aqui fica de fora - e o jeito do cliente ativar/desativar os
+ * modulos do Core pelo proprio app, sem precisar pedir pro admin. Arquivo ausente
+ * (cliente nunca desligou nada, ou console antigo) = comportamento identico ao de hoje. */
+#define ARQ_OFF PASTA_CORE "/off.txt"
+static int lista_tem(const unsigned char *lista, size_t n, const char *mod)
+{
+    if (!lista) return 0;
+    size_t ml = strlen(mod);
+    const unsigned char *p = lista, *fim = lista + n;
+    while (p < fim) {
+        const unsigned char *nl = (const unsigned char *)memchr(p, '\n', (size_t)(fim - p));
+        size_t l = nl ? (size_t)(nl - p) : (size_t)(fim - p);
+        while (l && (p[l - 1] == '\r' || p[l - 1] == ' ')) l--;
+        if (l == ml && !memcmp(p, mod, ml)) return 1;
+        p = nl ? nl + 1 : fim;
+    }
+    return 0;
+}
+
 typedef int32_t (*fn_plugin_load)(int32_t argc, const char *argv[]);
 
 static int carregar_modulo(const char *mod, const char *titulo, const char *dev, uint64_t agora, uint64_t visto)
@@ -196,6 +217,8 @@ static void *trabalho(void *arg)
     if (vb) { for (size_t i = 0; i < n && vb[i] >= '0' && vb[i] <= '9'; i++) visto = visto * 10 + (uint64_t)(vb[i] - '0'); free(vb); }
     unsigned char *ind = ler_tudo(PASTA_LIC "/indice.txt", 4096, &n);
     if (!ind) { logf_("nenhum modulo liberado (abra o app JK PATCHS com internet)"); return 0; }
+    size_t noff = 0;
+    unsigned char *off = ler_tudo(ARQ_OFF, 4096, &noff);   /* opcional: ausente = nada desligado pelo cliente */
     int ativos = 0, total = 0;
     char *s = (char *)ind;
     while (s && *s && total < MAX_MODS) {
@@ -203,10 +226,15 @@ static void *trabalho(void *arg)
         if (nl) *nl = 0;
         size_t l = strlen(s);
         while (l && (s[l - 1] == '\r' || s[l - 1] == ' ')) s[--l] = 0;
-        if (nome_ok(s)) { total++; if (carregar_modulo(s, titulo, dev, agora, visto) > 0) ativos++; }
+        if (nome_ok(s)) {
+            total++;
+            if (lista_tem(off, noff, s)) logf_("%s: desativado pelo cliente (off.txt)", s);
+            else if (carregar_modulo(s, titulo, dev, agora, visto) > 0) ativos++;
+        }
         s = nl ? nl + 1 : NULL;
     }
     free(ind);
+    if (off) free(off);
     if (ativos && agora > visto) {
         char t[24]; int k = snprintf(t, sizeof t, "%llu", (unsigned long long)agora);
         if (k > 0) gravar(ARQ_VISTO, t, (size_t)k);

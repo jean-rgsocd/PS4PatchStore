@@ -422,6 +422,7 @@ static void jkx_go(UI *ui) {                                     /* v1.43: X na 
     if (ui->busy) { ui_toast(ui, "Aguarde o download terminar para ativar ou desativar.", UI_TOAST_INFO); return; }
     int on = !ui->jx_on[sel];
     jkx_toggle(x, b, on, NULL);
+    jkx_core_off_aplicar(x, b, on);   /* v1.48: se esse card tiver modulo(s) no jk_core, liga/desliga eles tambem */
     char t[160]; snprintf(t, sizeof(t), "%s %s. Feche e abra o PES para valer.", x->name, on ? "ATIVADO" : "DESATIVADO");
     ui_toast(ui, t, on ? UI_TOAST_OK : UI_TOAST_INFO);
     ui->jk_scanned = 0; ui->dirty = 1;

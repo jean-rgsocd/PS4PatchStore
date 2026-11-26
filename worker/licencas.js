@@ -182,6 +182,12 @@ export function autorizar({ rec, user, estado, prod, planos, licencas, versao })
     if (fim && fim > t) return { ok: true, ate: fim, via: l.tipo };
   }
   if (estado !== "ativo") return { ok: false, motivo: estado === "vencido" ? "assinatura vencida" : "conta " + estado };
+  const fimAss = rec.v2 && rec.expires ? Math.floor(Date.parse(rec.expires) / 1000) : 0;
+  // CORE (modulos do jk_core): sem diferenca por plano. Toda conta ativa (e sem licenca
+  // explicita revogada/suspensa, ja conferido acima) recebe todos os modulos CORE; quem
+  // ativa ou desativa cada um e o proprio cliente, pelo app. So o status do produto
+  // (ativo/rascunho/bloqueado, ja conferido no topo da funcao) continua valendo pra todos.
+  if (prod.tipo === "CORE") return { ok: true, ate: fimAss, via: "core-livre" };
   const plano = planos[rec.plan || ""];
   const lista = plano ? plano.produtos || ["*"] : ["*"];      // conta antiga/sem plano cadastrado: todos (igual a hoje)
   if (plano && plano.status === "inativo") return { ok: false, motivo: "plano inativo" };
@@ -189,7 +195,6 @@ export function autorizar({ rec, user, estado, prod, planos, licencas, versao })
   if ((prod.planos || ["*"]).length && !(prod.planos || ["*"]).includes("*") && !(prod.planos || []).includes(rec.plan || "")) {
     return { ok: false, motivo: "produto nao liberado para o plano" };
   }
-  const fimAss = rec.v2 && rec.expires ? Math.floor(Date.parse(rec.expires) / 1000) : 0;
   return { ok: true, ate: fimAss, via: "assinatura" };
 }
 
