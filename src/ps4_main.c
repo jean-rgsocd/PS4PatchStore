@@ -590,7 +590,8 @@ static void *install_thread(void *arg) {
       if (!strncmp(j->btn.name, "JK Placares", 11)) {  /* v1.56: o PLACAR e a base de tudo: junta aqui os extras do quadro (prx, plugins.ini, DpFileList, hinos...).
                                                         * No botao eles estouravam os 4096 bytes e eram descartados em silencio. */
         for (int bi = 0; bi < cat.nplb; bi++) {
-          if (strcmp(cat.plb[bi].dest, j->btn.dest) || !cat.plb[bi].extra[0]) continue;
+          if (!cat.plb[bi].extra[0]) continue;
+          if (!strncmp(j->btn.content_id, "PLB:", 4) ? strcmp(cat.plb[bi].id, j->btn.content_id + 4) : strcmp(cat.plb[bi].dest, j->btn.dest)) continue;   /* pelo id do quadro; sem id, pela pasta */
           size_t L0 = strlen(ex), L1 = strlen(cat.plb[bi].extra);
           if (L0 + 1 + L1 < sizeof(ex)) snprintf(ex + L0, sizeof(ex) - L0, "%s%s", L0 ? "|" : "", cat.plb[bi].extra);
           else install_log("AVISO: extras do quadro nao couberam (catalogo muito grande)");
