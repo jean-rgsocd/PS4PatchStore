@@ -578,9 +578,12 @@ export async function centralApi(request, env, url, p, m, quem, deps) {
     if (!["PRX", "CPK", "PKG", "CORE"].includes(x.tipo)) return json(400, { erro: "tipo inválido" });
     // CORE = PRX sem código-fonte, cifrada (.jkm) e carregada pelo JK Core. Sempre licenciada; tem chave de conteúdo.
     const licenciavel = x.tipo === "PRX" || x.tipo === "CORE";
-    const chaveConteudo = x.tipo === "CORE" && /^[0-9a-f]{64}$/.test(String(x.chave_conteudo || "")) ? x.chave_conteudo : "";
-    if (x.tipo === "CORE" && x.licenciado && !chaveConteudo) return json(400, { erro: "módulo do Core precisa da chave de conteúdo (64 hex, do cifra_modulo)" });
     const itens = Object.assign({}, await lerProdutos(env));
+    const velho = itens[x.id] || {};
+    // Se nao veio chave nova valida nesta chamada, mantem a que ja estava gravada (o campo na tela
+    // fica em branco de proposito, por seguranca, entao salvar sem mexer nao pode apagar a chave).
+    const chaveConteudo = x.tipo === "CORE" ? (/^[0-9a-f]{64}$/.test(String(x.chave_conteudo || "")) ? x.chave_conteudo : (velho.chave_conteudo || "")) : "";
+    if (x.tipo === "CORE" && x.licenciado && !chaveConteudo) return json(400, { erro: "módulo do Core precisa da chave de conteúdo (64 hex, do cifra_modulo)" });
     const depsOk = [];
     for (const d of (x.deps || []).slice(0, 50)) {
       if (!itens[d.id] || d.id === x.id) return json(400, { erro: "dependência inexistente: " + d.id });
@@ -589,7 +592,6 @@ export async function centralApi(request, env, url, p, m, quem, deps) {
     // sem ciclos
     const visita = (id, cam) => { if (cam.includes(id)) return true; const p2 = id === x.id ? { deps: depsOk } : itens[id]; return (p2 && p2.deps || []).some((d) => visita(d.id, cam.concat(id))); };
     if (visita(x.id, [])) return json(400, { erro: "dependência circular" });
-    const velho = itens[x.id] || {};
     itens[x.id] = { id: x.id, tipo: x.tipo, nome: String(x.nome || x.id).slice(0, 80), arquivo: String(x.arquivo || "").slice(0, 400),
       versao: String(x.versao || "").slice(0, 20), versao_min: String(x.versao_min || "").slice(0, 20), sha256: /^[0-9a-f]{64}$/.test(x.sha256 || "") ? x.sha256 : "",
       tamanho: Math.max(0, Number(x.tamanho) || 0), status: ["ativo", "bloqueado", "rascunho", "revogado"].includes(x.status) ? x.status : "ativo",
