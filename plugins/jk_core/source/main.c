@@ -54,30 +54,28 @@ static void logf_(const char *fmt, ...)
     if (g_log >= 0) sceKernelWrite(g_log, b, (size_t)n);
 }
 
-/* le um arquivo inteiro (ate max bytes). Devolve o buffer (malloc) ou NULL. */
+/* le um arquivo inteiro (ate max bytes). Devolve o buffer (malloc) ou NULL.
+ * Nao confia no tamanho que o fstat informa: neste console o metadado do arquivo
+ * pode vir desatualizado quando lido por um processo diferente de quem escreveu
+ * (confirmado: fstat relatou 8 bytes para um arquivo que na verdade tem 32).
+ * Por isso le direto ate o fim (EOF) ou ate "max", em vez de usar st_size. */
 static unsigned char *ler_tudo(const char *p, size_t max, size_t *n_out)
 {
     int fd = sceKernelOpen(p, 0, 0);
     if (fd < 0) { logf_("diag ler_tudo: open falhou p=%s fd=%d", p, fd); return NULL; }
-    OrbisKernelStat st;
-    memset(&st, 0, sizeof st);
-    int fr = sceKernelFstat(fd, &st);
-    if (fr != 0 || st.st_size <= 0 || (size_t)st.st_size > max) {
-        logf_("diag ler_tudo: fstat p=%s fr=%d size=%lld max=%zu", p, fr, (long long)st.st_size, max);
-        sceKernelClose(fd);
-        return NULL;
-    }
-    size_t n = (size_t)st.st_size;
-    unsigned char *b = (unsigned char *)malloc(n + 1);
-    if (!b) { logf_("diag ler_tudo: malloc falhou p=%s n=%zu", p, n); sceKernelClose(fd); return NULL; }
+    unsigned char *b = (unsigned char *)malloc(max + 1);
+    if (!b) { logf_("diag ler_tudo: malloc falhou p=%s n=%zu", p, max); sceKernelClose(fd); return NULL; }
     size_t lido = 0;
-    while (lido < n) {
-        int r = (int)sceKernelRead(fd, b + lido, n - lido);
-        if (r <= 0) break;
+    for (;;) {
+        int r = (int)sceKernelRead(fd, b + lido, max - lido);
+        if (r < 0) { logf_("diag ler_tudo: erro de leitura p=%s r=%d lido=%zu", p, r, lido); free(b); sceKernelClose(fd); return NULL; }
+        if (r == 0) break;
         lido += (size_t)r;
+        if (lido >= max) break;
     }
     sceKernelClose(fd);
-    if (lido != n) { logf_("diag ler_tudo: read incompleto p=%s lido=%zu n=%zu", p, lido, n); free(b); return NULL; }
+    if (lido == 0) { logf_("diag ler_tudo: arquivo vazio p=%s", p); free(b); return NULL; }
+    size_t n = lido;
     b[n] = 0;
     *n_out = n;
     return b;
