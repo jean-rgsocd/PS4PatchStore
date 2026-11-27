@@ -138,6 +138,12 @@ static void url_name(const char *u, char *out, int cap) {
   }
 }
 
+/* v1.56: JK_PLACAR_SUPER / JK_PLACAR_RECOPA tem DONO: o placar (PLACARES_SUPER/JK e PLACARES_RECOPA/JK). As copias antigas
+ * que o card Sula/Supercopa citava (SUPERCOPAS/JK_PLACAR_*.cpk, versoes diferentes) nao sao mais baixadas nem listadas. */
+int jkx_dono_placar(const char *url) {
+  return url && (strstr(url, "/SUPERCOPAS/JK_PLACAR_SUPER.cpk") || strstr(url, "/SUPERCOPAS/JK_PLACAR_RECOPA.cpk"));
+}
+
 static int items(const CatJkx *x, const char *dest, Item *it, int max) {
   char buf[sizeof(x->files)];
   snprintf(buf, sizeof(buf), "%s", x->files);
@@ -147,6 +153,7 @@ static int items(const CatJkx *x, const char *dest, Item *it, int max) {
     char *eq = strstr(s, "=https://");
     if (eq) {
       Item *t = &it[n];
+      if (jkx_dono_placar(eq + 1)) { if (!bar) break; s = bar + 1; continue; }
       memset(t, 0, sizeof(*t));
       *eq = 0;
       if (!strcmp(s, "@") || !strcmp(s, "@-")) { snprintf(t->dir, sizeof(t->dir), "%s", dest); t->afr = 1; t->nodp = s[1] == '-'; }

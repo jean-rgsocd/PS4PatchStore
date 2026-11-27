@@ -676,6 +676,11 @@ static void *install_thread(void *arg) {
         install_log(lmb);
         continue;
       }
+      if (jkx_dono_placar(it_url[u])) {                /* v1.56: SUPER/RECOPA sao do placar (as copias antigas do card Sula nao entram mais) */
+        char lmd[300]; snprintf(lmd, sizeof(lmd), "Item %d/%d pulado (e do placar): %s", u + 1, nit, filename);
+        install_log(lmd);
+        continue;
+      }
       if (strncmp(j->btn.name, "JK Placares", 11) &&   /* v1.56: o PLACAR e a base. Narrador/ML/Estadio nunca trocam o DpFileList.bin / plugins.ini que ja esta no console */
           !strncmp(path, "/data/GoldHEN/", 14) && !strcmp(filename, "DpFileList.bin") &&
           file_size_of(path) > 0) {
