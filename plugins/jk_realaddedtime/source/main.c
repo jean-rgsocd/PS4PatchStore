@@ -544,8 +544,9 @@ static void *trabalho(void *arg)
     struct proc_info pi; memset(&pi, 0, sizeof pi);
     if (sys_sdk_proc_info(&pi) != 0) { logf_("ERRO: proc_info"); return 0; }
 
-    if (strncmp(pi.titleid, "CUSA18676", 9) != 0) {
-        logf_("Nao e PES 2021 (CUSA18676), titulo=%s", pi.titleid);
+    /* Aceita CUSA18676 (JP) e CUSA22062 (EU/US) */
+    if (strncmp(pi.titleid, "CUSA18676", 9) != 0 && strncmp(pi.titleid, "CUSA22062", 9) != 0) {
+        logf_("Nao e PES 2021 (CUSA18676/CUSA22062), titulo=%s", pi.titleid);
         return 0;
     }
 
