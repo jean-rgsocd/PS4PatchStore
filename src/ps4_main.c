@@ -494,6 +494,7 @@ static int jkx_list_paths(const char *url, const char *dir, char (*paths)[200], 
 }
 
 /* ------------------------------------------------------------------ instalacao (thread) */
+static Catalog cat;                  /* (declaracao antecipada: definido mais abaixo) */
 typedef struct { CatButton btn; } Job;
 
 /* progresso do download de arquivo (a thread escreve, o laco principal mostra na tela) */
@@ -574,7 +575,7 @@ static void *install_thread(void *arg) {
      * Ex.: plugin = .cpk + DpFileList.bin; Comemoracoes = 5 arquivos em 3 pastas. */
     /* v1.42: 1 principal + ate 40 extras + ate 80 itens vindos de listas "?list" (hinos pos-gol).
      * Fora da pilha (static): so existe uma instalacao por vez (ui->busy). */
-    enum { MAXIT = 121, MAXEX = 41 };
+    enum { MAXIT = 161, MAXEX = 81 };
     static char it_url[MAXIT][1024];
     static char it_dir[MAXIT][120];
     static char it_soft[MAXIT];                         /* 1 = falha nao derruba a instalacao (ex.: icone, hino) */
@@ -584,8 +585,19 @@ static void *install_thread(void *arg) {
     it_soft[0] = 0;
     nit = 1;
     {
-      char ex[8192];
+      static char ex[16384];                            /* v1.56: static (fora da pilha) e maior: placar + base do quadro cabem juntos */
       snprintf(ex, sizeof(ex), "%s", j->btn.extra);
+      if (!strncmp(j->btn.name, "JK Placares", 11)) {  /* v1.56: o PLACAR e a base de tudo: junta aqui os extras do quadro (prx, plugins.ini, DpFileList, hinos...).
+                                                        * No botao eles estouravam os 4096 bytes e eram descartados em silencio. */
+        for (int bi = 0; bi < cat.nplb; bi++) {
+          if (!cat.plb[bi].extra[0]) continue;
+          if (!strncmp(j->btn.content_id, "PLB:", 4) ? strcmp(cat.plb[bi].id, j->btn.content_id + 4) : strcmp(cat.plb[bi].dest, j->btn.dest)) continue;   /* pelo id do quadro; sem id, pela pasta */
+          size_t L0 = strlen(ex), L1 = strlen(cat.plb[bi].extra);
+          if (L0 + 1 + L1 < sizeof(ex)) snprintf(ex + L0, sizeof(ex) - L0, "%s%s", L0 ? "|" : "", cat.plb[bi].extra);
+          else install_log("AVISO: extras do quadro nao couberam (catalogo muito grande)");
+          break;
+        }
+      }
       char *sv = ex;
       int nex = 1;                                      /* itens normais (a lista nao conta aqui) */
       while (*sv && nex < MAXEX && nit < MAXIT) {
@@ -615,6 +627,7 @@ static void *install_thread(void *arg) {
       }
     }
     char lastname[180] = "";
+    char job_cusa[16] = "";
     rc = 0;
     for (int u = 0; u < nit && rc == 0; u++) {
       char path[512], filename[180];
@@ -663,6 +676,28 @@ static void *install_thread(void *arg) {
         install_log(lmb);
         continue;
       }
+      if (jkx_dono_placar(it_url[u])) {                /* v1.56: SUPER/RECOPA sao do placar: o card Sula so baixa se faltar, e da pasta do placar (nao das copias antigas) */
+        if (file_size_of(path) > 0) {
+          char lmd[400]; snprintf(lmd, sizeof(lmd), "Item %d/%d ja existe (placar e o dono), mantido: %s", u + 1, nit, filename);
+          install_log(lmd);
+          continue;
+        }
+        char *sp = strstr(it_url[u], "/SUPERCOPAS/JK_PLACAR_");
+        if (sp) {
+          char tmp[1024];
+          const int rec = !strncmp(sp + 22, "RECOPA", 6);
+          *sp = 0;
+          snprintf(tmp, sizeof(tmp), "%s/SUPERCOPAS/PLACARES_%s/JK/JK_PLACAR_%s.cpk", it_url[u], rec ? "RECOPA" : "SUPER", rec ? "RECOPA" : "SUPER");
+          snprintf(it_url[u], sizeof(it_url[u]), "%s", tmp);
+        }
+      }
+      if (strncmp(j->btn.name, "JK Placares", 11) &&   /* v1.56: o PLACAR e a base. Narrador/ML/Estadio nunca trocam o DpFileList.bin / plugins.ini que ja esta no console */
+          !strncmp(path, "/data/GoldHEN/", 14) && !strcmp(filename, "DpFileList.bin") &&
+          file_size_of(path) > 0) {
+        char lmk[700]; snprintf(lmk, sizeof(lmk), "Item %d/%d ja registrado pelo placar, mantido (so acrescenta o que falta): %s", u + 1, nit, path);
+        install_log(lmk);
+        continue;
+      }
       {                                                /* "?once" na URL = so baixa se o arquivo ainda nao existir (nao troca o que o usuario ja escolheu) */
         char *q = strstr(it_url[u], "?once");
         if (q) {
@@ -682,6 +717,13 @@ static void *install_thread(void *arg) {
             install_log(lm1);
           }
         }
+      }
+      int ini_merge = 0;                               /* v1.56: plugins.ini existente nunca e trocado: baixa para .novo e junta so a secao deste jogo */
+      if (!strcmp(path, "/data/GoldHEN/plugins.ini") && file_size_of(path) > 0) {
+        const char *cu = NULL;
+        for (int w = 0; w < nit && !cu; w++) cu = strstr(it_dir[w], "/AFR/CUSA");
+        if (cu) { snprintf(job_cusa, sizeof(job_cusa), "%.9s", cu + 5); snprintf(path, sizeof(path), "/data/GoldHEN/plugins.ini.novo"); ini_merge = 1; }
+        else { install_log("plugins.ini ja existe e o botao nao diz o jogo: mantido"); continue; }
       }
       volatile int cancel = 0;
       char lm[1200];
@@ -703,6 +745,7 @@ static void *install_thread(void *arg) {
         } else if (!err[0]) snprintf(err, sizeof(err), "Falha ao baixar o arquivo.");
       } else {
         install_log(path);
+        if (ini_merge) { jkx_ini_merge(path, job_cusa, install_log); unlink(path); }
         jkx_note_download(path);                       /* v1.43d: prx de card FIXO (financas vivas): o fixup liga o deste patch */
         snprintf(lastname, sizeof(lastname), "%s", filename);
       }
@@ -712,6 +755,20 @@ static void *install_thread(void *arg) {
       else if (nit == 2) snprintf(err, sizeof(err), "Download concluído: %s + 1 arquivo", lastname);
       else snprintf(err, sizeof(err), "Download concluído: %s", lastname);
       rc = 1; /* sucesso de download (diferente de pedido de instalacao) */
+      for (int u = 0; u < nit; u++) {                  /* v1.56: prx desta instalacao no console sem linha no plugins.ini -> acrescenta (so no jogo do botao) */
+        const char *c = strstr(it_dir[u], "/AFR/CUSA");
+        if (!c) continue;
+        char cusa[16]; snprintf(cusa, sizeof(cusa), "%.9s", c + 5);
+        for (int v = 0; v < nit; v++) {
+          if (strcmp(it_dir[v], "/data/GoldHEN/plugins")) continue;
+          const char *fn = strrchr(it_url[v], '/'); fn = fn ? fn + 1 : it_url[v];
+          char nm[120]; size_t k = 0;
+          for (; fn[k] && fn[k] != '?' && k + 1 < sizeof(nm); k++) nm[k] = fn[k];
+          nm[k] = 0;
+          if (k > 4 && !strcmp(nm + k - 4, ".prx")) jkx_ini_garantir(nm, cusa, install_log);
+        }
+        break;
+      }
       jk_placares_fixup();                             /* v1.37: placares JK (Demisan) continuam ligados depois de qualquer download */
     }
   } else if (!strcmp(action, "video") || !strcmp(action, "image")) {

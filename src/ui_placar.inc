@@ -814,6 +814,7 @@ static void pl_install(UI *ui, const int *opt0, const char *what) {
   snprintf(cb.name, sizeof(cb.name), "JK Placares: %s", what);
   snprintf(cb.url, sizeof(cb.url), "%s", b->opt[opt[0]].url);
   snprintf(cb.action, sizeof(cb.action), "download");
+  snprintf(cb.content_id, sizeof(cb.content_id), "PLB:%s", b->id);   /* v1.56: o quadro (Mega e Brasfoot dividem a mesma pasta) */
   snprintf(cb.dest, sizeof(cb.dest), "%s", b->dest);
   cb.size = b->opt[opt[0]].size;
   size_t L = 0;

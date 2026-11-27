@@ -114,7 +114,7 @@ int jkx_for_board(const CatJkx *x, const char *board) {          /* "mega,brasfo
 }
 
 /* ------------------------------------------------------------------ itens "pasta=url" */
-typedef struct { char dir[128]; char url[1024]; char path[300]; long long want; int list, afr, nodp; } Item;   /* nodp: "@-" = pasta AFR mas fora do DpFileList (troca arquivo do jogo, ex.: dt12_g4.cpk) */
+typedef struct { char dir[128]; char url[1024]; char path[300]; long long want; int list, afr, nodp, dono; } Item;   /* nodp: "@-" = pasta AFR mas fora do DpFileList (troca arquivo do jogo, ex.: dt12_g4.cpk) */
 
 /* nome do arquivo do link: decodifica %XX e para no '?' (igual ao download do app) */
 static void url_name(const char *u, char *out, int cap) {
@@ -138,6 +138,12 @@ static void url_name(const char *u, char *out, int cap) {
   }
 }
 
+/* v1.56: JK_PLACAR_SUPER / JK_PLACAR_RECOPA tem DONO: o placar (PLACARES_SUPER/JK e PLACARES_RECOPA/JK). As copias antigas
+ * que o card Sula/Supercopa citava (SUPERCOPAS/JK_PLACAR_*.cpk, versoes diferentes) nao sao mais baixadas nem listadas. */
+int jkx_dono_placar(const char *url) {
+  return url && (strstr(url, "/SUPERCOPAS/JK_PLACAR_SUPER.cpk") || strstr(url, "/SUPERCOPAS/JK_PLACAR_RECOPA.cpk"));
+}
+
 static int items(const CatJkx *x, const char *dest, Item *it, int max) {
   char buf[sizeof(x->files)];
   snprintf(buf, sizeof(buf), "%s", x->files);
@@ -147,11 +153,22 @@ static int items(const CatJkx *x, const char *dest, Item *it, int max) {
     char *eq = strstr(s, "=https://");
     if (eq) {
       Item *t = &it[n];
+      int dono = jkx_dono_placar(eq + 1);
       memset(t, 0, sizeof(*t));
       *eq = 0;
       if (!strcmp(s, "@") || !strcmp(s, "@-")) { snprintf(t->dir, sizeof(t->dir), "%s", dest); t->afr = 1; t->nodp = s[1] == '-'; }
       else snprintf(t->dir, sizeof(t->dir), "%s", s);
       snprintf(t->url, sizeof(t->url), "%s", eq + 1);
+      if (dono) {                                          /* v1.56: SUPER/RECOPA: URL do placar, so baixa se faltar, fora do DpFileList do card e nunca apagado por ele */
+        char *sp = strstr(t->url, "/SUPERCOPAS/JK_PLACAR_");
+        if (sp) {
+          int rec = !strncmp(sp + 22, "RECOPA", 6); char tmp[1024];
+          *sp = 0;
+          snprintf(tmp, sizeof(tmp), "%s/SUPERCOPAS/PLACARES_%s/JK/JK_PLACAR_%s.cpk?once", t->url, rec ? "RECOPA" : "SUPER", rec ? "RECOPA" : "SUPER");
+          snprintf(t->url, sizeof(t->url), "%s", tmp);
+        }
+        t->nodp = 1; t->dono = 1;
+      }
       t->list = strstr(t->url, "?list") != NULL;
       const char *q = strstr(t->url, "?once=");
       if (q) for (const char *d = q + 6; *d >= '0' && *d <= '9'; d++) t->want = t->want * 10 + (*d - '0');
@@ -281,6 +298,116 @@ static int ini_set(const char *sec, const char *prx, int v, JkxLog log) {
   if (ok) { char m[300]; snprintf(m, sizeof(m), "Plugins: [%s] %s", sec, line); if (log) log(m); }
   free(o); free(t);
   return ok;
+}
+
+/* v1.56: garante a linha "prx=true" na secao do jogo quando o prx esta no console e a linha nao existe
+ * (so acrescenta; nunca religa o que o usuario deixou =false) */
+void jkx_ini_garantir(const char *prx, const char *cusa, JkxLog log) {
+  if (!prx || !prx[0] || !cusa || !cusa[0]) return;
+  pthread_mutex_lock(&jx_mu);
+  char full[200]; snprintf(full, sizeof(full), "/data/GoldHEN/plugins/%s", prx);
+  if (ini_get(cusa, full) == -1 && ini_get(cusa, prx) == -1) ini_set(cusa, full, 1, log);   /* o arquivo usa o caminho completo */
+  pthread_mutex_unlock(&jx_mu);
+}
+
+/* v1.56: organiza o plugins.ini: tira linhas so com o nome do prx quando ja existe a linha com caminho completo,
+ * passa as que sobram para o caminho completo e tira linhas repetidas. Nao muda valores (=false do usuario fica). */
+static void ini_limpar(JkxLog log) {
+  long long n = 0; char *t = readf(JKX_INI, &n, 256 * 1024);
+  if (!t) return;
+  char *o = (char *)malloc((size_t)n + 4096);
+  if (!o) { free(t); return; }
+  static const char *PF = "/data/GoldHEN/plugins/";
+  size_t L = 0, pfl = strlen(PF); int mudou = 0;
+  char *secs = t;                                            /* inicio da secao atual */
+  char *p = t;
+  while (p < t + n) {
+    char *e = p; while (e < t + n && *e != '\n') e++;
+    size_t ll = (size_t)(e - p) + (e < t + n ? 1 : 0);
+    if (*p == '[') secs = p;
+    char *q = p; while (q < e && (*q == ' ' || *q == '\t')) q++;
+    int key = (q < e && *q != ';' && *q != '#' && *q != '[' && memchr(q, '=', (size_t)(e - q)));
+    int drop = 0, topath = 0;
+    if (key) {
+      char *eq = (char *)memchr(q, '=', (size_t)(e - q));
+      size_t kl = (size_t)(eq - q);
+      char k[160]; if (kl >= sizeof(k)) kl = sizeof(k) - 1; memcpy(k, q, kl); k[kl] = 0;
+      const char *base = k;
+      if (!strncmp(k, PF, pfl)) base = k + pfl;
+      char send_[1];  (void)send_;
+      char *se = strstr(p, "\n["); if (se) se++; else se = t + n;      /* fim da secao */
+      if (strncmp(k, PF, pfl)) {                              /* linha so com o nome */
+        char full[200]; snprintf(full, sizeof(full), "%s%s=", PF, base);
+        char *f = strstr(secs, full);
+        if (f && f < se && (f == secs || f[-1] == '\n')) drop = 1;                   /* ja existe com caminho completo */
+        else if (!strcmp(base, "pes21_gol_fora.prx") && strstr(secs, "jk_placares.prx") && strstr(secs, "jk_placares.prx") < se) drop = 1;   /* o jk_placares ja tem o gol fora */
+        else topath = 1;
+      } else {                                                /* repetida: ja apareceu acima na mesma secao? */
+        char kk[170]; snprintf(kk, sizeof(kk), "%s=", k);
+        char *f = strstr(secs, kk);
+        while (f && f < p) { if (f == secs || f[-1] == '\n') { drop = 1; break; } f = strstr(f + 1, kk); }
+      }
+      if (topath) {
+        memcpy(o + L, PF, pfl); L += pfl;
+        memcpy(o + L, q, ll - (size_t)(q - p)); L += ll - (size_t)(q - p);
+        mudou = 1; p += ll; continue;
+      }
+    }
+    if (drop) { mudou = 1; p += ll; continue; }
+    memcpy(o + L, p, ll); L += ll;
+    p += ll;
+  }
+  if (mudou && writef(JKX_INI, o, (long long)L) == 0 && log) log("plugins.ini: organizado (linhas repetidas/sem caminho ajustadas)");
+  free(o); free(t);
+}
+
+/* v1.56: o plugins.ini e UM so para os dois jogos (secoes [CUSA18676] e [CUSA22062]). O botao baixa a copia do quadro
+ * para "novo" e aqui so entra o que falta NA SECAO DO JOGO desse botao: nunca troca o arquivo inteiro (isso apagava
+ * a secao do outro jogo e as escolhas do usuario). Sem secao no arquivo atual: acrescenta a secao inteira. */
+void jkx_ini_merge(const char *novo, const char *cusa, JkxLog log) {
+  if (!novo || !cusa || !cusa[0]) return;
+  pthread_mutex_lock(&jx_mu);
+  long long n = 0; char *t = readf(novo, &n, 256 * 1024);
+  if (t) {
+    char hdr[40]; snprintf(hdr, sizeof(hdr), "[%s]", cusa);
+    char *s = strstr(t, hdr);
+    if (s) {
+      char *end = strstr(s + 1, "\n["); end = end ? end + 1 : t + n;
+      long long cn = 0; char *cur = readf(JKX_INI, &cn, 256 * 1024);
+      if (!cur || !strstr(cur, hdr)) {                                  /* secao nova: copia ela inteira para o fim */
+        size_t add = (size_t)(end - s), L = (size_t)cn;
+        char *o = (char *)malloc(L + add + 4);
+        if (o) {
+          if (cur) memcpy(o, cur, L);
+          if (L && o[L - 1] != '\n') o[L++] = '\n';
+          memcpy(o + L, s, add); L += add;
+          if (o[L - 1] != '\n') o[L++] = '\n';
+          if (writef(JKX_INI, o, (long long)L) == 0 && log) { char m[100]; snprintf(m, sizeof(m), "plugins.ini: secao %s acrescentada", hdr); log(m); }
+          free(o);
+        }
+        free(cur);
+      } else {
+        free(cur);
+        for (char *p = s; p < end; ) {                                  /* linha a linha: so acrescenta o que falta */
+          char *e = p; while (e < end && *e != '\n') e++;
+          char name[128]; size_t k = 0; char *q = p;
+          while (q < e && (*q == ' ' || *q == '\t')) q++;
+          if (*q != ';' && *q != '#' && *q != '[') {
+            while (q + k < e && q[k] != '=' && q[k] != '\r' && k + 1 < sizeof(name)) { name[k] = q[k]; k++; }
+            name[k] = 0;
+            if (q + k < e && q[k] == '=' && k > 0 && !strncmp(q + k, "=true", 5)) {
+              const char *bs = strrchr(name, '/'); bs = bs ? bs + 1 : name;
+              char full[200]; snprintf(full, sizeof(full), "/data/GoldHEN/plugins/%s", bs);
+              if (ini_get(cusa, full) == -1 && ini_get(cusa, bs) == -1) ini_set(cusa, strchr(name, '/') ? name : full, 1, log);
+            }
+          }
+          p = e < end ? e + 1 : end;
+        }
+      }
+    }
+    free(t);
+  }
+  pthread_mutex_unlock(&jx_mu);
 }
 
 /* ------------------------------------------------------------------ DpFileList */
@@ -605,6 +732,7 @@ static int companion(const CatJkx *x, const char *dest) {
 
 void jkx_apply(JkxLog log) {
   pthread_mutex_lock(&jx_mu);
+  ini_limpar(log);
   fixed_apply(log);
   pthread_mutex_unlock(&jx_mu);
   /* jogos: os quadros do catalogo + os 2 conhecidos (catalogo antigo sem PLB) */
@@ -649,7 +777,7 @@ void jkx_apply(JkxLog log) {
       }
       if (st == 0) {                                        /* desinstalado: nada dele fica na pasta AFR */
         Item it[MAXIT]; int n = items(x, g[k].dest, it, MAXIT);
-        for (int t = 0; t < n; t++) if (it[t].afr && fsize(it[t].path) >= 0 && !afr_em_uso(it[t].path, g[k].dest, g[k].cusa) && rm(it[t].path) == 0) logf_(log, "Plugins: apagado ", it[t].path);
+        for (int t = 0; t < n; t++) if (it[t].afr && !it[t].dono && fsize(it[t].path) >= 0 && !afr_em_uso(it[t].path, g[k].dest, g[k].cusa) && rm(it[t].path) == 0) logf_(log, "Plugins: apagado ", it[t].path);
       }
     }
     pthread_mutex_unlock(&jx_mu);
@@ -685,6 +813,7 @@ int jkx_uninstall(const char *kb, JkxListFn list, JkxLog log, char *msg, int cap
         for (int t = 0; t < nl; t++) if (rm(lp[t]) == 0) apagados++;
         continue;
       }
+      if (it[k].dono) continue;                            /* v1.56: SUPER/RECOPA sao do placar: desinstalar o card nao apaga */
       if (rm(it[k].path) == 0) { apagados++; logf_(log, "Plugins: apagado ", it[k].path); }
     }
     if (x->del[0]) {                                        /* "apagar": arquivos a mais ("@/x" = pasta AFR) */
