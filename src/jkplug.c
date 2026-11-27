@@ -288,8 +288,60 @@ static int ini_set(const char *sec, const char *prx, int v, JkxLog log) {
 void jkx_ini_garantir(const char *prx, const char *cusa, JkxLog log) {
   if (!prx || !prx[0] || !cusa || !cusa[0]) return;
   pthread_mutex_lock(&jx_mu);
-  if (ini_get(cusa, prx) == -1) ini_set(cusa, prx, 1, log);
+  char full[200]; snprintf(full, sizeof(full), "/data/GoldHEN/plugins/%s", prx);
+  if (ini_get(cusa, full) == -1 && ini_get(cusa, prx) == -1) ini_set(cusa, full, 1, log);   /* o arquivo usa o caminho completo */
   pthread_mutex_unlock(&jx_mu);
+}
+
+/* v1.56: organiza o plugins.ini: tira linhas so com o nome do prx quando ja existe a linha com caminho completo,
+ * passa as que sobram para o caminho completo e tira linhas repetidas. Nao muda valores (=false do usuario fica). */
+static void ini_limpar(JkxLog log) {
+  long long n = 0; char *t = readf(JKX_INI, &n, 256 * 1024);
+  if (!t) return;
+  char *o = (char *)malloc((size_t)n + 4096);
+  if (!o) { free(t); return; }
+  static const char *PF = "/data/GoldHEN/plugins/";
+  size_t L = 0, pfl = strlen(PF); int mudou = 0;
+  char *secs = t;                                            /* inicio da secao atual */
+  char *p = t;
+  while (p < t + n) {
+    char *e = p; while (e < t + n && *e != '\n') e++;
+    size_t ll = (size_t)(e - p) + (e < t + n ? 1 : 0);
+    if (*p == '[') secs = p;
+    char *q = p; while (q < e && (*q == ' ' || *q == '\t')) q++;
+    int key = (q < e && *q != ';' && *q != '#' && *q != '[' && memchr(q, '=', (size_t)(e - q)));
+    int drop = 0, topath = 0;
+    if (key) {
+      char *eq = (char *)memchr(q, '=', (size_t)(e - q));
+      size_t kl = (size_t)(eq - q);
+      char k[160]; if (kl >= sizeof(k)) kl = sizeof(k) - 1; memcpy(k, q, kl); k[kl] = 0;
+      const char *base = k;
+      if (!strncmp(k, PF, pfl)) base = k + pfl;
+      char send_[1];  (void)send_;
+      char *se = strstr(p, "\n["); if (se) se++; else se = t + n;      /* fim da secao */
+      if (strncmp(k, PF, pfl)) {                              /* linha so com o nome */
+        char full[200]; snprintf(full, sizeof(full), "%s%s=", PF, base);
+        char *f = strstr(secs, full);
+        if (f && f < se && (f == secs || f[-1] == '\n')) drop = 1;                   /* ja existe com caminho completo */
+        else if (!strcmp(base, "pes21_gol_fora.prx") && strstr(secs, "jk_placares.prx") && strstr(secs, "jk_placares.prx") < se) drop = 1;   /* o jk_placares ja tem o gol fora */
+        else topath = 1;
+      } else {                                                /* repetida: ja apareceu acima na mesma secao? */
+        char kk[170]; snprintf(kk, sizeof(kk), "%s=", k);
+        char *f = strstr(secs, kk);
+        while (f && f < p) { if (f == secs || f[-1] == '\n') { drop = 1; break; } f = strstr(f + 1, kk); }
+      }
+      if (topath) {
+        memcpy(o + L, PF, pfl); L += pfl;
+        memcpy(o + L, q, ll - (size_t)(q - p)); L += ll - (size_t)(q - p);
+        mudou = 1; p += ll; continue;
+      }
+    }
+    if (drop) { mudou = 1; p += ll; continue; }
+    memcpy(o + L, p, ll); L += ll;
+    p += ll;
+  }
+  if (mudou && writef(JKX_INI, o, (long long)L) == 0 && log) log("plugins.ini: organizado (linhas repetidas/sem caminho ajustadas)");
+  free(o); free(t);
 }
 
 /* v1.56: o plugins.ini e UM so para os dois jogos (secoes [CUSA18676] e [CUSA22062]). O botao baixa a copia do quadro
@@ -326,7 +378,11 @@ void jkx_ini_merge(const char *novo, const char *cusa, JkxLog log) {
           if (*q != ';' && *q != '#' && *q != '[') {
             while (q + k < e && q[k] != '=' && q[k] != '\r' && k + 1 < sizeof(name)) { name[k] = q[k]; k++; }
             name[k] = 0;
-            if (q + k < e && q[k] == '=' && k > 0 && ini_get(cusa, name) == -1 && !strncmp(q + k, "=true", 5)) ini_set(cusa, name, 1, log);
+            if (q + k < e && q[k] == '=' && k > 0 && !strncmp(q + k, "=true", 5)) {
+              const char *bs = strrchr(name, '/'); bs = bs ? bs + 1 : name;
+              char full[200]; snprintf(full, sizeof(full), "/data/GoldHEN/plugins/%s", bs);
+              if (ini_get(cusa, full) == -1 && ini_get(cusa, bs) == -1) ini_set(cusa, strchr(name, '/') ? name : full, 1, log);
+            }
           }
           p = e < end ? e + 1 : end;
         }
@@ -659,6 +715,7 @@ static int companion(const CatJkx *x, const char *dest) {
 
 void jkx_apply(JkxLog log) {
   pthread_mutex_lock(&jx_mu);
+  ini_limpar(log);
   fixed_apply(log);
   pthread_mutex_unlock(&jx_mu);
   /* jogos: os quadros do catalogo + os 2 conhecidos (catalogo antigo sem PLB) */
