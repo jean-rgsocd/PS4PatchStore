@@ -114,7 +114,7 @@ int jkx_for_board(const CatJkx *x, const char *board) {          /* "mega,brasfo
 }
 
 /* ------------------------------------------------------------------ itens "pasta=url" */
-typedef struct { char dir[128]; char url[1024]; char path[300]; long long want; int list, afr, nodp; } Item;   /* nodp: "@-" = pasta AFR mas fora do DpFileList (troca arquivo do jogo, ex.: dt12_g4.cpk) */
+typedef struct { char dir[128]; char url[1024]; char path[300]; long long want; int list, afr, nodp, dono; } Item;   /* nodp: "@-" = pasta AFR mas fora do DpFileList (troca arquivo do jogo, ex.: dt12_g4.cpk) */
 
 /* nome do arquivo do link: decodifica %XX e para no '?' (igual ao download do app) */
 static void url_name(const char *u, char *out, int cap) {
@@ -153,12 +153,22 @@ static int items(const CatJkx *x, const char *dest, Item *it, int max) {
     char *eq = strstr(s, "=https://");
     if (eq) {
       Item *t = &it[n];
-      if (jkx_dono_placar(eq + 1)) { if (!bar) break; s = bar + 1; continue; }
+      int dono = jkx_dono_placar(eq + 1);
       memset(t, 0, sizeof(*t));
       *eq = 0;
       if (!strcmp(s, "@") || !strcmp(s, "@-")) { snprintf(t->dir, sizeof(t->dir), "%s", dest); t->afr = 1; t->nodp = s[1] == '-'; }
       else snprintf(t->dir, sizeof(t->dir), "%s", s);
       snprintf(t->url, sizeof(t->url), "%s", eq + 1);
+      if (dono) {                                          /* v1.56: SUPER/RECOPA: URL do placar, so baixa se faltar, fora do DpFileList do card e nunca apagado por ele */
+        char *sp = strstr(t->url, "/SUPERCOPAS/JK_PLACAR_");
+        if (sp) {
+          int rec = !strncmp(sp + 22, "RECOPA", 6); char tmp[1024];
+          *sp = 0;
+          snprintf(tmp, sizeof(tmp), "%s/SUPERCOPAS/PLACARES_%s/JK/JK_PLACAR_%s.cpk?once", t->url, rec ? "RECOPA" : "SUPER", rec ? "RECOPA" : "SUPER");
+          snprintf(t->url, sizeof(t->url), "%s", tmp);
+        }
+        t->nodp = 1; t->dono = 1;
+      }
       t->list = strstr(t->url, "?list") != NULL;
       const char *q = strstr(t->url, "?once=");
       if (q) for (const char *d = q + 6; *d >= '0' && *d <= '9'; d++) t->want = t->want * 10 + (*d - '0');
@@ -767,7 +777,7 @@ void jkx_apply(JkxLog log) {
       }
       if (st == 0) {                                        /* desinstalado: nada dele fica na pasta AFR */
         Item it[MAXIT]; int n = items(x, g[k].dest, it, MAXIT);
-        for (int t = 0; t < n; t++) if (it[t].afr && fsize(it[t].path) >= 0 && !afr_em_uso(it[t].path, g[k].dest, g[k].cusa) && rm(it[t].path) == 0) logf_(log, "Plugins: apagado ", it[t].path);
+        for (int t = 0; t < n; t++) if (it[t].afr && !it[t].dono && fsize(it[t].path) >= 0 && !afr_em_uso(it[t].path, g[k].dest, g[k].cusa) && rm(it[t].path) == 0) logf_(log, "Plugins: apagado ", it[t].path);
       }
     }
     pthread_mutex_unlock(&jx_mu);
@@ -803,6 +813,7 @@ int jkx_uninstall(const char *kb, JkxListFn list, JkxLog log, char *msg, int cap
         for (int t = 0; t < nl; t++) if (rm(lp[t]) == 0) apagados++;
         continue;
       }
+      if (it[k].dono) continue;                            /* v1.56: SUPER/RECOPA sao do placar: desinstalar o card nao apaga */
       if (rm(it[k].path) == 0) { apagados++; logf_(log, "Plugins: apagado ", it[k].path); }
     }
     if (x->del[0]) {                                        /* "apagar": arquivos a mais ("@/x" = pasta AFR) */
