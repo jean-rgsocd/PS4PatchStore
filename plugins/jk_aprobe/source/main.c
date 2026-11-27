@@ -17,6 +17,7 @@
  *   next chg | same | inc | dec         filtra por mudou / igual / subiu / desceu desde a ultima busca
  *   list [N]                     mostra os N primeiros candidatos (padrao 40)
  *   ptr ADDR [voltar]            acha quem guarda um ponteiro para [ADDR-voltar, ADDR] (padrao 0x2000)
+ *   dumpc [N]                    hexdump (32 bytes antes e 16 depois) de cada um dos N primeiros candidatos
  *   dump ADDR LEN                hexdump (LEN ate 4096)
  *   rd ADDR                      mostra o valor em ADDR como i32, f32 e u8
  */
@@ -196,6 +197,47 @@ static void dump(uint64_t a, uint64_t len)
     }
 }
 
+/* dumpc [N]: hexdump (32 bytes antes + 16 depois) de cada um dos N primeiros candidatos */
+static void dump_cands(int n)
+{
+    if (n > c_n) n = c_n;
+    for (int i = 0; i < n; i++) {
+        logf_("cand %d: 0x%llx", i, (unsigned long long)c_addr[i]);
+        dump(c_addr[i] - 0x20, 0x30);
+    }
+    logf_("dumpc: %d de %d", n, c_n);
+}
+
+/* ---- modo automatico: varre valores exatos de acrescimo (3600/7200/10800 em float) e grava o contexto ---- */
+#define AUTO_MAX 60
+static void auto_scan(int rodada)
+{
+    static uint64_t ah[AUTO_MAX]; int an = 0, total = 0;
+    uint64_t a = 0x10000, s, e; int p, bt;
+    while (proxima_regiao(a, &s, &e, &p, &bt)) {
+        a = e;
+        if (!VALIDA(p, bt) || s < 0x10000) continue;
+        for (uint64_t ch = s; ch < e; ch += 65536) {
+            size_t n = (e - ch) > 65536 ? 65536 : (size_t)(e - ch);
+            if (!rdm(ch, g_buf, n)) continue;
+            for (size_t o = 0; o + 4 <= n; o += 4) {
+                uint32_t v = *(uint32_t *)(g_buf + o);
+                if (v == 0x45610000u || v == 0x45e10000u || v == 0x4628c000u) {
+                    total++;
+                    if (an < AUTO_MAX) ah[an++] = ch + o;
+                }
+            }
+        }
+    }
+    logf_("AUTO rodada=%d exatos(3600/7200/10800)=%d", rodada, total);
+    for (int i = 0; i < an; i++) {
+        uint32_t v = 0; rdm(ah[i], &v, 4);
+        float f; memcpy(&f, &v, 4);
+        logf_("AUTO r=%d @0x%llx val=%g", rodada, (unsigned long long)ah[i], f);
+        dump(ah[i] - 0x20, 0x30);
+    }
+}
+
 static void info(void)
 {
     logf_("base=0x%llx", (unsigned long long)g_base);
@@ -214,6 +256,7 @@ static void roda_linha(char *ln)
     if (nn < 1) return;
     logf_(">> %s", ln);
     if (!strcmp(c, "info")) { info(); return; }
+    if (!strcmp(c, "dumpc")) { dump_cands(nn >= 2 ? atoi(t) : 20); return; }
     if (!strcmp(c, "list")) { lista(nn >= 2 ? atoi(t) : 40); return; }
     if (!strcmp(c, "ptr") && nn >= 2) { acha_ponteiros(strtoull(t, 0, 16), nn >= 3 ? strtoull(x, 0, 16) : 0x2000); return; }
     if (!strcmp(c, "dump") && nn >= 3) { dump(strtoull(t, 0, 16), strtoull(x, 0, 0)); return; }
@@ -247,8 +290,14 @@ static void *trabalho(void *arg)
     struct proc_info pi; memset(&pi, 0, sizeof pi);
     if (sys_sdk_proc_info(&pi) == 0) g_base = pi.base_address;
     logf_("JK_APROBE iniciado. titulo=%s base=0x%llx", pi.titleid, (unsigned long long)g_base);
+    int tick = 0, rodada = 0;
     while (g_running) {
         sceKernelUsleep(1000000);
+        if (++tick >= 40) {
+            tick = 0;
+            int fa = sceKernelOpen(PASTA "/auto.txt", 0, 0);
+            if (fa >= 0) { sceKernelClose(fa); auto_scan(++rodada); }
+        }
         int fd = sceKernelOpen(PASTA "/cmd.txt", 0, 0);
         if (fd < 0) continue;
         char buf[2048]; memset(buf, 0, sizeof buf);
