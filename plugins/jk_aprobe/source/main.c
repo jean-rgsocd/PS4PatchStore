@@ -78,6 +78,15 @@ static int proxima_regiao(uint64_t from, uint64_t *s, uint64_t *e, int *prot, in
     return *e > *s;
 }
 
+/* leitura segura pelo kernel (proc_rw): se a pagina nao puder ser lida, devolve 0 em vez de derrubar o jogo */
+static int rdm(uint64_t a, void *dst, size_t n)
+{
+    struct proc_rw rw; memset(&rw, 0, sizeof rw);
+    rw.address = a; rw.data = dst; rw.length = n; rw.write_flags = 0;
+    return sys_sdk_proc_rw(&rw) == 0;
+}
+static unsigned char g_buf[65536 + 8];
+
 #define VALIDA(p, b) (((p) & 3) == 3 && !((b) & 4) /* nao pilha */ )
 
 static int val_ok(int kind, uint32_t cur, int32_t iv, float fv, float eps)
@@ -92,27 +101,26 @@ static int val_ok(int kind, uint32_t cur, int32_t iv, float fv, float eps)
 static void nova_busca(int kind, int32_t iv, float fv, float eps)
 {
     c_n = 0; c_kind = kind; c_over = 0;
-    uint64_t a = 0x10000, s, e; int p, bt;
+    uint64_t a = 0x10000, s, e; int p, bt, regs = 0, falhas = 0;
     int step = (kind == 3) ? 1 : 4;
     while (proxima_regiao(a, &s, &e, &p, &bt)) {
         a = e;
         if (!VALIDA(p, bt)) continue;
         if (s < 0x10000) continue;
-        for (uint64_t q = s; q + 4 <= e; q += step) {
-            uint32_t cur = (kind == 3) ? *(volatile uint8_t *)q : *(volatile uint32_t *)q;
-            if (val_ok(kind, cur, iv, fv, eps)) {
-                if (c_n < MAXC) { c_addr[c_n] = q; c_old[c_n] = cur; c_n++; } else c_over++;
+        regs++;
+        for (uint64_t ch = s; ch < e; ch += 65536) {
+            size_t n = (e - ch) > 65536 ? 65536 : (size_t)(e - ch);
+            if (!rdm(ch, g_buf, n)) { falhas++; continue; }
+            for (size_t o = 0; o + 4 <= n; o += step) {
+                uint32_t cur = (kind == 3) ? g_buf[o] : *(uint32_t *)(g_buf + o);
+                if (val_ok(kind, cur, iv, fv, eps)) {
+                    if (c_n < MAXC) { c_addr[c_n] = ch + o; c_old[c_n] = cur; c_n++; } else c_over++;
+                }
             }
         }
     }
+    logf_("varreu %d regioes (%d blocos ilegiveis)", regs, falhas);
     logf_("new: %d candidatos%s", c_n, c_over ? " (LIMITE ATINGIDO: use um valor mais raro)" : "");
-}
-
-static int regiao_legivel(uint64_t q)
-{
-    uint64_t s, e; int p, bt;
-    if (!proxima_regiao(q, &s, &e, &p, &bt)) return 0;
-    return s <= q && q < e && (p & 1);
 }
 
 static void filtra(const char *modo, int32_t iv, float fv, float eps)
@@ -120,8 +128,9 @@ static void filtra(const char *modo, int32_t iv, float fv, float eps)
     int k = 0;
     for (int i = 0; i < c_n; i++) {
         uint64_t q = c_addr[i];
-        if (!regiao_legivel(q)) continue;
-        uint32_t cur = (c_kind == 3) ? *(volatile uint8_t *)q : *(volatile uint32_t *)q;
+        uint32_t cur = 0;
+        if (!rdm(q, &cur, 4)) continue;
+        if (c_kind == 3) cur &= 0xff;
         int ok = 0;
         if (!strcmp(modo, "val")) ok = val_ok(c_kind, cur, iv, fv, eps);
         else if (!strcmp(modo, "chg")) ok = cur != c_old[i];
@@ -143,7 +152,7 @@ static void lista(int n)
 {
     if (n > c_n) n = c_n;
     for (int i = 0; i < n; i++) {
-        uint64_t q = c_addr[i]; uint32_t cur = *(volatile uint32_t *)q; float f; memcpy(&f, &cur, 4);
+        uint64_t q = c_addr[i]; uint32_t cur = 0; rdm(q, &cur, 4); float f; memcpy(&f, &cur, 4);
         logf_("  0x%llx  i32=%d  f32=%g  rel_base=0x%llx", (unsigned long long)q, (int32_t)cur, f,
               (unsigned long long)(q - g_base));
     }
@@ -157,12 +166,16 @@ static void acha_ponteiros(uint64_t alvo, uint64_t voltar)
     while (proxima_regiao(a, &s, &e, &p, &bt) && n < 200) {
         a = e;
         if (!VALIDA(p, bt) || s < 0x10000) continue;
-        for (uint64_t q = (s + 7) & ~7ULL; q + 8 <= e; q += 8) {
-            uint64_t v = *(volatile uint64_t *)q;
-            if (v >= lo && v <= hi) {
-                logf_("  ptr em 0x%llx (rel_base=0x%llx) -> 0x%llx  (alvo-v=0x%llx)", (unsigned long long)q,
-                      (unsigned long long)(q - g_base), (unsigned long long)v, (unsigned long long)(alvo - v));
-                if (++n >= 200) break;
+        for (uint64_t ch = s; ch < e && n < 200; ch += 65536) {
+            size_t sz = (e - ch) > 65536 ? 65536 : (size_t)(e - ch);
+            if (!rdm(ch, g_buf, sz)) continue;
+            for (size_t o = ((8 - (ch & 7)) & 7); o + 8 <= sz; o += 8) {
+                uint64_t v = *(uint64_t *)(g_buf + o);
+                if (v >= lo && v <= hi) {
+                    logf_("  ptr em 0x%llx (rel_base=0x%llx) -> 0x%llx  (alvo-v=0x%llx)", (unsigned long long)(ch + o),
+                          (unsigned long long)(ch + o - g_base), (unsigned long long)v, (unsigned long long)(alvo - v));
+                    if (++n >= 200) break;
+                }
             }
         }
     }
@@ -172,12 +185,13 @@ static void acha_ponteiros(uint64_t alvo, uint64_t voltar)
 static void dump(uint64_t a, uint64_t len)
 {
     if (len > 4096) len = 4096;
-    if (!regiao_legivel(a)) { logf_("dump: 0x%llx nao legivel", (unsigned long long)a); return; }
+    unsigned char db[4096];
+    if (!rdm(a, db, len)) { logf_("dump: 0x%llx nao legivel", (unsigned long long)a); return; }
     char ln[200];
     for (uint64_t o = 0; o < len; o += 16) {
         int k = snprintf(ln, sizeof ln, "%llx:", (unsigned long long)(a + o));
         for (int j = 0; j < 16 && o + j < len; j++)
-            k += snprintf(ln + k, sizeof ln - k, " %02x", *(volatile uint8_t *)(a + o + j));
+            k += snprintf(ln + k, sizeof ln - k, " %02x", db[o + j]);
         logf_("%s", ln);
     }
 }
@@ -205,8 +219,8 @@ static void roda_linha(char *ln)
     if (!strcmp(c, "dump") && nn >= 3) { dump(strtoull(t, 0, 16), strtoull(x, 0, 0)); return; }
     if (!strcmp(c, "rd") && nn >= 2) {
         uint64_t q = strtoull(t, 0, 16);
-        if (!regiao_legivel(q)) { logf_("rd: nao legivel"); return; }
-        uint32_t v = *(volatile uint32_t *)q; float f; memcpy(&f, &v, 4);
+        uint32_t v = 0; if (!rdm(q, &v, 4)) { logf_("rd: nao legivel"); return; }
+        float f; memcpy(&f, &v, 4);
         logf_("  0x%llx i32=%d f32=%g u8=%u", (unsigned long long)q, (int32_t)v, f, v & 0xff);
         return;
     }
