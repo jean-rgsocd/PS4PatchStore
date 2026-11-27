@@ -1,0 +1,27 @@
+JK APROBE - sonda de memoria (so le, nao altera o jogo)
+
+COMPILAR: igual ao plugin antigo (pasta com source/main.c + Makefile, ../goldhen_sdk ao lado).
+  Gera jk_aprobe.prx -> coloque na pasta de plugins do GoldHEN e ligue no plugins.ini
+  (pode deixar o jk_realaddedtime DESLIGADO enquanto testa).
+
+USO (FTP porta 2121):
+  Crie  /data/jk/aprobe/cmd.txt  com os comandos (um por linha). Em ate 1 s o plugin
+  executa e apaga o arquivo. O resultado fica em  /data/jk/aprobe/aprobe.log  (baixe e me mande).
+
+TESTE 1 - achar o acrescimo anunciado (o mais importante)
+  1. Faca uma partida com tempos CURTOS (5 min por tempo) contra a CPU.
+  2. Jogue ate o jogo ANUNCIAR o acrescimo na placa (ex.: +3). Pause (botao Options).
+  3. Anote o numero N que a placa mostra e rode o comando abaixo (N*3600 = ticks):
+         new f32 10800 0.5          (se a placa mostra +3;  +1=3600  +2=7200  +4=14400  +5=18000)
+         list 40
+  4. Despause, espere o acrescimo andar mais ou ate o fim do tempo, e me mande o aprobe.log.
+
+TESTE 2 - quem guarda o ponteiro da placa (so se o 1 achar candidatos)
+  ptr ENDERECO_DO_CANDIDATO 400
+  (troque ENDERECO_DO_CANDIDATO por um endereco do list; use o que aparecer com valor 10800)
+
+TESTE 3 - placar e periodo (se o 1 funcionar)
+  Com 0x0 no 1o tempo: new u8 0   (pode dar muitos resultados; me diga se aparecer LIMITE ATINGIDO)
+  Marque um gol e rode:  next u8 1   e depois  list 40
+
+Se algo travar o jogo, me diga EXATAMENTE em qual comando foi - ajusto o plugin.
