@@ -38,15 +38,15 @@ attr_public const char *g_pluginAuth = "JK PATCHS";
 attr_public uint32_t g_pluginVersion = 0x00000100;
 
 #define PASTA "/data/jk/aprobe"
-#define MAXC  2000000
+#define MAXC  131072   /* estatico: o malloc do jogo nao tem memoria sobrando */
 
 static OrbisPthread g_thr;
 static volatile int g_running = 1;
 static int g_log = -1;
 static uint64_t g_base = 0;
 
-static uint64_t *c_addr = 0;     /* candidatos */
-static uint32_t *c_old = 0;      /* valor anterior (4 bytes; u8 usa o byte baixo) */
+static uint64_t c_addr[MAXC];    /* candidatos */
+static uint32_t c_old[MAXC];     /* valor anterior (4 bytes; u8 usa o byte baixo) */
 static int c_n = 0, c_kind = 0;  /* 1=i32 2=f32 3=u8 */
 static int c_over = 0;
 
@@ -91,8 +91,6 @@ static int val_ok(int kind, uint32_t cur, int32_t iv, float fv, float eps)
 
 static void nova_busca(int kind, int32_t iv, float fv, float eps)
 {
-    if (!c_addr) { c_addr = malloc((size_t)MAXC * 8); c_old = malloc((size_t)MAXC * 4); }
-    if (!c_addr || !c_old) { logf_("sem memoria para candidatos"); return; }
     c_n = 0; c_kind = kind; c_over = 0;
     uint64_t a = 0x10000, s, e; int p, bt;
     int step = (kind == 3) ? 1 : 4;
