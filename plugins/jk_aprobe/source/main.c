@@ -264,3 +264,4 @@ int32_t attr_public plugin_load(int32_t argc, const char *argv[])
 }
 int32_t attr_public plugin_unload(int32_t argc, const char *argv[]) { (void)argc; (void)argv; g_running = 0; return 0; }
 int32_t attr_module_hidden module_start(size_t argc, const void *args) { (void)argc; (void)args; return 0; }
+int32_t attr_module_hidden module_stop(size_t argc, const void *args) { (void)argc; (void)args; return 0; }
