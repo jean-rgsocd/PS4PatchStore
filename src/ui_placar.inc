@@ -34,6 +34,7 @@ static const char *PL_NOTE[8] = { "", "", "", "", "outras ligas e amistosos", "p
 static int pl_count(const CatPlBoard *b, int c);
 /* v1.43: tamanhos das imagens (menores quando o quadro tem a 5a linha) */
 static int pli_ih = PL_IH, pli_lw = PL_LW, pli_eih = PL_EIH, pli_elw = PL_ELW;
+static int pli_eiw = PL_EIW, pli_gap = 74;                       /* v1.57: largura do placar no editor e distancia do logo (modo dividido) */
 static int pli_nobox = 0;                                        /* v1.49: 7/8 linhas: placar sem a caixa escura (preenche a linha) */
 
 static int is_plgrid(const CatGame *g) { return g && !strcmp(g->tag, "PLACARGRID"); }
@@ -43,6 +44,20 @@ static const CatPlBoard *pl_board_cur(UI *ui) {
   if (!ui->cat || ui->cat->nplb <= 0) return NULL;
   if (ui->pl_b < 0 || ui->pl_b >= ui->cat->nplb) ui->pl_b = 0;
   return &ui->cat->plb[ui->pl_b];
+}
+/* v1.57: aba PLACARES = tela dividida (Monte o seu a esquerda, informativos a direita); os combos prontos nao aparecem mais */
+#define SP_X 80
+#define SP_Y 190
+#define SP_W 990
+#define SP_H 690
+static void pl_ed_open(UI *ui);
+static int pl_is_split(UI *ui) { const CatPlBoard *b = pl_board_cur(ui); return b && b->monte && ui->pl_cat == 0; }
+static void pl_split_dims(int nc, int *pitch, int *rh, int *eih, int *elw) {
+  int p = (SP_H - 92 - 72) / (nc > 0 ? nc : 1);
+  if (p > 116) p = 116;
+  *pitch = p; *rh = p - 8;
+  int h = *rh - 14; if (h > 84) h = 84; if (h < 40) h = 40;
+  *eih = h; *elw = h;
 }
 static int pl_ncards(const CatPlBoard *b) { return b ? b->npack + (b->monte ? 1 : 0) : 0; }
 /* v1.43: 4 competicoes, ou 5 se o catalogo tiver placares MUN para o quadro */
@@ -60,7 +75,7 @@ static int plr_gen = 0, plr_pending = 0;
 static Image *plr_im[PL_MAXU][2];
 static int plr_rdy[PL_MAXU];
 
-typedef struct { UI *ui; int gen, n; char url[PL_MAXU][256]; int logo[PL_MAXU]; int ih, lw, eih, elw; } PlJobs;
+typedef struct { UI *ui; int gen, n; char url[PL_MAXU][256]; int logo[PL_MAXU]; int ih, lw, eih, elw, eiw; } PlJobs;
 
 static Image *pl_fit(const Image *src, int bw, int bh) {
   if (!src || src->w <= 0 || src->h <= 0) return NULL;
@@ -112,7 +127,7 @@ static void *pl_worker(void *arg) {
     Image *a, *b;
     if (J->logo[k] == 2) { a = raw; b = NULL; raw = NULL; }
     else if (J->logo[k]) { a = pl_fit(raw, J->lw - 6, J->lw - 6); b = pl_fit(raw, J->elw - 14, J->elw - 14); }
-    else            { raw = pl_trim(raw); a = pl_fit(raw, PL_IW - 10, J->ih - 6);  b = pl_fit(raw, PL_EIW - 16, J->eih >= 74 ? J->eih - 2 : J->eih - 8);   /* v1.50: 7/8 linhas: placar quase da altura da linha */ }
+    else            { raw = pl_trim(raw); a = pl_fit(raw, PL_IW - 10, J->ih - 6);  b = pl_fit(raw, J->eiw - 16, J->eih >= 74 ? J->eih - 2 : J->eih - 8);   /* v1.50: 7/8 linhas: placar quase da altura da linha */ }
     if (raw) img_free(raw);
     pthread_mutex_lock(&pl_mu);
     if (plr_gen == J->gen) {
@@ -165,7 +180,9 @@ static void pl_load_images(UI *ui) {
   J->ui = ui; J->gen = gen;
   { int nc_ = pl_ncomp(b), five = nc_ >= 5;                      /* v1.43; v1.45: 6 linhas; v1.49: 7 e 8 */
     pli_ih = PL_IH; pli_lw = PL_LW; pli_eih = nc_ >= 7 ? 74 : nc_ >= 6 ? 70 : five ? 84 : PL_EIH; pli_elw = nc_ >= 7 ? 74 : nc_ >= 6 ? 70 : five ? 84 : PL_ELW;   /* card do combo: sempre 4 linhas (barra grande) */
-    J->ih = pli_ih; J->lw = pli_lw; J->eih = pli_eih; J->elw = pli_elw; }
+    if (b->monte) { int pt, rh_; pl_split_dims(nc_, &pt, &rh_, &pli_eih, &pli_elw); pli_eiw = 440; pli_gap = 56; }   /* v1.57 */
+    else { pli_eiw = PL_EIW; pli_gap = 74; }
+    J->ih = pli_ih; J->lw = pli_lw; J->eih = pli_eih; J->elw = pli_elw; J->eiw = pli_eiw; }
   for (int i = 0; i < b->nopt; i++) {                            /* primeiro as imagens dos placares, depois os logos */
     ui->pl_oi[i] = pl_url_add(ui, J, b->opt[i].img, 0);
   }
@@ -765,6 +782,7 @@ static void pl_open(UI *ui) {
   const CatPlBoard *b = pl_board_cur(ui);
   if (b) for (int p = 0; p < b->npack; p++) if (pl_pack_installed(ui, &b->pack[p])) { ui->pl_sel = p; break; }   /* abre no combo que ja esta no console */
   jk_build(ui);                                                 /* v1.40 */
+  if (pl_is_split(ui)) pl_ed_open(ui);                           /* v1.57: aba PLACARES abre direto no Monte o seu */
   ui->dirty = 1;
 }
 
@@ -860,11 +878,12 @@ static void pl_cycle(UI *ui, int c, int dir) {
 static void pl_key(UI *ui, int key) {
   const CatPlBoard *b = pl_board_cur(ui);
   int nc = pl_ncards(b);
-  if (!ui->pl_ed && (key == UI_L2 || key == UI_R2)) {          /* v1.40: troca a aba */
+  if ((!ui->pl_ed || pl_is_split(ui)) && (key == UI_L2 || key == UI_R2)) {          /* v1.40: troca a aba (v1.57: tambem a partir da tela dividida) */
     int nt = jk_ntabs(ui);
     ui->pl_cat = (ui->pl_cat + (key == UI_R2 ? 1 : nt - 1)) % nt;
-    ui->jk_sel = 0; ui->jk_btn = 0;
+    ui->jk_sel = 0; ui->jk_btn = 0; ui->pl_ed = 0;
     jk_build(ui);
+    if (pl_is_split(ui)) pl_ed_open(ui);
     return;
   }
   if (ui->jx_modal) {                                            /* v1.44: AVISO aberto: X ou O fecha */
@@ -879,7 +898,16 @@ static void pl_key(UI *ui, int key) {
       case UI_LEFT:  pl_cycle(ui, pl_row_comp(b, ui->pl_row), -1); break;
       case UI_RIGHT: pl_cycle(ui, pl_row_comp(b, ui->pl_row), +1); break;
       case UI_OK:    pl_install(ui, ui->pl_pick, "Monte o seu"); break;
-      case UI_BACK:  ui->pl_ed = 0; ui->dirty = 1; break;
+      case UI_BACK:
+        if (b && b->monte) { ui->detail = 0; ui->pl_ed = 0; ui->dirty = 1; rebuild_fbg(ui); return; }   /* v1.57: tela dividida: O volta ao catalogo */
+        ui->pl_ed = 0; ui->dirty = 1; break;
+      case UI_L1: case UI_R1:
+        if (ui->cat && ui->cat->nplb > 1) {
+          int n = ui->cat->nplb;
+          ui->pl_b = (ui->pl_b + (key == UI_R1 ? 1 : n - 1)) % n;
+          pl_open(ui);
+        }
+        break;
       case UI_SQUARE: trigger_update(ui); break;
       default: break;
     }
@@ -947,7 +975,7 @@ static void pl_glow(Image *s, int x, int y, int w, int h, int r, uint32_t col) {
 static void pl_draw_opt(UI *ui, const CatPlOpt *o, int oi, int x, int y, int iw, int ih, int lw, int big) {
   Image *s = ui->s;
   if (!pli_nobox) gfx_rrect(s, x, y, iw, ih, 10, C_DEEP, 255, 0);
-  int lx = x + iw + (big ? 74 : 8), ly = y + (ih - lw) / 2;
+  int lx = x + iw + (big ? pli_gap : 8), ly = y + (ih - lw) / 2;
   gfx_rrect(s, lx, ly, lw, lw, 12, C_DEEP, 255, 0);
   gfx_rrect(s, lx, ly, lw, lw, 12, C_EDGE, 255, 1);
   if (!o) return;
@@ -1127,6 +1155,128 @@ static void pl_draw_editor(UI *ui, const CatPlBoard *b) {
   pl_button(ui, px + (pw - bw) / 2, py + ph - (seven ? 68 : 78), bw, 56, t, 1, 0);
 }
 
+
+/* ------------------------------------------------------------------ v1.57: tela dividida "MONTE O SEU" + informativos */
+static const char *pl_lic(const CatPlBoard *b, int c) {          /* licenca (gaveta) do jogo que cada competicao usa */
+  static const char *L[8] = { "Brazil", "France", "Spain", "Italy", "Pes", "Euro", "Ucl", "England" };
+  int bf = !strcmp(b->id, "brasfoot");
+  if (bf && c == 5) return "Ucl";
+  if (bf && c == 6) return "Pes";
+  return L[c];
+}
+static const char *pl_info(const CatPlBoard *b, int c) {
+  int bf = !strcmp(b->id, "brasfoot");
+  switch (c) {
+    case 0: return "Este placar vale só para o Brasileirão Série A. O que você escolher aqui aparece em todos os jogos da Série A e em nenhuma outra competição.";
+    case 1: return "Este placar vale só para o Brasileirão Série B. O que você escolher aqui aparece em todos os jogos da Série B e em nenhuma outra competição.";
+    case 2: return "Este placar vale só para a Copa do Brasil. A licença usada pelo jogo é só dela: a sua escolha não muda nenhuma outra competição.";
+    case 3: return "Este placar vale só para a Libertadores, que tem placar próprio, com logo e visual da competição. A Sul-Americana e a Recopa não usam esta escolha.";
+    case 4: return bf ? "Licença PES: é a licença geral do jogo. O placar que você escolher aqui aparece em TODAS estas competições: amistosos, Mundial de Clubes, Copa do Mundo, copas sem licença própria e a Supercopa Rei."
+                      : "Licença PES: é a licença geral do jogo. O placar que você escolher aqui aparece em TODAS estas competições: amistosos, Mundial de Clubes, Copa do Mundo e as copas sem licença própria.";
+    case 5: return "Placar fixo da Sul-Americana (SBT). Ele vem junto com o plugin da Sula e não é escolhido aqui.";
+    case 6: return bf ? "A Supercopa Rei usa a licença PES: mostra o mesmo placar escolhido em PLACAR MUNDIAL. Não tem placar próprio no Brasfoot."
+                      : "Placar fixo da Supercopa Rei. Ele vem junto com o plugin da Sula e não é escolhido aqui.";
+    default: return "Placar fixo da Recopa. Ele vem junto com o plugin da Sula e não é escolhido aqui.";
+  }
+}
+/* nome do plugin de placares do quadro (jk_placares*.prx), lido da lista de downloads do catalogo */
+static void pl_plugin_name(const CatPlBoard *b, char *out, int cap) {
+  snprintf(out, (size_t)cap, "jk_placares");
+  const char *q = strstr(b->extra, "jk_placares");
+  if (!q) return;
+  const char *e = strstr(q, ".prx");
+  if (!e || e - q + 4 >= cap) return;
+  memcpy(out, q, (size_t)(e - q + 4)); out[e - q + 4] = 0;
+}
+
+static void pl_draw_split(UI *ui, const CatPlBoard *b) {
+  Image *s = ui->s;
+  int nc = pl_ncomp(b), pitch, rh_, eih_, elw_;
+  pl_split_dims(nc, &pitch, &rh_, &eih_, &elw_);
+  int px = SP_X, py = SP_Y, pw = SP_W, ph = SP_H;
+  /* ---- painel esquerdo: monte o seu */
+  gfx_rrect(s, px, py, pw, ph, 22, C_PANEL, 250, 0);
+  gfx_rrect(s, px, py, pw, ph, 22, C_FOCUS, 150, 2);
+  gfx_fill(s, px + 32, py + 1, 150, 3, C_FOCUS, 255);
+  T(ui, 1, 32, px + 32, py + 46, "MONTE O SEU", C_FOCUS, 255, 3);
+  T(ui, 0, 17, px + 32, py + 70, "\xE2\x96\xB2\xE2\x96\xBC competi\xC3\xA7\xC3\xA3o   \xE2\x97\x80\xE2\x96\xB6 troca o placar   X baixa o seu combo", C_MUTED, 255, 0);
+  { int w = TW(ui, 1, 18, b->title, 2) + 32; gfx_rrect(s, px + pw - 32 - w, py + 22, w, 36, 11, C_ACCENT, 255, 0);
+    text_draw_in(s, ui->fb, 18, px + pw - 32 - w, w, py + 46, b->title, C_DARKTXT, 255, 2, 1); }
+  unsigned long long tot = 0;
+  for (int k = 0; k < nc; k++) {
+    int c = pl_row_comp(b, k);
+    int ry = py + 92 + k * pitch, rx = px + 20, rw = pw - 40, rh = rh_;
+    int foc = ui->pl_row == k;
+    gfx_rrect(s, rx, ry, rw, rh, 14, foc ? C_PANEL2 : C_DEEP, 255, 0);
+    if (foc) pl_glow(s, rx, ry, rw, rh, 14, C_FOCUS); else gfx_rrect(s, rx, ry, rw, rh, 14, C_EDGE, 255, 1);
+    int oi = ui->pl_pick[c];
+    const CatPlOpt *o = (oi >= 0 && oi < b->nopt) ? &b->opt[oi] : NULL;
+    if (o) tot += o->size;
+    char cn[64]; text_fit(ui->fb, 14, PL_COMP[c], 200, cn, sizeof(cn));
+    T(ui, 1, 14, rx + 16, ry + rh / 2 - 6, cn, C_TEXT, 255, 1);
+    if (o) {
+      char nm[64]; text_fit(ui->fb, 19, o->name, 196, nm, sizeof(nm));
+      T(ui, 1, 19, rx + 16, ry + rh / 2 + 17, nm, C_ACCENT, 255, 0);
+      if (rh >= 88) {
+        int at = 0, n = 0;
+        for (int i = 0; i < b->nopt; i++) if (b->opt[i].comp == c) { if (i == oi) at = n; n++; }
+        char pos[24]; snprintf(pos, sizeof(pos), "%d de %d", at + 1, n);
+        T(ui, 0, 14, rx + 16, ry + rh / 2 + 38, pos, C_MUTED, 255, 0);
+      }
+    }
+    uint32_t ac = foc ? C_FOCUS : C_MUTED;
+    text_draw_in(s, ui->fb, 30, rx + 224, 36, ry + rh / 2 + 10, "\xE2\x97\x80", ac, foc ? 255 : 120, 0, 1);
+    pli_nobox = 0;
+    pl_draw_opt(ui, o, oi, rx + 264, ry + (rh - eih_) / 2, pli_eiw, eih_, elw_, 1);
+    text_draw_in(s, ui->fb, 30, rx + 264 + pli_eiw + 6, 36, ry + rh / 2 + 10, "\xE2\x96\xB6", ac, foc ? 255 : 120, 0, 1);
+    if (o && ui->pl_inst[c] == oi) {                             /* ja esta no console */
+      int bw = 84, bx = rx + rw - bw - 10, by = ry + 8;
+      gfx_rrect(s, bx, by, bw, 24, 8, C_BASE, 255, 0);
+      text_draw_in(s, ui->fb, 13, bx, bw, by + 17, "\xE2\x9C\x93 NO PS4", C_TEXT, 255, 0, 1);
+    }
+  }
+  { char t[64], mb[24];
+    pl_mb(tot, mb, sizeof(mb));
+    snprintf(t, sizeof(t), "BAIXAR MEU COMBO  \xC2\xB7  %s", mb);
+    int bw = 520;
+    pl_button(ui, px + (pw - bw) / 2, py + ph - 66, bw, 52, t, 1, 0); }
+
+  /* ---- painel direito: informativos */
+  int rx0 = px + pw + 24, rw0 = W - 80 - rx0, ry0 = py;
+  gfx_rrect(s, rx0, ry0, rw0, ph, 22, C_PANEL, 250, 0);
+  gfx_rrect(s, rx0, ry0, rw0, ph, 22, C_ACCENT, 90, 2);
+  gfx_fill(s, rx0 + 32, ry0 + 1, 150, 3, C_ACCENT, 255);
+  T(ui, 1, 20, rx0 + 30, ry0 + 44, "ENTENDA A SUA ESCOLHA", C_ACCENT, 255, 3);
+  { int kk = ui->pl_row; int c = pl_row_comp(b, kk);
+    int oi = ui->pl_pick[c];
+    const CatPlOpt *o = (oi >= 0 && oi < b->nopt) ? &b->opt[oi] : NULL;
+    char hd[96]; snprintf(hd, sizeof(hd), "%s%s%s", PL_COMP[c], o ? "  \xC2\xB7  " : "", o ? o->name : "");
+    char hf[96]; text_fit(ui->fb, 25, hd, rw0 - 60, hf, sizeof(hf));
+    T(ui, 1, 25, rx0 + 30, ry0 + 92, hf, C_FOCUS, 255, 0);
+    char lc[96]; snprintf(lc, sizeof(lc), "Licen\xC3\xA7""a do jogo usada: %s", pl_lic(b, c));
+    T(ui, 1, 18, rx0 + 30, ry0 + 124, lc, C_CYAN, 255, 0);
+    text_wrap(s, ui->f, 19, rx0 + 30, ry0 + 160, rw0 - 60, 27, 6, pl_info(b, c), C_TEXT, 255); }
+  int dy = ry0 + 330;
+  gfx_fill(s, rx0 + 30, dy, rw0 - 60, 2, C_EDGE, 255);
+  T(ui, 1, 18, rx0 + 30, dy + 36, "SUL-AMERICANA E RECOPA", C_YELLOW, 255, 1);
+  text_wrap(s, ui->f, 18, rx0 + 30, dy + 68, rw0 - 60, 25, 4, "T\xC3\xAAm placar pr\xC3\xB3prio e fixo: ele \xC3\xA9 instalado junto com o plugin da Sula e Supercopas (aba PLUGINS). N\xC3\xA3o \xC3\xA9 escolhido aqui, ent\xC3\xA3o n\xC3\xA3o depende de nenhum placar da lista.", C_TEXT, 255);
+  dy += 168;
+  gfx_fill(s, rx0 + 30, dy, rw0 - 60, 2, C_EDGE, 255);
+  T(ui, 1, 18, rx0 + 30, dy + 36, "SUPERCOPA REI", C_YELLOW, 255, 1);
+  text_wrap(s, ui->f, 18, rx0 + 30, dy + 68, rw0 - 60, 25, 5, !strcmp(b->id, "brasfoot")
+    ? "Entra na licen\xC3\xA7""a PES, a mesma do PLACAR MUNDIAL: cobre os placares mundiais e os amistosos. Ela mostra o placar que voc\xC3\xAA escolher na linha PLACAR MUNDIAL, e trocar essa linha muda o placar dos amistosos tamb\xC3\xA9m."
+    : "Tem placar pr\xC3\xB3prio e fixo, instalado junto com o plugin da Sula e Supercopas (aba PLUGINS).", C_TEXT, 255);
+
+  /* ---- informativo de baixo */
+  int by = py + ph + 10, bh = 94, bx = SP_X, bw = W - 2 * SP_X;
+  gfx_rrect(s, bx, by, bw, bh, 16, C_DEEP, 255, 0);
+  gfx_rrect(s, bx, by, bw, bh, 16, C_FOCUS, 140, 1);
+  T(ui, 1, 16, bx + 26, by + 30, "AO BAIXAR", C_FOCUS, 255, 2);
+  { char pn[64], msg[360]; pl_plugin_name(b, pn, sizeof(pn));
+    snprintf(msg, sizeof(msg), "O app instala junto, j\xC3\xA1 ativados, o plugin de placares (%s), o afr.prx (que carrega os placares), o plugins.ini e o DpFileList. Feche o jogo por completo e abra de novo para valer.", pn);
+    text_wrap(s, ui->f, 18, bx + 26, by + 56, bw - 52, 25, 2, msg, C_TEXT, 255); }
+}
+
 static void pl_draw(UI *ui) {
   Image *s = ui->s;
   if (!ui->pl_bg) pl_build_bg(ui);
@@ -1135,6 +1285,7 @@ static void pl_draw(UI *ui) {
   pl_draw_header(ui, b);
   jk_tabs(ui);                                                   /* v1.40 */
   if (ui->pl_cat > 0) { jk_draw(ui); pl_draw_msg(ui); jx_draw_modal(ui); return; }
+  if (pl_is_split(ui) && ui->pl_ed) { pl_draw_split(ui, b); pl_draw_msg(ui); return; }   /* v1.57 */
   int nc = pl_ncards(b);
   if (!b || nc == 0) {
     text_draw_in(s, ui->fb, 30, 0, W, 540, "Nenhum placar disponível agora.", C_MUTED, 255, 0, 1);
@@ -1163,6 +1314,8 @@ static void pl_footer(UI *ui, int *px) {
     x = hint(ui, x, "\xE2\x96\xB2 \xE2\x96\xBC", "Competição");
     x = hint(ui, x, "\xE2\x97\x80 \xE2\x96\xB6", "Trocar placar");
     x = hint(ui, x, "X", ui->locked ? "Bloqueado" : "Baixar meu combo");
+    x = hint(ui, x, "L2  R2", "Categoria");
+    if (ui->cat && ui->cat->nplb > 1) x = hint(ui, x, "L1  R1", "Patch");
     x = hint(ui, x, "O", "Voltar");
   } else if (ui->pl_cat > 0) {                                 /* v1.40 */
     x = hint(ui, x, "\xE2\x97\x80 \xE2\x96\xB2 \xE2\x96\xBC \xE2\x96\xB6", ui->pl_cat == 2 ? "Escolher clube" : "Escolher");

@@ -479,6 +479,8 @@ void jkx_dp_fix(const char *dir, const char *cusa, JkxLog log) {
   for (int c = 0; c < nc && m < 230; c++) {
     int tem = 0, mg = 0;
     for (int k = 0; k < m; k++) if (!strcmp(nw[k], cand[c])) tem = 1;
+    for (int j = 0; j < 2; j++) if (!strcmp(cand[c], PX[j])) tem = 1;     /* v1.57: SUPER/RECOPA entram so no passo 3 (antes entravam 2x quando vinham como @= do card) */
+    for (int j = 0; j < 5; j++) if (!strcmp(cand[c], PL[j])) tem = 1;
     if (!tem && dp_should(dir, cusa, cand[c], &mg)) { memset(nw[m], 0, 32); snprintf(nw[m], 32, "%s", cand[c]); m++; }
   }
   pthread_mutex_unlock(&jx_mu);
@@ -487,7 +489,7 @@ void jkx_dp_fix(const char *dir, const char *cusa, JkxLog log) {
   for (int j = 1; j < 5; j++) { snprintf(p, sizeof(p), "%s/%s", dir, PL[j]); if (fsize(p) <= 0) ok4 = 0; }
   snprintf(p, sizeof(p), "%s/%s", dir, PL[0]);
   if (fsize(p) > 0) { memset(nw[m], 0, 32); snprintf(nw[m], 32, "%s", PL[0]); m++; }
-  for (int j = 0; j < 2; j++) { snprintf(p, sizeof(p), "%s/%s", dir, PX[j]); if (fsize(p) > 0 && m < 230) { memset(nw[m], 0, 32); snprintf(nw[m], 32, "%s", PX[j]); m++; } }
+  for (int j = 0; j < 2; j++) { snprintf(p, sizeof(p), "%s/%s", dir, PX[j]); int ja = 0; for (int k = 0; k < m; k++) if (!strcmp(nw[k], PX[j])) ja = 1; if (!ja && fsize(p) > 0 && m < 230) { memset(nw[m], 0, 32); snprintf(nw[m], 32, "%s", PX[j]); m++; } }
   if (ok4) for (int j = 1; j < 5; j++) { memset(nw[m], 0, 32); snprintf(nw[m], 32, "%s", PL[j]); m++; }
   int dif = m != no;
   for (int k = 0; k < m && !dif; k++) if (strcmp(nw[k], old[k])) dif = 1;
