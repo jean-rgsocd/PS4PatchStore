@@ -1,5 +1,5 @@
 /*
- * JK EFUTSAL SONDA v1.01 - PES 2021 (CUSA18676) - etapa 0 do eFutsal no PS4.
+ * JK EFUTSAL SONDA v1.02 - PES 2021 (CUSA18676) - etapa 0 do eFutsal no PS4.
  * Plugin SO DE LEITURA. Nao grava nada no jogo e nao hooka nada.
  * Objetivo: descobrir no PS4 as estruturas que o mod de PC (efutsal.lua) usa:
  *   - MatchInfo (escalacao, formacao, flags de quem joga: no PC +0x288, +0x598, +0x1334, +0x1748)
@@ -28,7 +28,7 @@
 attr_public const char *g_pluginName = "jk_efutsal_sonda";
 attr_public const char *g_pluginDesc = "JK PATCHS - sonda do eFutsal (so leitura)";
 attr_public const char *g_pluginAuth = "JK PATCHS";
-attr_public uint32_t g_pluginVersion = 0x00000101;
+attr_public uint32_t g_pluginVersion = 0x00000102;
 
 int jk_qmp(void *addr, void **start, void **end, int *prot) __asm__("sceKernelQueryMemoryProtection");
 
@@ -45,6 +45,7 @@ int jk_qmp(void *addr, void **start, void **end, int *prot) __asm__("sceKernelQu
 #define MI_DUMP  0x8000
 
 static uint64_t g_base;
+static int g_listar, g_nlista;
 static volatile int g_rodando = 1;
 static OrbisPthread g_thr;
 static int g_log = -1;
@@ -76,7 +77,8 @@ static void para_cada_regiao(int so_rw, regiao_cb cb, void *ud)
         if (re <= a) { a += 0x10000; continue; }
         if (rs < a) rs = a;
         int ok = so_rw ? ((p & 3) == 3) : ((p & 1) != 0);
-        if (ok && (p & ~3) == 0 && re - rs >= 0x1000) { if (cb(rs, re, p, ud)) return; }
+        if (g_listar && g_nlista < 150) { g_nlista++; logf_("  REGIAO 0x%llx-0x%llx (%lluMB) prot=0x%x %s", (unsigned long long)rs, (unsigned long long)re, (unsigned long long)((re - rs) >> 20), p, ok ? "varrida" : "ignorada"); }
+        if (ok && re - rs >= 0x1000) { if (cb(rs, re, p, ud)) return; }
         a = re;
     }
 }
@@ -259,6 +261,7 @@ static void busca_textos(void)
 {
     char buf[512]; int fd = sceKernelOpen(PASTA "/busca.txt", 0, 0);
     if (fd < 0) return;
+    g_listar = !g_nlista; if (g_listar) logf_("MAPA DE MEMORIA (1a busca):");
     int n = (int)sceKernelRead(fd, buf, sizeof buf - 1); sceKernelClose(fd);
     if (n <= 0) { sceKernelUnlink(PASTA "/busca.txt"); return; }
     buf[n] = 0;
@@ -270,6 +273,7 @@ static void busca_textos(void)
         if (e > p) { busca_variantes(p, (int)(e - p), ex_lo, ex_hi); lin++; }
         *e = sv; p = e; while (*p == '\n' || *p == '\r') p++;
     }
+    g_listar = 0;
     sceKernelUnlink(PASTA "/busca.txt");
 }
 
@@ -281,7 +285,7 @@ static void *trabalho(void *arg)
     struct proc_info pi; memset(&pi, 0, sizeof pi);
     if (sys_sdk_proc_info(&pi) != 0) { logf_("ERRO proc_info"); return 0; }
     g_base = pi.base_address;
-    logf_("JK_EFUTSAL_SONDA v1.01 titulo=%s versao=%s base=0x%llx", pi.titleid, pi.version, (unsigned long long)g_base);
+    logf_("JK_EFUTSAL_SONDA v1.02 titulo=%s versao=%s base=0x%llx", pi.titleid, pi.version, (unsigned long long)g_base);
     sceKernelUsleep(30000000);
     uint64_t ultimo = 0; int vezes = 0, pitch_feito = 0;
     logf_("Aguardando partida. Quando o MatchInfo for achado 2x seguidas o relatorio completo sai sozinho (pesado: ~3 s de varredura). Para repetir: crie /data/jk/efutsal/repetir.txt");
