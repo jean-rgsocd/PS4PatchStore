@@ -463,9 +463,9 @@ void jkx_dp_fix(const char *dir, const char *cusa, JkxLog log) {
     if (m < 230) memcpy(nw[m++], old[k], 32);
   }
   /* 2) CPKs dos plugins (e VTA/Varzea) que existem e faltam na lista */
-  static const char *LEG[3] = { "VTA.cpk", "EstadioVarzea.cpk", "CPK ML.cpk" };   /* v1.59: o ML existe na pasta mas ninguem o acrescentava ao DpFileList ja criado pelo placar */
+  static const char *LEG[4] = { "VTA.cpk", "EstadioVarzea.cpk", "CPK ML.cpk", "JKML.cpk" };   /* v1.59: o ML existe na pasta mas ninguem o acrescentava ao DpFileList ja criado pelo placar */
   char cand[64][32]; int nc = 0;
-  for (int e = 0; e < 3; e++) snprintf(cand[nc++], 32, "%s", LEG[e]);
+  for (int e = 0; e < 4; e++) snprintf(cand[nc++], 32, "%s", LEG[e]);
   for (int i = 0; i < jx_n && nc < 64; i++) {
     Item it[MAXIT]; int ni = items(&jx_def[i], dir, it, MAXIT);
     for (int k = 0; k < ni && nc < 64; k++) {
