@@ -1046,10 +1046,11 @@ static void *trabalho(void *arg)
     (void)arg;
     sceKernelMkdir("/data/jk", 0777);
     sceKernelMkdir(PASTA, 0777);
+    logf_("JK_SUPERCOPAS v1.20 thread iniciada (diagnostico: antes do proc_info)");   /* v1.20: se esta linha nao aparece, o plugin nao foi carregado/iniciado */
     struct proc_info pi; memset(&pi, 0, sizeof pi);
-    if (sys_sdk_proc_info(&pi) != 0) { logf_("ERRO proc_info"); return 0; }
+    { int rc_pi = sys_sdk_proc_info(&pi); if (rc_pi != 0) { logf_("ERRO proc_info rc=%d", rc_pi); return 0; } }
     g_base = pi.base_address;
-    logf_("JK_SUPERCOPAS v1.19 titulo=%s versao=%s", pi.titleid, pi.version);
+    logf_("JK_SUPERCOPAS v1.20 titulo=%s versao=%s", pi.titleid, pi.version);
     int sup_txt = ler_supercopa_txt();
     if (!sup_txt && strncmp(pi.titleid, "CUSA18676", 9) == 0 && strncmp(pi.version, "01.03", 5) == 0 && !existe(PASTA "/com_supercopa.txt")) {
         /* v1.19: no Brasfoot 01.03 a Supercopa Uruguaya (0xa5) trava a partida; a Supertaca Chinesa (0x84) abre (testado) */
