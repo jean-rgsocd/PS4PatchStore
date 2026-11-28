@@ -8,6 +8,10 @@
  * Troca os 2 clubes no jogo marcado (antes da data), no confronto, na lista de inscritos e no nome.
  * Se o clube do usuario entrar, grava o jogo na agenda dele.
  *
+ * v1.18: Brasfoot (CUSA18676 versao 01.03): a Supercopa Rei fica DESLIGADA. Testado no console: a partida da
+ *        Supercopa Uruguaya nativa (chave 0xa5) nao abre na 01.03 (carregamento infinito), com ou sem troca de clubes,
+ *        categoria, licenca ou placar. A Recopa (0x83) funciona. Para ligar a Supercopa (teste): criar /data/jk/super/com_supercopa.txt.
+ *        v1.18: LISTA_COMPETICOES no log (todas as competicoes do jogo) e supercopa.txt (outra competicao para a Supercopa Rei, sem recompilar)
  * v1.16: roda tambem no Demisan (CUSA22062).
  * v1.15: aba Eliminatorias: liga o bit 0x100 (+0x378) do mata-mata da Sula, que o jogo le no menu.
  * v1.14: aba Eliminatorias apagada no mata-mata: o "a definir" nao aponta mais para rodada ja sorteada pelo RB.
@@ -103,6 +107,7 @@ int jk_qmp(void *addr, void **start, void **end, int *prot) __asm__("sceKernelQu
 #define PASTA "/data/jk/super"
 
 static uint64_t g_base;
+static int g_sup_off = 0;   /* v1.18: 1 = Supercopa Rei desligada (CUSA18676 01.03) */
 static volatile int g_rodando = 1;
 static OrbisPthread g_thr;
 
@@ -911,12 +916,53 @@ static int tem_jogo(uint64_t db, uint16_t chave, int ano)
     return 0;
 }
 
+/* v1.18: lista de todas as competicoes desta versao do jogo (para achar outra copa de jogo unico para a Supercopa Rei).
+ * Uma linha COMP por competicao: indice, chave (u16 & 0x3ff e u16 inteiro), categoria do menu, inscritos, nome e,
+ * na temporada atual, quantos jogos tem e o primeiro (dia, clubes). Gravada 1x por abertura do jogo, no supercopas.log. */
+static void listar_competicoes(uint64_t db, int ano)
+{
+    static int16_t cnt[1024]; static int16_t prim[1024];
+    for (int k = 0; k < 1024; k++) { cnt[k] = 0; prim[k] = -1; }
+    for (int i = 0; i < JOGOS_MAX; i++) {
+        uint64_t g = db + DB_JOGOS + (uint64_t)i * JOGO_STRIDE;
+        if (U16(g) != i || U16(g + 8) != ano) continue;
+        int k = U16(g + 2) & 0x3ff;
+        if (cnt[k] < 30000) cnt[k]++;
+        if (prim[k] < 0) prim[k] = (int16_t)i;
+    }
+    uint32_t n = U32(db + DB_COMP_N);
+    logf_("LISTA_COMPETICOES ano=%d n=%u (idx chave chave16 categ inscritos jogos_no_ano primeiro_jogo[dia mes/dia clubes] nome)", ano, n);
+    for (uint32_t i = 0; i < n; i++) {
+        uint64_t c = db + DB_COMP_TAB + (uint64_t)i * COMP_STRIDE;
+        int k = U16(c) & 0x3ff;
+        char nome[64]; int q = 0;
+        for (; q < 60; q++) { uint8_t ch = *(volatile uint8_t *)(c + COMP_NOME1 + q); if (!ch) break; nome[q] = (ch >= 32 && ch < 127) ? (char)ch : '?'; }
+        nome[q] = 0;
+        int insc = *(volatile uint8_t *)(c + COMP_N_INSCR) & 0x7f;
+        if (cnt[k] > 0 && prim[k] >= 0) {
+            uint64_t g = db + DB_JOGOS + (uint64_t)prim[k] * JOGO_STRIDE;
+            logf_("COMP %u chave=0x%x c16=0x%x categ=%d insc=%d jogos=%d prim[dia=%d %d/%d %u-x-%u] %s", i, k, U16(c), CATEG(U16(c + COMP_CATEG)), insc, cnt[k],
+                  dia_do_ano(*(volatile uint8_t *)(g + 10), *(volatile uint8_t *)(g + 11)), *(volatile uint8_t *)(g + 10), *(volatile uint8_t *)(g + 11),
+                  (U32(g + 0x14) >> 14) & 0x1ffff, (U32(g + 0x18) >> 14) & 0x1ffff, nome);
+        } else {
+            logf_("COMP %u chave=0x%x c16=0x%x categ=%d insc=%d jogos=0 %s", i, k, U16(c), CATEG(U16(c + COMP_CATEG)), insc, nome);
+        }
+    }
+    logf_("LISTA_COMPETICOES fim");
+}
+
 static void ciclo(uint64_t db)
 {
     int hoje = U16(db + DB_DATA);
     int ano = U16(db + DB_DATA + 2);
     if (ano < 2000 || ano > 2100 || hoje > 365) return;   /* carreira ainda nao comecou */
 
+    static int lista_feita = 0;
+    if (!lista_feita) {                                    /* so com o calendario da temporada ja carregado (>=100 jogos) */
+        int cal = 0;
+        for (int i = 0; i < JOGOS_MAX && cal < 100; i++) { uint64_t g = db + DB_JOGOS + (uint64_t)i * JOGO_STRIDE; if (U16(g) == i && U16(g + 8) == ano) cal++; }
+        if (cal >= 100) { lista_feita = 1; listar_competicoes(db, ano); }
+    }
     acompanhar(db, ano, hoje);
     chaves_sula(db);
     ajustar_chaveamento(db, ano);
@@ -936,7 +982,7 @@ static void ciclo(uint64_t db)
     }
     campeoes_t *c = &g_camp;
     int b_sup = (c->cdb == c->br) ? c->vice_br : c->cdb;
-    int ok_sup = g_camp_ok && c->br && b_sup && c->br != b_sup;
+    int ok_sup = g_camp_ok && c->br && b_sup && c->br != b_sup && !g_sup_off;
     int ok_rec = g_camp_ok && c->lib && c->sula && c->lib != c->sula;
     renomear(db, g_copas[0].chave, ok_sup ? g_copas[0].nome : g_copas[0].nome_original);
     renomear(db, g_copas[1].chave, ok_rec ? g_copas[1].nome : g_copas[1].nome_original);
@@ -963,6 +1009,38 @@ static void ciclo(uint64_t db)
     if (ok_rec) aplicar(db, &g_copas[1], ano, hoje, c->lib, c->sula);
 }
 
+/* v1.18: /data/jk/super/supercopa.txt escolhe OUTRA competicao de jogo unico para a Supercopa Rei (sem recompilar).
+ * Linhas: CHAVE=0xNN (ou decimal)  CATEGORIA_ORIGINAL=N  NOME_ORIGINAL=texto  (a chave e a coluna "chave" da LISTA_COMPETICOES) */
+static int ler_num(const char *p) { int v = 0; if (p[0] == '0' && (p[1] == 'x' || p[1] == 'X')) { p += 2; for (; *p; p++) { int d = (*p >= '0' && *p <= '9') ? *p - '0' : (*p >= 'a' && *p <= 'f') ? *p - 'a' + 10 : (*p >= 'A' && *p <= 'F') ? *p - 'A' + 10 : -1; if (d < 0) break; v = v * 16 + d; } } else for (; *p >= '0' && *p <= '9'; p++) v = v * 10 + (*p - '0'); return v; }
+static char g_sup_nome_orig[64];
+static int ler_supercopa_txt(void)
+{
+    int fd = sceKernelOpen(PASTA "/supercopa.txt", 0, 0);
+    if (fd < 0) return 0;
+    char t[512]; int n = sceKernelRead(fd, t, sizeof t - 1); sceKernelClose(fd);
+    if (n <= 0) return 0;
+    t[n] = 0;
+    int chave = -1, cat = -1;
+    for (char *p = t; *p; ) {
+        char *fim = p; while (*fim && *fim != '\n' && *fim != '\r') fim++;
+        char sv = *fim; *fim = 0;
+        char *ig = strchr(p, '=');
+        if (ig) {
+            *ig = 0; const char *v = ig + 1;
+            if (!strcmp(p, "CHAVE")) chave = ler_num(v);
+            else if (!strcmp(p, "CATEGORIA_ORIGINAL")) cat = ler_num(v);
+            else if (!strcmp(p, "NOME_ORIGINAL")) { size_t L = strlen(v); if (L > sizeof g_sup_nome_orig - 1) L = sizeof g_sup_nome_orig - 1; memcpy(g_sup_nome_orig, v, L); g_sup_nome_orig[L] = 0; }
+        }
+        *fim = sv; p = *fim ? fim + 1 : fim;
+    }
+    if (chave <= 0 || chave > 0x3ff) { logf_("SUPERCOPA_TXT invalido (CHAVE=%d): ignorado", chave); return 0; }
+    g_copas[0].chave = (uint16_t)chave;
+    if (cat > 0) g_copas[0].cat_original = cat;
+    if (g_sup_nome_orig[0]) g_copas[0].nome_original = g_sup_nome_orig;
+    logf_("SUPERCOPA_TXT competicao da Supercopa Rei = chave 0x%x categoria_original=%d nome_original=%s", chave, g_copas[0].cat_original, g_copas[0].nome_original);
+    return 1;
+}
+
 static void *trabalho(void *arg)
 {
     (void)arg;
@@ -971,7 +1049,12 @@ static void *trabalho(void *arg)
     struct proc_info pi; memset(&pi, 0, sizeof pi);
     if (sys_sdk_proc_info(&pi) != 0) { logf_("ERRO proc_info"); return 0; }
     g_base = pi.base_address;
-    logf_("JK_SUPERCOPAS v1.16 titulo=%s versao=%s", pi.titleid, pi.version);
+    logf_("JK_SUPERCOPAS v1.18 titulo=%s versao=%s", pi.titleid, pi.version);
+    int sup_txt = ler_supercopa_txt();
+    if (!sup_txt && strncmp(pi.titleid, "CUSA18676", 9) == 0 && strncmp(pi.version, "01.03", 5) == 0 && !existe(PASTA "/com_supercopa.txt")) {
+        g_sup_off = 1;
+        logf_("SUPERCOPA desligada nesta versao (01.03): a partida nativa nao abre; a Recopa segue normal (com_supercopa.txt liga para teste)");
+    }
     /* v1.16: Demisan (CUSA22062, 01.03) tem o executavel igual ao do Mega nos enderecos que usamos
      * (conferido com a copia da sonda: funcoes do chaveamento, menu e carreira identicas; os remendos
      * ainda conferem os bytes antes de gravar). */
