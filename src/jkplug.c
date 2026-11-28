@@ -511,6 +511,45 @@ void jkx_dp_fix(const char *dir, const char *cusa, JkxLog log) {
   free(o);
 }
 
+/* v1.59: REGRA GERAL dos 3 patchs: tudo que o app baixa para uma pasta AFR entra no DpFileList se ainda nao estiver.
+ * Fica ANTES dos JK_PLACAR_* (o placar e o ultimo e manda). So cita arquivo que existe (o jogo trava com CPK ausente). */
+void jkx_dp_add(const char *dir, const char *name, JkxLog log) {
+  if (!dir || !name || !name[0] || strlen(name) > 31) return;
+  if (!strncmp(name, "JK_PLACAR_", 10) || !strcmp(name, "DpFileList.bin")) return;   /* placar: cuidado pelo jkx_dp_fix / jk_placares_fixup */
+  char p[400];
+  snprintf(p, sizeof(p), "%s/%s", dir, name);
+  if (fsize(p) <= 0) return;
+  snprintf(p, sizeof(p), "%s/DpFileList.bin", dir);
+  long long n = 0;
+  unsigned char *d = (unsigned char *)readf(p, &n, 64 * 1024);
+  if (!d) return;
+  int cnt = (int)(d[4] | (d[5] << 8) | (d[6] << 16) | ((unsigned)d[7] << 24));
+  if (cnt <= 0 || cnt > 200 || n < 16 + 48LL * cnt) { free(d); return; }
+  static char nm[240][32];
+  int m = 0;
+  for (int k = 0; k < cnt && m < 230; k++) { memcpy(nm[m], d + 16 + 48 * k, 32); nm[m][31] = 0; if (!strcmp(nm[m], name)) { free(d); return; } m++; }
+  free(d);
+  int t = m;
+  while (t > 0 && !strncmp(nm[t - 1], "JK_PLACAR_", 10)) t--;
+  for (int k = m; k > t; k--) memcpy(nm[k], nm[k - 1], 32);
+  memset(nm[t], 0, 32); snprintf(nm[t], 32, "%s", name);
+  m++;
+  long long on = 48LL * m + 16;
+  unsigned char *o = (unsigned char *)calloc(1, (size_t)on);
+  if (!o) return;
+  for (int k = 0; k < m; k++) {
+    unsigned v = (unsigned)(m - k);
+    unsigned char *e = o + 48 * k;
+    e[4] = (unsigned char)v; e[5] = (unsigned char)(v >> 8);
+    memcpy(e + 16, nm[k], 32);
+  }
+  if (writef(p, (const char *)o, on) == 0 && log) {
+    char msg[200]; snprintf(msg, sizeof(msg), "DpFileList de %s: acrescentado %s (%d CPKs)", dir, name, m);
+    log(msg);
+  }
+  free(o);
+}
+
 /* ------------------------------------------------------------------ instalado / botoes */
 static int files_ok(const CatJkx *x, const char *cusa, const char *dest) {
   Item it[MAXIT]; int n = items(x, dest, it, MAXIT);

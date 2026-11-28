@@ -578,6 +578,7 @@ static void *install_thread(void *arg) {
     enum { MAXIT = 161, MAXEX = 81 };
     static char it_url[MAXIT][1024];
     static char it_dir[MAXIT][120];
+    static char it_fn[MAXIT][180];                      /* v1.59: nome gravado de cada item (para o DpFileList) */
     static char it_soft[MAXIT];                         /* 1 = falha nao derruba a instalacao (ex.: icone, hino) */
     int nit = 0;
     snprintf(it_url[0], sizeof(it_url[0]), "%s", j->btn.url);
@@ -671,6 +672,7 @@ static void *install_thread(void *arg) {
       }
       if (!filename[0] || !strcmp(filename, ".") || !strcmp(filename, "..")) snprintf(filename, sizeof(filename), "arquivo_download.bin");
       snprintf(path, sizeof(path), "%s/%s", it_dir[u], filename);
+      snprintf(it_fn[u], sizeof(it_fn[u]), "%s", filename);
       if (strcmp(j->btn.content_id, "JKX") && jkx_blocked(path)) {   /* v1.43: plugin opcional: so a aba Plugins baixa (placar/narracao/ML baixam so o obrigatorio) */
         char lmb[700]; snprintf(lmb, sizeof(lmb), "Item %d/%d pulado (plugin opcional, instale pela aba Plugins): %s", u + 1, nit, path);
         install_log(lmb);
@@ -768,6 +770,13 @@ static void *install_thread(void *arg) {
           if (k > 4 && !strcmp(nm + k - 4, ".prx")) jkx_ini_garantir(nm, cusa, install_log);
         }
         break;
+      }
+      for (int u = 0; u < nit; u++) {                  /* v1.59: REGRA GERAL: narracao / ML / estadio / plugin: o que baixou entra no DpFileList se nao estiver */
+        const char *c = strstr(it_dir[u], "/AFR/CUSA");
+        size_t L = strlen(it_fn[u]);
+        if (!c || L < 5) continue;
+        { const char *x = it_fn[u] + L - 4; if (x[0] != '.' || (x[1] | 32) != 'c' || (x[2] | 32) != 'p' || (x[3] | 32) != 'k') continue; }
+        jkx_dp_add(it_dir[u], it_fn[u], install_log);
       }
       jk_placares_fixup();                             /* v1.37: placares JK (Demisan) continuam ligados depois de qualquer download */
     }

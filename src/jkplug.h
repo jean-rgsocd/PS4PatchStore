@@ -23,6 +23,7 @@ void jkx_button_off(const CatJkx *x, const CatPlBoard *b, CatButton *out);
 void jkx_apply(JkxLog log);
 /* arruma so o DpFileList de uma pasta (JK_PLACAR, VTA, Varzea e os CPKs dos plugins) */
 void jkx_dp_fix(const char *dir, const char *cusa, JkxLog log);
+void jkx_dp_add(const char *dir, const char *name, JkxLog log);              /* v1.59: acrescenta o CPK ao DpFileList se faltar (antes dos JK_PLACAR) */
 void jkx_ini_garantir(const char *prx, const char *cusa, JkxLog log);   /* v1.56 */
 int  jkx_dono_placar(const char *url);                                     /* v1.56: SUPER/RECOPA antigos do card Sula: pertencem ao placar */
 void jkx_ini_merge(const char *novo, const char *cusa, JkxLog log);      /* v1.56: junta a secao do jogo de um plugins.ini baixado */
