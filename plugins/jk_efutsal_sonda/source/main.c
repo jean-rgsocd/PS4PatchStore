@@ -1,5 +1,5 @@
 /*
- * JK EFUTSAL SONDA v1.00 - PES 2021 (CUSA18676) - etapa 0 do eFutsal no PS4.
+ * JK EFUTSAL SONDA v1.01 - PES 2021 (CUSA18676) - etapa 0 do eFutsal no PS4.
  * Plugin SO DE LEITURA. Nao grava nada no jogo e nao hooka nada.
  * Objetivo: descobrir no PS4 as estruturas que o mod de PC (efutsal.lua) usa:
  *   - MatchInfo (escalacao, formacao, flags de quem joga: no PC +0x288, +0x598, +0x1334, +0x1748)
@@ -28,7 +28,7 @@
 attr_public const char *g_pluginName = "jk_efutsal_sonda";
 attr_public const char *g_pluginDesc = "JK PATCHS - sonda do eFutsal (so leitura)";
 attr_public const char *g_pluginAuth = "JK PATCHS";
-attr_public uint32_t g_pluginVersion = 0x00000100;
+attr_public uint32_t g_pluginVersion = 0x00000101;
 
 int jk_qmp(void *addr, void **start, void **end, int *prot) __asm__("sceKernelQueryMemoryProtection");
 
@@ -214,19 +214,46 @@ static void relatorio_pitch(void)
 }
 
 /* ---------- 4) busca de texto ---------- */
-typedef struct { const char *txt; int len, n; } TxtBusca;
+typedef struct { const uint8_t *pat; int len, n; uint64_t ex_lo, ex_hi; const char *rot; } TxtBusca;
 static int txt_cb(uint64_t ini, uint64_t fim, int prot, void *ud)
 {
     (void)prot;
     TxtBusca *tb = (TxtBusca *)ud;
     for (uint64_t a = ini; a + tb->len <= fim; a++) {
-        if (*(volatile uint8_t *)a != (uint8_t)tb->txt[0]) continue;
-        if (memcmp((const void *)a, tb->txt, tb->len) != 0) continue;
-        logf_("  '%s' em 0x%llx", tb->txt, (unsigned long long)a);
-        hex_linha("     contexto-4", a - 4, 0x40);
-        if (++tb->n >= 12) return 1;
+        if (*(volatile uint8_t *)a != tb->pat[0]) continue;
+        if (a >= tb->ex_lo && a < tb->ex_hi) continue;          /* buffers do proprio plugin */
+        if (memcmp((const void *)a, tb->pat, tb->len) != 0) continue;
+        logf_("  [%s] em 0x%llx", tb->rot, (unsigned long long)a);
+        hex_linha("     contexto-8", a - 8, 0x48);
+        if (++tb->n >= 10) return 1;
     }
     return 0;
+}
+static int utf8_para_utf16(const char *s, int n, uint8_t *o, int max)
+{
+    int k = 0;
+    for (int i = 0; i < n && k + 2 <= max; ) {
+        uint32_t c = (uint8_t)s[i];
+        if (c < 0x80) i++;
+        else if ((c & 0xe0) == 0xc0 && i + 1 < n) { c = ((c & 0x1f) << 6) | ((uint8_t)s[i + 1] & 0x3f); i += 2; }
+        else { c = '?'; i++; }
+        o[k++] = (uint8_t)(c & 0xff); o[k++] = (uint8_t)(c >> 8);
+    }
+    return k;
+}
+static void busca_variantes(const char *txt, int len, uint64_t ex_lo, uint64_t ex_hi)
+{
+    uint8_t v[256]; TxtBusca tb; tb.ex_lo = ex_lo; tb.ex_hi = ex_hi;
+    if (len <= 0 || len > 100) return;
+    logf_("BUSCA '%s':", txt);
+    tb.pat = (const uint8_t *)txt; tb.len = len; tb.n = 0; tb.rot = "ascii/utf8";
+    para_cada_regiao(1, txt_cb, &tb);
+    int u = utf8_para_utf16(txt, len, v, sizeof v);
+    tb.pat = v; tb.len = u; tb.n = 0; tb.rot = "utf16";
+    para_cada_regiao(1, txt_cb, &tb);
+    uint8_t up[128]; int ok = 0;
+    for (int i = 0; i < len; i++) { uint8_t c = (uint8_t)txt[i]; if (c >= 'a' && c <= 'z') { c -= 32; ok = 1; } up[i] = c; }
+    if (ok) { tb.pat = up; tb.len = len; tb.n = 0; tb.rot = "MAIUSCULAS"; para_cada_regiao(1, txt_cb, &tb); }
 }
 static void busca_textos(void)
 {
@@ -235,11 +262,12 @@ static void busca_textos(void)
     int n = (int)sceKernelRead(fd, buf, sizeof buf - 1); sceKernelClose(fd);
     if (n <= 0) { sceKernelUnlink(PASTA "/busca.txt"); return; }
     buf[n] = 0;
+    uint64_t ex_lo = (uint64_t)(uintptr_t)buf - 0x40000, ex_hi = (uint64_t)(uintptr_t)buf + 0x40000;
     char *p = buf; int lin = 0;
     while (*p && lin < 4) {
         char *e = p; while (*e && *e != '\n' && *e != '\r') e++;
         char sv = *e; *e = 0;
-        if (e > p) { TxtBusca tb; tb.txt = p; tb.len = (int)(e - p); tb.n = 0; logf_("BUSCA '%s':", p); para_cada_regiao(1, txt_cb, &tb); if (!tb.n) logf_("  nao achado"); lin++; }
+        if (e > p) { busca_variantes(p, (int)(e - p), ex_lo, ex_hi); lin++; }
         *e = sv; p = e; while (*p == '\n' || *p == '\r') p++;
     }
     sceKernelUnlink(PASTA "/busca.txt");
@@ -253,7 +281,7 @@ static void *trabalho(void *arg)
     struct proc_info pi; memset(&pi, 0, sizeof pi);
     if (sys_sdk_proc_info(&pi) != 0) { logf_("ERRO proc_info"); return 0; }
     g_base = pi.base_address;
-    logf_("JK_EFUTSAL_SONDA v1.00 titulo=%s versao=%s base=0x%llx", pi.titleid, pi.version, (unsigned long long)g_base);
+    logf_("JK_EFUTSAL_SONDA v1.01 titulo=%s versao=%s base=0x%llx", pi.titleid, pi.version, (unsigned long long)g_base);
     sceKernelUsleep(30000000);
     uint64_t ultimo = 0; int vezes = 0, pitch_feito = 0;
     logf_("Aguardando partida. Quando o MatchInfo for achado 2x seguidas o relatorio completo sai sozinho (pesado: ~3 s de varredura). Para repetir: crie /data/jk/efutsal/repetir.txt");
